@@ -119,6 +119,16 @@ export function redactSecrets<T>(value: T): T {
   return redactValue(value) as T;
 }
 
+export function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(",")}}`;
+  return JSON.stringify(value) ?? "null";
+}
+
+export function approvalPayload(action: Pick<import("./types.js").ActionRequestMessage, "actionId" | "idempotencyKey" | "toolName" | "arguments" | "actor" | "permissionMode" | "risk" | "expiresAt">): unknown {
+  return { actionId: action.actionId, idempotencyKey: action.idempotencyKey, toolName: action.toolName, arguments: action.arguments, actor: action.actor, permissionMode: action.permissionMode, risk: action.risk, expiresAt: action.expiresAt };
+}
+
 function redactValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(redactValue);

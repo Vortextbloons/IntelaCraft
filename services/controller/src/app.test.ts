@@ -27,6 +27,8 @@ const ctx = {
     bdsToken: token,
     auditPath,
     heartbeatStaleMs: 15000,
+    protectedRegions: [],
+    builderRegions: [],
   },
   sessions: new SessionStore(),
   events: new EventStore(),
@@ -180,4 +182,9 @@ describe("controller handshake and poll", () => {
 });
 
 // Keep createServer import used for typecheck in some tooling
+describe("phase 2 policy",()=>{
+  it("requires exact approval for a mutation",async()=>{const s=ctx.sessions.listSessions()[0]!;const a=createActionRequest({sessionId:s.sessionId,requestId:newId(),actionId:newId(),idempotencyKey:newId(),toolName:"world.fill_blocks",arguments:{dimension:"minecraft:overworld",region:{min:{x:0,y:64,z:0},max:{x:1,y:64,z:1}},blockType:"minecraft:stone"},actor:"tester",risk:"normal"});const r=await api("/v1/actions",{method:"POST",body:JSON.stringify(a)});assert.equal(r.status,409);const approved={...a,approval:{approvalId:newId(),approvedAt:new Date().toISOString(),approvedBy:"tester",payloadHash:r.json.approval.payloadHash},noApprovalReason:undefined};assert.equal((await api("/v1/actions",{method:"POST",body:JSON.stringify(approved)})).status,202);});
+  it("denies observe-only mutations",async()=>{const s=ctx.sessions.listSessions()[0]!;const a=createActionRequest({sessionId:s.sessionId,requestId:newId(),actionId:newId(),idempotencyKey:newId(),toolName:"world.fill_blocks",arguments:{dimension:"minecraft:overworld",region:{min:{x:0,y:64,z:0},max:{x:0,y:64,z:0}},blockType:"minecraft:stone"},actor:"tester",risk:"normal",permissionMode:"observe_only"});assert.equal((await api("/v1/actions",{method:"POST",body:JSON.stringify(a)})).status,403);});
+});
+
 void createServer;

@@ -128,7 +128,7 @@ describe("action request", () => {
     }
   });
 
-  it("rejects non-read risk in phase 1", () => {
+  it("rejects a mismatched risk class", () => {
     const msg = createActionRequest({
       sessionId: "s1",
       requestId: "r1",
@@ -142,8 +142,13 @@ describe("action request", () => {
     const result = validateActionRequest(msg);
     assert.equal(result.ok, false);
     if (!result.ok) {
-      assert.equal(result.error.code, "PROHIBITED");
+      assert.equal(result.error.code, "INVALID_RISK");
     }
+  });
+
+  it("accepts and normalizes a bounded fill", () => {
+    const result=validateToolArguments("world.fill_blocks",{dimension:"minecraft:overworld",region:{min:{x:2,y:64,z:2},max:{x:0,y:64,z:0}},blockType:"minecraft:stone",captureRollback:true});
+    assert.equal(result.ok,true); if(result.ok){assert.deepEqual(result.value.region,{min:{x:0,y:64,z:0},max:{x:2,y:64,z:2}});assert.equal(result.value.batchSize,512);}
   });
 
   it("normalizes region args", () => {

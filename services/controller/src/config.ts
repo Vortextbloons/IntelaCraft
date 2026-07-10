@@ -6,6 +6,8 @@ export interface ControllerConfig {
   bdsToken: string;
   auditPath: string;
   heartbeatStaleMs: number;
+  protectedRegions: Array<{dimension:string;region:{min:{x:number;y:number;z:number};max:{x:number;y:number;z:number}}}>;
+  builderRegions: Array<{dimension:string;region:{min:{x:number;y:number;z:number};max:{x:number;y:number;z:number}}}>;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControllerConfig {
@@ -24,5 +26,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControllerConf
     bdsToken,
     auditPath,
     heartbeatStaleMs: Number(env.INTELACRAFT_HEARTBEAT_STALE_MS ?? "15000"),
+    protectedRegions: parseRegions(env.INTELACRAFT_PROTECTED_REGIONS),
+    builderRegions: parseRegions(env.INTELACRAFT_BUILDER_REGIONS),
   };
 }
+function parseRegions(raw:string|undefined): ControllerConfig["protectedRegions"] { if(!raw)return []; try { const v=JSON.parse(raw); return Array.isArray(v)?v:[]; } catch { throw new Error("Region configuration must be valid JSON"); } }

@@ -15,6 +15,7 @@ import {
 import { notifyOperators } from "../audit/notify.js";
 import type { AddonConfig } from "../config.js";
 import { executeInspectTool } from "../tools/inspect/index.js";
+import { executeControl, isEmergencyDisabled, startFill } from "../tools/mutate.js";
 import { ControllerClient } from "./client.js";
 
 const POLL_INTERVAL_TICKS = 40; // 2 seconds
@@ -97,7 +98,7 @@ export class ControllerSession {
         ok: true,
         playerCount: players.length,
         tick: system.currentTick,
-        emergencyDisabled: false,
+        emergencyDisabled: isEmergencyDisabled(),
       },
     });
     const res = await this.client.postJson("/v1/bds/heartbeat", body);
@@ -153,6 +154,8 @@ export class ControllerSession {
       return;
     }
 
+    if(action.toolName==="world.fill_blocks") { startFill(action,(event)=>{void this.emitEvent({actionId:action.actionId,...event});},this.config.protectedRegions); return; }
+    if(action.toolName.startsWith("control.")) { const event=executeControl(action); await this.emitEvent({actionId:action.actionId,...event}); return; }
     const toolResult = executeInspectTool(action);
     if (!toolResult.ok) {
       await this.emitEvent({

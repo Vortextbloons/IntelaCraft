@@ -19,6 +19,9 @@ export class SessionStore {
   private sessionsByServer = new Map<string, string>();
   private queues = new Map<string, ActionRequestMessage[]>();
   private seenIdempotency = new Map<string, string>();
+  private emergencyDisabled = new Set<string>();
+  setEmergencyDisabled(sessionId:string, value:boolean): boolean { if(!this.sessions.has(sessionId))return false; value?this.emergencyDisabled.add(sessionId):this.emergencyDisabled.delete(sessionId); return true; }
+  isEmergencyDisabled(sessionId:string): boolean { return this.emergencyDisabled.has(sessionId); }
 
   upsertSession(session: BdsSession): void {
     const existingSessionId = this.sessionsByServer.get(session.serverId);
@@ -77,6 +80,7 @@ export class SessionStore {
     if (!queue || queue.length === 0) return null;
     while (queue.length > 0) {
       const next = queue.shift()!;
+      if (this.isEmergencyDisabled(sessionId) && next.risk !== "read") continue;
       if (!isExpired(next.expiresAt)) {
         return next;
       }

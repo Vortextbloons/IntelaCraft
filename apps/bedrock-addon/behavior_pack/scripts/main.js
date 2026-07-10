@@ -1,5 +1,5 @@
 // src/main.ts
-import { system as system2 } from "@minecraft/server";
+import { system as system3 } from "@minecraft/server";
 
 // src/audit/notify.ts
 import { PlayerPermissionLevel, world } from "@minecraft/server";
@@ -39,12 +39,15 @@ function loadConfig() {
 }
 
 // src/net/session.ts
-import { system, world as world3 } from "@minecraft/server";
+import { system as system2, world as world4 } from "@minecraft/server";
 
 // ../../packages/shared-protocol/src/constants.ts
 var PROTOCOL_VERSION = "1.0.0";
 var PROTOCOL_MAJOR = 1;
 var MAX_REGION_VOLUME = 32 * 32 * 32;
+var MAX_BUILD_VOLUME = 32 * 32 * 32;
+var DEFAULT_BATCH_SIZE = 512;
+var MAX_ROLLBACK_BLOCKS = 8192;
 var MESSAGE_TYPES = [
   "handshake",
   "handshake_ack",
@@ -72,6 +75,7 @@ var READ_TOOLS = [
   "inspect.weather",
   "inspect.game_rules"
 ];
+var MUTATION_TOOLS = ["world.fill_blocks", "control.cancel", "control.emergency_disable"];
 var DIMENSION_IDS = [
   "minecraft:overworld",
   "minecraft:nether",
@@ -190,6 +194,9 @@ function isPermissionMode(value) {
 function isReadTool(value) {
   return typeof value === "string" && READ_TOOLS.includes(value);
 }
+function isTool(value) {
+  return isReadTool(value) || typeof value === "string" && MUTATION_TOOLS.includes(value);
+}
 function isDimensionId(value) {
   return typeof value === "string" && DIMENSION_IDS.includes(value);
 }
@@ -284,7 +291,7 @@ function validateActionRequest(raw) {
   if (!isNonEmptyString(raw.idempotencyKey)) {
     return fail("INVALID_ACTION", "idempotencyKey is required");
   }
-  if (!isReadTool(raw.toolName)) {
+  if (!isTool(raw.toolName)) {
     return fail("UNKNOWN_TOOL", `Unknown or unsupported tool '${String(raw.toolName)}'`);
   }
   if (!isRecord(raw.arguments)) {
@@ -301,9 +308,8 @@ function validateActionRequest(raw) {
   if (!isRisk(raw.risk)) {
     return fail("INVALID_ACTION", "risk is invalid");
   }
-  if (raw.risk !== "read") {
-    return fail("PROHIBITED", "Phase 1 only allows read-risk actions");
-  }
+  if (isReadTool(raw.toolName) && raw.risk !== "read") return fail("INVALID_RISK", "Inspection tools require read risk");
+  if (!isReadTool(raw.toolName) && !["normal", "strong"].includes(raw.risk)) return fail("INVALID_RISK", "Mutation requires normal or strong risk");
   if (!isNonEmptyString(raw.expiresAt) || Number.isNaN(Date.parse(raw.expiresAt))) {
     return fail("INVALID_ACTION", "expiresAt must be ISO-8601");
   }
@@ -370,9 +376,28 @@ function validateToolArguments(toolName, args) {
       return asArgs(validateInspectWeather(args));
     case "inspect.game_rules":
       return asArgs(validateInspectGameRules(args));
+    case "world.fill_blocks":
+      return asArgs(validateFillBlocks(args));
+    case "control.cancel":
+      if (!isNonEmptyString(args.actionId)) return fail("INVALID_ARGS", "actionId is required");
+      return ok({ actionId: args.actionId });
+    case "control.emergency_disable":
+      if (typeof args.disabled !== "boolean") return fail("INVALID_ARGS", "disabled must be boolean");
+      return ok({ disabled: args.disabled });
     default:
       return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
   }
+}
+function validateFillBlocks(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const region = parseRegion(args.region);
+  if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
+  const volume = (region.max.x - region.min.x + 1) * (region.max.y - region.min.y + 1) * (region.max.z - region.min.z + 1);
+  if (volume > MAX_BUILD_VOLUME) return fail("REGION_TOO_LARGE", `Build volume ${volume} exceeds max ${MAX_BUILD_VOLUME}`);
+  if (!isNonEmptyString(args.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(args.blockType)) return fail("INVALID_ARGS", "blockType must be a namespaced Minecraft block id");
+  const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
+  return ok({ dimension: args.dimension, region, blockType: args.blockType, batchSize, captureRollback: args.captureRollback === true });
 }
 function asArgs(result) {
   if (!result.ok) return result;
@@ -704,6 +729,62 @@ function inspectGameRules(args) {
   };
 }
 
+// src/tools/mutate.ts
+import { system, world as world3 } from "@minecraft/server";
+var cancelled = /* @__PURE__ */ new Set();
+var emergencyDisabled = false;
+function isEmergencyDisabled() {
+  return emergencyDisabled;
+}
+function executeControl(action) {
+  if (action.toolName === "control.cancel") {
+    cancelled.add(String(action.arguments.actionId));
+    return { state: "completed", completedWork: 1, totalEstimatedWork: 1, message: "Cancellation requested" };
+  }
+  emergencyDisabled = action.arguments.disabled === true;
+  return { state: "completed", completedWork: 1, totalEstimatedWork: 1, message: `Emergency disable ${emergencyDisabled ? "enabled" : "cleared"}` };
+}
+function startFill(action, emit) {
+  const args = action.arguments;
+  const total = regionVolume(args.region);
+  if (emergencyDisabled) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Emergency disabled", error: { code: "EMERGENCY_DISABLED", message: "Mutations disabled" } });
+    return;
+  }
+  if (total > MAX_BUILD_VOLUME) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Build too large", error: { code: "REGION_TOO_LARGE", message: "Build exceeds independent add-on limit" } });
+    return;
+  }
+  const dimension = world3.getDimension(args.dimension);
+  let completed = 0;
+  const rollback = [];
+  function* job() {
+    try {
+      const { min, max } = args.region;
+      for (let x = min.x; x <= max.x; x++) for (let y = min.y; y <= max.y; y++) for (let z = min.z; z <= max.z; z++) {
+        if (cancelled.has(action.actionId) || emergencyDisabled) {
+          cancelled.delete(action.actionId);
+          emit({ state: "cancelled", completedWork: completed, totalEstimatedWork: total, message: `Cancelled after ${completed}/${total} blocks`, result: { partial: true, rollback: { available: rollback.length > 0, capturedBlocks: rollback.length } } });
+          return;
+        }
+        const block = dimension.getBlock({ x, y, z });
+        if (!block?.isValid) throw new Error(`Block unavailable at ${x},${y},${z}`);
+        if (args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({ position: { x, y, z }, typeId: block.typeId });
+        block.setType(args.blockType);
+        completed++;
+        if (completed % (args.batchSize ?? 512) === 0) {
+          emit({ state: "running", completedWork: completed, totalEstimatedWork: total, message: `Changed ${completed}/${total} blocks` });
+          yield;
+        }
+      }
+      emit({ state: "completed", completedWork: completed, totalEstimatedWork: total, message: `Changed ${completed} blocks`, result: { dimension: args.dimension, region: args.region, blockType: args.blockType, rollback: { available: rollback.length === total, capturedBlocks: rollback.length, totalBlocks: total, coverage: rollback.length / total } } });
+    } catch (e) {
+      emit({ state: completed ? "partially_completed" : "failed", completedWork: completed, totalEstimatedWork: total, message: e instanceof Error ? e.message : "Build failed", error: { code: "BUILD_FAILED", message: e instanceof Error ? e.message : "Build failed" } });
+    }
+  }
+  system.runJob(job());
+}
+
 // src/net/client.ts
 import {
   HttpHeader,
@@ -754,7 +835,7 @@ var ControllerSession = class {
   start() {
     if (this.running) return;
     this.running = true;
-    system.runInterval(() => {
+    system2.runInterval(() => {
       void this.tick();
     }, POLL_INTERVAL_TICKS);
     void this.handshake();
@@ -802,7 +883,7 @@ var ControllerSession = class {
   }
   async sendHeartbeat() {
     if (!this.sessionId) return;
-    const players = world3.getPlayers();
+    const players = world4.getPlayers();
     const body = createHeartbeat({
       sessionId: this.sessionId,
       requestId: newId("req"),
@@ -810,8 +891,8 @@ var ControllerSession = class {
       health: {
         ok: true,
         playerCount: players.length,
-        tick: system.currentTick,
-        emergencyDisabled: false
+        tick: system2.currentTick,
+        emergencyDisabled: isEmergencyDisabled()
       }
     });
     const res = await this.client.postJson("/v1/bds/heartbeat", body);
@@ -860,6 +941,17 @@ var ControllerSession = class {
         "DUPLICATE",
         "Duplicate idempotencyKey"
       );
+      return;
+    }
+    if (action.toolName === "world.fill_blocks") {
+      startFill(action, (event) => {
+        void this.emitEvent({ actionId: action.actionId, ...event });
+      });
+      return;
+    }
+    if (action.toolName.startsWith("control.")) {
+      const event = executeControl(action);
+      await this.emitEvent({ actionId: action.actionId, ...event });
       return;
     }
     const toolResult = executeInspectTool(action);
@@ -916,8 +1008,8 @@ var ControllerSession = class {
 };
 
 // src/main.ts
-console.warn("[IntelaCraft] Script loading (Phase 1 trusted execution foundation)");
-system2.run(() => {
+console.warn("[IntelaCraft] Script loading (Phase 2 safe mutations)");
+system3.run(() => {
   const config = loadConfig();
   if (!config.configured) {
     notifyOperators(

@@ -3,7 +3,7 @@ import { notifyOperators } from "./audit/notify.js";
 import { loadConfig } from "./config.js";
 import { ControllerSession } from "./net/session.js";
 
-console.warn("[IntelaCraft] Script loading (Phase 1 trusted execution foundation)");
+console.warn("[IntelaCraft] Script loading (Phase 2 safe mutations)");
 
 system.run(() => {
   const config = loadConfig();

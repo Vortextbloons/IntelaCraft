@@ -64,6 +64,14 @@ export interface ApprovalRecord {
   payloadHash: string;
 }
 
+export interface FillBlocksArgs {
+  dimension: DimensionId;
+  region: RegionBounds;
+  blockType: string;
+  batchSize?: number;
+  captureRollback?: boolean;
+}
+
 export interface ActionRequestMessage extends MessageEnvelope {
   messageType: "action_request";
   actionId: string;

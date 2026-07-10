@@ -4,11 +4,15 @@ import {
   OPERATION_STATES,
   PERMISSION_MODES,
   READ_TOOLS,
+  MUTATION_TOOLS,
+  MAX_BUILD_VOLUME,
+  DEFAULT_BATCH_SIZE,
   RISK_CLASSES,
   type DimensionId,
   type MessageType,
   type OperationState,
   type PermissionMode,
+  type ToolName,
   type ReadToolName,
   type RiskClass,
 } from "./constants.js";
@@ -32,6 +36,7 @@ import type {
   InspectServerStatusArgs,
   InspectTimeArgs,
   InspectWeatherArgs,
+  FillBlocksArgs,
   MessageEnvelope,
   OperationEventMessage,
   PollMessage,
@@ -79,6 +84,7 @@ function isOperationState(value: unknown): value is OperationState {
 function isReadTool(value: unknown): value is ReadToolName {
   return typeof value === "string" && (READ_TOOLS as readonly string[]).includes(value);
 }
+function isTool(value: unknown): value is ToolName { return isReadTool(value) || (typeof value === "string" && (MUTATION_TOOLS as readonly string[]).includes(value)); }
 
 function isDimensionId(value: unknown): value is DimensionId {
   return typeof value === "string" && (DIMENSION_IDS as readonly string[]).includes(value);
@@ -218,7 +224,7 @@ export function validateActionRequest(raw: unknown): ValidateResult<ActionReques
   if (!isNonEmptyString(raw.idempotencyKey)) {
     return fail("INVALID_ACTION", "idempotencyKey is required");
   }
-  if (!isReadTool(raw.toolName)) {
+  if (!isTool(raw.toolName)) {
     return fail("UNKNOWN_TOOL", `Unknown or unsupported tool '${String(raw.toolName)}'`);
   }
   if (!isRecord(raw.arguments)) {
@@ -235,9 +241,8 @@ export function validateActionRequest(raw: unknown): ValidateResult<ActionReques
   if (!isRisk(raw.risk)) {
     return fail("INVALID_ACTION", "risk is invalid");
   }
-  if (raw.risk !== "read") {
-    return fail("PROHIBITED", "Phase 1 only allows read-risk actions");
-  }
+  if (isReadTool(raw.toolName) && raw.risk !== "read") return fail("INVALID_RISK", "Inspection tools require read risk");
+  if (!isReadTool(raw.toolName) && !["normal", "strong"].includes(raw.risk)) return fail("INVALID_RISK", "Mutation requires normal or strong risk");
   if (!isNonEmptyString(raw.expiresAt) || Number.isNaN(Date.parse(raw.expiresAt))) {
     return fail("INVALID_ACTION", "expiresAt must be ISO-8601");
   }
@@ -415,7 +420,7 @@ export function validateProtocolMessage(raw: unknown): ValidateResult<ProtocolMe
 }
 
 export function validateToolArguments(
-  toolName: ReadToolName,
+  toolName: ToolName,
   args: Record<string, unknown>,
 ): ValidateResult<Record<string, unknown>> {
   switch (toolName) {
@@ -433,9 +438,29 @@ export function validateToolArguments(
       return asArgs(validateInspectWeather(args));
     case "inspect.game_rules":
       return asArgs(validateInspectGameRules(args));
+    case "world.fill_blocks":
+      return asArgs(validateFillBlocks(args));
+    case "control.cancel":
+      if(!isNonEmptyString(args.actionId)) return fail("INVALID_ARGS","actionId is required");
+      return ok({actionId:args.actionId});
+    case "control.emergency_disable":
+      if(typeof args.disabled!=="boolean") return fail("INVALID_ARGS","disabled must be boolean");
+      return ok({disabled:args.disabled});
     default:
       return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
   }
+}
+
+function validateFillBlocks(args: Record<string, unknown>): ValidateResult<FillBlocksArgs> {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const region = parseRegion(args.region);
+  if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
+  const volume = (region.max.x-region.min.x+1)*(region.max.y-region.min.y+1)*(region.max.z-region.min.z+1);
+  if (volume > MAX_BUILD_VOLUME) return fail("REGION_TOO_LARGE", `Build volume ${volume} exceeds max ${MAX_BUILD_VOLUME}`);
+  if (!isNonEmptyString(args.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(args.blockType)) return fail("INVALID_ARGS", "blockType must be a namespaced Minecraft block id");
+  const batchSize = args.batchSize === undefined ? DEFAULT_BATCH_SIZE : args.batchSize;
+  if (!Number.isInteger(batchSize) || (batchSize as number) < 1 || (batchSize as number) > DEFAULT_BATCH_SIZE) return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
+  return ok({ dimension: args.dimension, region, blockType: args.blockType, batchSize: batchSize as number, captureRollback: args.captureRollback === true });
 }
 
 function asArgs<T extends object>(result: ValidateResult<T>): ValidateResult<Record<string, unknown>> {

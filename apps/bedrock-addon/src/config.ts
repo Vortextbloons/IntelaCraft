@@ -4,6 +4,7 @@ import type { SecretString } from "@minecraft/server-admin";
 export const CONTROLLER_URL_VAR = "intelacraft:controller_url";
 export const BDS_TOKEN_SECRET = "intelacraft:bds_token";
 export const SERVER_ID_VAR = "intelacraft:server_id";
+export const PROTECTED_REGIONS_VAR = "intelacraft:protected_regions";
 
 export interface AddonConfig {
   controllerUrl: string;
@@ -11,6 +12,7 @@ export interface AddonConfig {
   serverId: string;
   configured: boolean;
   missing: string[];
+  protectedRegions: Array<{dimension:string;region:{min:{x:number;y:number;z:number};max:{x:number;y:number;z:number}}}>;
 }
 
 export function loadConfig(): AddonConfig {
@@ -28,6 +30,8 @@ export function loadConfig(): AddonConfig {
     typeof serverIdRaw === "string" && serverIdRaw.trim().length > 0
       ? serverIdRaw.trim()
       : "bds-default";
+  const protectedRaw=variables.get(PROTECTED_REGIONS_VAR); let protectedRegions:AddonConfig["protectedRegions"]=[];
+  if(typeof protectedRaw==="string"&&protectedRaw.trim()){try{const parsed=JSON.parse(protectedRaw);if(Array.isArray(parsed))protectedRegions=parsed;}catch{missing.push(`${PROTECTED_REGIONS_VAR} (invalid JSON)`);}}
 
   return {
     controllerUrl,
@@ -35,5 +39,6 @@ export function loadConfig(): AddonConfig {
     serverId,
     configured: missing.length === 0,
     missing,
+    protectedRegions,
   };
 }

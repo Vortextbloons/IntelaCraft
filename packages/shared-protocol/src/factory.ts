@@ -2,7 +2,7 @@ import {
   PROTOCOL_VERSION,
   type MessageType,
   type PermissionMode,
-  type ReadToolName,
+  type ToolName,
   type RiskClass,
 } from "./constants.js";
 import type {
@@ -77,12 +77,13 @@ export function createActionRequest(params: {
   requestId: string;
   actionId: string;
   idempotencyKey: string;
-  toolName: ReadToolName;
+  toolName: ToolName;
   arguments: Record<string, unknown>;
   actor: string;
   permissionMode?: PermissionMode;
   risk?: RiskClass;
   noApprovalReason?: string;
+  approval?: ActionRequestMessage["approval"];
   expiresAt?: string;
 }): ActionRequestMessage {
   const expiresAt =
@@ -97,7 +98,8 @@ export function createActionRequest(params: {
     actor: params.actor,
     permissionMode: params.permissionMode ?? "confirm_every_change",
     risk: params.risk ?? "read",
-    noApprovalReason: params.noApprovalReason ?? "read_risk_no_approval",
+    approval: params.approval,
+    noApprovalReason: params.approval ? undefined : (params.noApprovalReason ?? "read_risk_no_approval"),
     expiresAt,
   };
 }

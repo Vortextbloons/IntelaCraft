@@ -15,6 +15,7 @@ import type { AuditLog } from "./audit.js";
 import type { ControllerConfig } from "./config.js";
 import { readJson, requireAuth, sendJson } from "./http.js";
 import type { EventStore, SessionStore } from "./store.js";
+import { approvalRequired, classify, enforceMode, payloadHash } from "./policy.js";
 
 export interface AppContext {
   config: ControllerConfig;
@@ -73,6 +74,13 @@ async function handleRequest(
   }
   if (method === "GET" && path === "/v1/events") {
     return handleListEvents(ctx, res);
+  }
+  if (method === "POST" && path === "/v1/emergency-disable") {
+    const body=await readJson(req) as Record<string,unknown>;
+    const sessionId=typeof body.sessionId==="string"?body.sessionId:ctx.sessions.listSessions()[0]?.sessionId;
+    if(!sessionId||!ctx.sessions.setEmergencyDisabled(sessionId,body.disabled!==false)){sendJson(res,404,{error:{code:"NO_SESSION",message:"Unknown session"}});return;}
+    ctx.audit.append({type:"emergency_disable",sessionId,disabled:body.disabled!==false,actor:body.actor??"controller"});
+    sendJson(res,200,{ok:true,sessionId,emergencyDisabled:body.disabled!==false}); return;
   }
 
   sendJson(res, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
@@ -298,6 +306,18 @@ async function handleEnqueueAction(
     return;
   }
 
+  const policy={protectedRegions:ctx.config.protectedRegions,builderRegions:ctx.config.builderRegions};
+  const classification=classify(action,policy);
+  if(classification.risk!==action.risk){ sendJson(res,400,{error:{code:"RISK_MISMATCH",message:`Expected risk ${classification.risk}: ${classification.reason}`}}); return; }
+  const denied=enforceMode(action.permissionMode,action,policy);
+  if(denied){sendJson(res,403,{error:{code:"POLICY_DENIED",message:denied}});return;}
+  const hash=payloadHash(action);
+  if(approvalRequired(action.permissionMode,action.risk,action,policy)){
+    if(!action.approval){sendJson(res,409,{error:{code:"APPROVAL_REQUIRED",message:"Exact payload approval required"},approval:{payloadHash:hash,risk:action.risk,action}});return;}
+    if(action.approval.payloadHash!==hash){sendJson(res,409,{error:{code:"APPROVAL_INVALID",message:"Approval does not match immutable action payload"}});return;}
+    if(Date.now()-Date.parse(action.approval.approvedAt)>5*60*1000){sendJson(res,409,{error:{code:"APPROVAL_EXPIRED",message:"Approval is stale"}});return;}
+  }
+  if(ctx.sessions.isEmergencyDisabled(action.sessionId)&&action.risk!=="read"){sendJson(res,503,{error:{code:"EMERGENCY_DISABLED",message:"Mutations are disabled"}});return;}
   const result = ctx.sessions.enqueue(action.sessionId, action);
   if (!result.ok) {
     sendJson(res, 409, { error: { code: result.code, message: result.message } });

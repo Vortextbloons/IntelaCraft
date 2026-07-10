@@ -5,6 +5,10 @@ export const PROTOCOL_MAJOR = 1;
 
 /** Max inclusive volume for inspect.region (32^3). */
 export const MAX_REGION_VOLUME = 32 * 32 * 32;
+export const MAX_BUILD_VOLUME = 32 * 32 * 32;
+export const STRONG_BUILD_VOLUME = 4096;
+export const DEFAULT_BATCH_SIZE = 512;
+export const MAX_ROLLBACK_BLOCKS = 8192;
 
 export const MESSAGE_TYPES = [
   "handshake",
@@ -49,9 +53,11 @@ export const READ_TOOLS = [
   "inspect.weather",
   "inspect.game_rules",
 ] as const;
+export const MUTATION_TOOLS = ["world.fill_blocks", "control.cancel", "control.emergency_disable"] as const;
 
 export type ReadToolName = (typeof READ_TOOLS)[number];
-export type ToolName = ReadToolName;
+export type MutationToolName = (typeof MUTATION_TOOLS)[number];
+export type ToolName = ReadToolName | MutationToolName;
 
 export const DIMENSION_IDS = [
   "minecraft:overworld",
