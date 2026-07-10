@@ -151,6 +151,35 @@ describe("action request", () => {
     assert.equal(result.ok,true); if(result.ok){assert.deepEqual(result.value.region,{min:{x:0,y:64,z:0},max:{x:2,y:64,z:2}});assert.equal(result.value.batchSize,512);}
   });
 
+  it("validates inspect.entities / scoreboard / tags", () => {
+    assert.equal(
+      validateToolArguments("inspect.entities", {
+        dimension: "minecraft:overworld",
+        typeFilter: "zombie",
+        limit: 10,
+      }).ok,
+      true,
+    );
+    assert.equal(validateToolArguments("inspect.scoreboard", {}).ok, true);
+    assert.equal(
+      validateToolArguments("inspect.tags", { target: "Steve" }).ok,
+      true,
+    );
+    assert.equal(
+      validateToolArguments("inspect.entities", {
+        dimension: "minecraft:overworld",
+        limit: 999,
+      }).ok,
+      false,
+    );
+  });
+
+  it("validates admin.run_command commandId", () => {
+    const ok = validateToolArguments("admin.run_command", { commandId: "time_day" });
+    assert.equal(ok.ok, true);
+    assert.equal(validateToolArguments("admin.run_command", {}).ok, false);
+  });
+
   it("normalizes region args", () => {
     const result = validateToolArguments("inspect.region", {
       dimension: "minecraft:overworld",

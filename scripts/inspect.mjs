@@ -11,6 +11,9 @@ const TOOL_ALIASES = {
   gamerules: "inspect.game_rules",
   block: "inspect.block",
   region: "inspect.region",
+  entities: "inspect.entities",
+  scoreboard: "inspect.scoreboard",
+  tags: "inspect.tags",
 };
 
 function usage() {
@@ -23,6 +26,9 @@ function usage() {
     time                 world time
     weather              weather
     rules                selected game rules
+    entities             entities in a dimension (needs dimension)
+    scoreboard           scoreboard objectives
+    tags                 tags for a player/entity (needs target)
     block                needs args: '{"dimension":"minecraft:overworld","position":{"x":0,"y":64,"z":0}}'
     region               needs args: '{"dimension":"minecraft:overworld","region":{"min":{"x":0,"y":64,"z":0},"max":{"x":3,"y":66,"z":3}}}'
 

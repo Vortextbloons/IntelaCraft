@@ -1,0 +1,23 @@
+{
+  "name": "@intelacraft/webview",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../node_modules/vite/bin/vite.js build",
+    "dev": "node ../../node_modules/vite/bin/vite.js",
+    "preview": "node ../../node_modules/vite/bin/vite.js preview",
+    "typecheck": "node ../../node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^7.0.2",
+    "vite": "^6.3.5"
+  }
+}

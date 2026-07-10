@@ -21,6 +21,7 @@ var CONTROLLER_URL_VAR = "intelacraft:controller_url";
 var BDS_TOKEN_SECRET = "intelacraft:bds_token";
 var SERVER_ID_VAR = "intelacraft:server_id";
 var PROTECTED_REGIONS_VAR = "intelacraft:protected_regions";
+var ADMIN_COMMANDS_VAR = "intelacraft:admin_commands";
 function loadConfig() {
   const missing = [];
   const controllerUrlRaw = variables.get(CONTROLLER_URL_VAR);
@@ -40,13 +41,24 @@ function loadConfig() {
       missing.push(`${PROTECTED_REGIONS_VAR} (invalid JSON)`);
     }
   }
+  const adminRaw = variables.get(ADMIN_COMMANDS_VAR);
+  let adminCommands = {};
+  if (typeof adminRaw === "string" && adminRaw.trim()) {
+    try {
+      const parsed = JSON.parse(adminRaw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) adminCommands = parsed;
+    } catch {
+      missing.push(`${ADMIN_COMMANDS_VAR} (invalid JSON)`);
+    }
+  }
   return {
     controllerUrl,
     authToken,
     serverId,
     configured: missing.length === 0,
     missing,
-    protectedRegions
+    protectedRegions,
+    adminCommands
   };
 }
 
@@ -85,9 +97,17 @@ var READ_TOOLS = [
   "inspect.region",
   "inspect.time",
   "inspect.weather",
-  "inspect.game_rules"
+  "inspect.game_rules",
+  "inspect.entities",
+  "inspect.scoreboard",
+  "inspect.tags"
 ];
-var MUTATION_TOOLS = ["world.fill_blocks", "control.cancel", "control.emergency_disable"];
+var MUTATION_TOOLS = [
+  "world.fill_blocks",
+  "control.cancel",
+  "control.emergency_disable",
+  "admin.run_command"
+];
 var DIMENSION_IDS = [
   "minecraft:overworld",
   "minecraft:nether",
@@ -388,6 +408,12 @@ function validateToolArguments(toolName, args) {
       return asArgs(validateInspectWeather(args));
     case "inspect.game_rules":
       return asArgs(validateInspectGameRules(args));
+    case "inspect.entities":
+      return asArgs(validateInspectEntities(args));
+    case "inspect.scoreboard":
+      return asArgs(validateInspectScoreboard(args));
+    case "inspect.tags":
+      return asArgs(validateInspectTags(args));
     case "world.fill_blocks":
       return asArgs(validateFillBlocks(args));
     case "control.cancel":
@@ -396,6 +422,8 @@ function validateToolArguments(toolName, args) {
     case "control.emergency_disable":
       if (typeof args.disabled !== "boolean") return fail("INVALID_ARGS", "disabled must be boolean");
       return ok({ disabled: args.disabled });
+    case "admin.run_command":
+      return asArgs(validateAdminRunCommand(args));
     default:
       return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
   }
@@ -471,6 +499,52 @@ function validateInspectGameRules(args) {
     return ok({ names: args.names });
   }
   return ok({});
+}
+function validateInspectEntities(args) {
+  if (!isDimensionId(args.dimension)) {
+    return fail("INVALID_ARGS", "dimension is required");
+  }
+  if (args.typeFilter !== void 0 && typeof args.typeFilter !== "string") {
+    return fail("INVALID_ARGS", "typeFilter must be a string");
+  }
+  const limit = args.limit === void 0 ? 64 : args.limit;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 128) {
+    return fail("INVALID_ARGS", "limit must be an integer 1-128");
+  }
+  return ok({
+    dimension: args.dimension,
+    typeFilter: typeof args.typeFilter === "string" ? args.typeFilter : void 0,
+    limit
+  });
+}
+function validateInspectScoreboard(args) {
+  if (args.objective !== void 0 && typeof args.objective !== "string") {
+    return fail("INVALID_ARGS", "objective must be a string");
+  }
+  return ok({
+    objective: typeof args.objective === "string" ? args.objective : void 0
+  });
+}
+function validateInspectTags(args) {
+  if (!isNonEmptyString(args.target)) {
+    return fail("INVALID_ARGS", "target is required");
+  }
+  return ok({
+    target: args.target,
+    player: args.player === void 0 ? true : Boolean(args.player)
+  });
+}
+function validateAdminRunCommand(args) {
+  if (!isNonEmptyString(args.commandId)) {
+    return fail("INVALID_ARGS", "commandId is required");
+  }
+  if (args.command !== void 0 && typeof args.command !== "string") {
+    return fail("INVALID_ARGS", "command must be a string when present");
+  }
+  return ok({
+    commandId: args.commandId,
+    command: typeof args.command === "string" ? args.command : void 0
+  });
 }
 
 // ../../packages/shared-protocol/src/factory.ts
@@ -562,6 +636,12 @@ function executeInspectTool(action) {
         return inspectWeather(action.arguments);
       case "inspect.game_rules":
         return inspectGameRules(action.arguments);
+      case "inspect.entities":
+        return inspectEntities(action.arguments);
+      case "inspect.scoreboard":
+        return inspectScoreboard(action.arguments);
+      case "inspect.tags":
+        return inspectTags(action.arguments);
       default:
         return {
           ok: false,
@@ -581,11 +661,7 @@ function inspectServerStatus(args) {
     players: players.map((p) => p.name)
   };
   if (args.includeDimensions) {
-    result.dimensions = [
-      "minecraft:overworld",
-      "minecraft:nether",
-      "minecraft:the_end"
-    ];
+    result.dimensions = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"];
   }
   return {
     ok: true,
@@ -740,6 +816,112 @@ function inspectGameRules(args) {
     message: `Read ${names.length} game rule(s)`
   };
 }
+function inspectEntities(args) {
+  const dimension = getDimension(args.dimension);
+  const filter = args.typeFilter?.toLowerCase();
+  const limit = args.limit ?? 64;
+  const entities = dimension.getEntities();
+  const matched = [];
+  for (const entity of entities) {
+    if (filter && !entity.typeId.toLowerCase().includes(filter)) continue;
+    const loc = entity.location;
+    matched.push({
+      id: entity.id,
+      typeId: entity.typeId,
+      nameTag: entity.nameTag || void 0,
+      location: {
+        x: Math.floor(loc.x),
+        y: Math.floor(loc.y),
+        z: Math.floor(loc.z)
+      }
+    });
+    if (matched.length >= limit) break;
+  }
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      count: matched.length,
+      truncated: entities.length > matched.length,
+      entities: matched
+    },
+    completedWork: matched.length,
+    totalEstimatedWork: matched.length,
+    message: `Found ${matched.length} entit${matched.length === 1 ? "y" : "ies"}`
+  };
+}
+function inspectScoreboard(args) {
+  const scoreboard = world2.scoreboard;
+  const objectives = scoreboard.getObjectives();
+  const selected = args.objective ? objectives.filter((o) => o.id === args.objective) : objectives;
+  if (args.objective && selected.length === 0) {
+    return {
+      ok: false,
+      code: "OBJECTIVE_NOT_FOUND",
+      message: `Objective '${args.objective}' not found`
+    };
+  }
+  const result = selected.map((obj) => {
+    const participants = obj.getParticipants();
+    const scores = participants.slice(0, 64).map((p) => ({
+      displayName: p.displayName,
+      score: obj.getScore(p) ?? null
+    }));
+    return {
+      id: obj.id,
+      displayName: obj.displayName,
+      participantCount: participants.length,
+      scores
+    };
+  });
+  return {
+    ok: true,
+    result: { objectives: result },
+    completedWork: result.length,
+    totalEstimatedWork: result.length,
+    message: `Read ${result.length} objective(s)`
+  };
+}
+function inspectTags(args) {
+  if (args.player !== false) {
+    const player = world2.getPlayers().find((p) => p.name === args.target || p.id === args.target);
+    if (player) {
+      const tags = player.getTags();
+      return {
+        ok: true,
+        result: { kind: "player", name: player.name, id: player.id, tags },
+        completedWork: tags.length,
+        totalEstimatedWork: tags.length,
+        message: `Player ${player.name} has ${tags.length} tag(s)`
+      };
+    }
+  }
+  for (const dimId of ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"]) {
+    const entities = world2.getDimension(dimId).getEntities();
+    const entity = entities.find((e) => e.id === args.target || e.nameTag === args.target);
+    if (entity) {
+      const tags = entity.getTags();
+      return {
+        ok: true,
+        result: {
+          kind: "entity",
+          id: entity.id,
+          typeId: entity.typeId,
+          nameTag: entity.nameTag || void 0,
+          tags
+        },
+        completedWork: tags.length,
+        totalEstimatedWork: tags.length,
+        message: `Entity ${entity.typeId} has ${tags.length} tag(s)`
+      };
+    }
+  }
+  return {
+    ok: false,
+    code: "TARGET_NOT_FOUND",
+    message: `No player or entity matched '${args.target}'`
+  };
+}
 
 // src/tools/mutate.ts
 import { system, world as world3 } from "@minecraft/server";
@@ -751,25 +933,117 @@ function isEmergencyDisabled() {
 function executeControl(action) {
   if (action.toolName === "control.cancel") {
     cancelled.add(String(action.arguments.actionId));
-    return { state: "completed", completedWork: 1, totalEstimatedWork: 1, message: "Cancellation requested" };
+    return {
+      state: "completed",
+      completedWork: 1,
+      totalEstimatedWork: 1,
+      message: "Cancellation requested"
+    };
   }
   emergencyDisabled = action.arguments.disabled === true;
-  return { state: "completed", completedWork: 1, totalEstimatedWork: 1, message: `Emergency disable ${emergencyDisabled ? "enabled" : "cleared"}` };
+  return {
+    state: "completed",
+    completedWork: 1,
+    totalEstimatedWork: 1,
+    message: `Emergency disable ${emergencyDisabled ? "enabled" : "cleared"}`
+  };
+}
+function executeAdminCommand(action, allowlist) {
+  if (emergencyDisabled) {
+    return {
+      state: "failed",
+      completedWork: 0,
+      totalEstimatedWork: 1,
+      message: "Emergency disabled",
+      error: { code: "EMERGENCY_DISABLED", message: "Mutations disabled" }
+    };
+  }
+  const args = action.arguments;
+  const entry = allowlist[args.commandId];
+  if (!entry) {
+    return {
+      state: "failed",
+      completedWork: 0,
+      totalEstimatedWork: 1,
+      message: "Command not allowlisted",
+      error: { code: "UNKNOWN_COMMAND", message: `commandId '${args.commandId}' is not allowlisted` }
+    };
+  }
+  if (args.command && args.command !== entry.command) {
+    return {
+      state: "failed",
+      completedWork: 0,
+      totalEstimatedWork: 1,
+      message: "Command mismatch",
+      error: {
+        code: "COMMAND_MISMATCH",
+        message: "Resolved command does not match add-on allowlist"
+      }
+    };
+  }
+  try {
+    const dimension = world3.getDimension("minecraft:overworld");
+    const result = dimension.runCommand(entry.command);
+    return {
+      state: "completed",
+      completedWork: 1,
+      totalEstimatedWork: 1,
+      message: `Ran allowlisted command ${args.commandId}`,
+      result: {
+        commandId: args.commandId,
+        successCount: result.successCount ?? 1
+      }
+    };
+  } catch (e) {
+    return {
+      state: "failed",
+      completedWork: 0,
+      totalEstimatedWork: 1,
+      message: e instanceof Error ? e.message : "Command failed",
+      error: {
+        code: "COMMAND_FAILED",
+        message: e instanceof Error ? e.message : "Command failed"
+      }
+    };
+  }
 }
 function startFill(action, emit, protectedRegions = []) {
   const args = action.arguments;
   const total = regionVolume(args.region);
   if (emergencyDisabled) {
-    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Emergency disabled", error: { code: "EMERGENCY_DISABLED", message: "Mutations disabled" } });
+    emit({
+      state: "failed",
+      completedWork: 0,
+      totalEstimatedWork: total,
+      message: "Emergency disabled",
+      error: { code: "EMERGENCY_DISABLED", message: "Mutations disabled" }
+    });
     return;
   }
   if (total > MAX_BUILD_VOLUME) {
-    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Build too large", error: { code: "REGION_TOO_LARGE", message: "Build exceeds independent add-on limit" } });
+    emit({
+      state: "failed",
+      completedWork: 0,
+      totalEstimatedWork: total,
+      message: "Build too large",
+      error: { code: "REGION_TOO_LARGE", message: "Build exceeds independent add-on limit" }
+    });
     return;
   }
   const overlaps = (a, b) => a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y && a.min.z <= b.max.z && a.max.z >= b.min.z;
-  if (protectedRegions.some((p) => p.dimension === args.dimension && overlaps(p.region, args.region))) {
-    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Protected region", error: { code: "PROTECTED_REGION", message: "Build intersects an add-on protected region" } });
+  if (protectedRegions.some(
+    (p) => p.dimension === args.dimension && overlaps(p.region, args.region)
+  )) {
+    emit({
+      state: "failed",
+      completedWork: 0,
+      totalEstimatedWork: total,
+      message: "Protected region",
+      error: {
+        code: "PROTECTED_REGION",
+        message: "Build intersects an add-on protected region"
+      }
+    });
     return;
   }
   const dimension = world3.getDimension(args.dimension);
@@ -778,25 +1052,68 @@ function startFill(action, emit, protectedRegions = []) {
   function* job() {
     try {
       const { min, max } = args.region;
-      for (let x = min.x; x <= max.x; x++) for (let y = min.y; y <= max.y; y++) for (let z = min.z; z <= max.z; z++) {
-        if (cancelled.has(action.actionId) || emergencyDisabled) {
-          cancelled.delete(action.actionId);
-          emit({ state: "cancelled", completedWork: completed, totalEstimatedWork: total, message: `Cancelled after ${completed}/${total} blocks`, result: { partial: true, rollback: { available: rollback.length > 0, capturedBlocks: rollback.length } } });
-          return;
+      for (let x = min.x; x <= max.x; x++)
+        for (let y = min.y; y <= max.y; y++)
+          for (let z = min.z; z <= max.z; z++) {
+            if (cancelled.has(action.actionId) || emergencyDisabled) {
+              cancelled.delete(action.actionId);
+              emit({
+                state: "cancelled",
+                completedWork: completed,
+                totalEstimatedWork: total,
+                message: `Cancelled after ${completed}/${total} blocks`,
+                result: {
+                  partial: true,
+                  rollback: { available: rollback.length > 0, capturedBlocks: rollback.length }
+                }
+              });
+              return;
+            }
+            const block = dimension.getBlock({ x, y, z });
+            if (!block?.isValid) throw new Error(`Block unavailable at ${x},${y},${z}`);
+            if (args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) {
+              rollback.push({ position: { x, y, z }, typeId: block.typeId });
+            }
+            block.setType(args.blockType);
+            completed++;
+            if (completed % (args.batchSize ?? 512) === 0) {
+              emit({
+                state: "running",
+                completedWork: completed,
+                totalEstimatedWork: total,
+                message: `Changed ${completed}/${total} blocks`
+              });
+              yield;
+            }
+          }
+      emit({
+        state: "completed",
+        completedWork: completed,
+        totalEstimatedWork: total,
+        message: `Changed ${completed} blocks`,
+        result: {
+          dimension: args.dimension,
+          region: args.region,
+          blockType: args.blockType,
+          rollback: {
+            available: rollback.length === total,
+            capturedBlocks: rollback.length,
+            totalBlocks: total,
+            coverage: rollback.length / total
+          }
         }
-        const block = dimension.getBlock({ x, y, z });
-        if (!block?.isValid) throw new Error(`Block unavailable at ${x},${y},${z}`);
-        if (args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({ position: { x, y, z }, typeId: block.typeId });
-        block.setType(args.blockType);
-        completed++;
-        if (completed % (args.batchSize ?? 512) === 0) {
-          emit({ state: "running", completedWork: completed, totalEstimatedWork: total, message: `Changed ${completed}/${total} blocks` });
-          yield;
-        }
-      }
-      emit({ state: "completed", completedWork: completed, totalEstimatedWork: total, message: `Changed ${completed} blocks`, result: { dimension: args.dimension, region: args.region, blockType: args.blockType, rollback: { available: rollback.length === total, capturedBlocks: rollback.length, totalBlocks: total, coverage: rollback.length / total } } });
+      });
     } catch (e) {
-      emit({ state: completed ? "partially_completed" : "failed", completedWork: completed, totalEstimatedWork: total, message: e instanceof Error ? e.message : "Build failed", error: { code: "BUILD_FAILED", message: e instanceof Error ? e.message : "Build failed" } });
+      emit({
+        state: completed ? "partially_completed" : "failed",
+        completedWork: completed,
+        totalEstimatedWork: total,
+        message: e instanceof Error ? e.message : "Build failed",
+        error: {
+          code: "BUILD_FAILED",
+          message: e instanceof Error ? e.message : "Build failed"
+        }
+      });
     }
   }
   system.runJob(job());
@@ -968,6 +1285,11 @@ var ControllerSession = class {
     }
     if (action.toolName.startsWith("control.")) {
       const event = executeControl(action);
+      await this.emitEvent({ actionId: action.actionId, ...event });
+      return;
+    }
+    if (action.toolName === "admin.run_command") {
+      const event = executeAdminCommand(action, this.config.adminCommands);
       await this.emitEvent({ actionId: action.actionId, ...event });
       return;
     }

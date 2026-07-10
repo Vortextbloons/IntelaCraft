@@ -13,27 +13,38 @@ import {
   createPoll,
   newId,
 } from "@intelacraft/shared-protocol";
+import { ActivityStore } from "./activity.js";
 import { AuditLog } from "./audit.js";
 import { createApp } from "./app.js";
-import { EventStore, SessionStore } from "./store.js";
+import { EventStore, SessionStore, SettingsStore } from "./store.js";
 
 const token = "test-token";
 const dir = mkdtempSync(join(tmpdir(), "intelacraft-audit-"));
 const auditPath = join(dir, "audit.jsonl");
 
+const activity = new ActivityStore(auditPath, 30);
 const ctx = {
   config: {
     port: 0,
     bdsToken: token,
     auditPath,
+    auditRetentionDays: 30,
     heartbeatStaleMs: 15000,
     protectedRegions: [],
     builderRegions: [],
-    piStoragePath:join(dir,"pi"),
+    piStoragePath: join(dir, "pi"),
+    adminCommands: {
+      time_day: { command: "time set day", risk: "normal" as const, label: "Day" },
+      stop_server: { command: "stop", risk: "strong" as const, label: "Stop" },
+    },
+    webviewDistPath: join(dir, "missing-webview"),
+    defaultPermissionMode: "confirm_every_change" as const,
   },
   sessions: new SessionStore(),
   events: new EventStore(),
-  audit: new AuditLog(auditPath),
+  audit: new AuditLog(auditPath, activity),
+  activity,
+  settings: new SettingsStore("confirm_every_change"),
 };
 
 const server = createApp(ctx);
@@ -182,10 +193,116 @@ describe("controller handshake and poll", () => {
   });
 });
 
-// Keep createServer import used for typecheck in some tooling
-describe("phase 2 policy",()=>{
-  it("requires exact approval for a mutation",async()=>{const s=ctx.sessions.listSessions()[0]!;const a=createActionRequest({sessionId:s.sessionId,requestId:newId(),actionId:newId(),idempotencyKey:newId(),toolName:"world.fill_blocks",arguments:{dimension:"minecraft:overworld",region:{min:{x:0,y:64,z:0},max:{x:1,y:64,z:1}},blockType:"minecraft:stone"},actor:"tester",risk:"normal"});const r=await api("/v1/actions",{method:"POST",body:JSON.stringify(a)});assert.equal(r.status,409);const approved={...a,approval:{approvalId:newId(),approvedAt:new Date().toISOString(),approvedBy:"tester",payloadHash:r.json.approval.payloadHash},noApprovalReason:undefined};assert.equal((await api("/v1/actions",{method:"POST",body:JSON.stringify(approved)})).status,202);});
-  it("denies observe-only mutations",async()=>{const s=ctx.sessions.listSessions()[0]!;const a=createActionRequest({sessionId:s.sessionId,requestId:newId(),actionId:newId(),idempotencyKey:newId(),toolName:"world.fill_blocks",arguments:{dimension:"minecraft:overworld",region:{min:{x:0,y:64,z:0},max:{x:0,y:64,z:0}},blockType:"minecraft:stone"},actor:"tester",risk:"normal",permissionMode:"observe_only"});assert.equal((await api("/v1/actions",{method:"POST",body:JSON.stringify(a)})).status,403);});
+describe("phase 2 policy", () => {
+  it("requires exact approval for a mutation", async () => {
+    const s = ctx.sessions.listSessions()[0]!;
+    const a = createActionRequest({
+      sessionId: s.sessionId,
+      requestId: newId(),
+      actionId: newId(),
+      idempotencyKey: newId(),
+      toolName: "world.fill_blocks",
+      arguments: {
+        dimension: "minecraft:overworld",
+        region: { min: { x: 0, y: 64, z: 0 }, max: { x: 1, y: 64, z: 1 } },
+        blockType: "minecraft:stone",
+      },
+      actor: "tester",
+      risk: "normal",
+    });
+    const r = await api("/v1/actions", { method: "POST", body: JSON.stringify(a) });
+    assert.equal(r.status, 409);
+    const approved = {
+      ...a,
+      approval: {
+        approvalId: newId(),
+        approvedAt: new Date().toISOString(),
+        approvedBy: "tester",
+        payloadHash: r.json.approval.payloadHash,
+      },
+      noApprovalReason: undefined,
+    };
+    assert.equal(
+      (await api("/v1/actions", { method: "POST", body: JSON.stringify(approved) })).status,
+      202,
+    );
+  });
+
+  it("denies observe-only mutations", async () => {
+    const s = ctx.sessions.listSessions()[0]!;
+    const a = createActionRequest({
+      sessionId: s.sessionId,
+      requestId: newId(),
+      actionId: newId(),
+      idempotencyKey: newId(),
+      toolName: "world.fill_blocks",
+      arguments: {
+        dimension: "minecraft:overworld",
+        region: { min: { x: 0, y: 64, z: 0 }, max: { x: 0, y: 64, z: 0 } },
+        blockType: "minecraft:stone",
+      },
+      actor: "tester",
+      risk: "normal",
+      permissionMode: "observe_only",
+    });
+    assert.equal(
+      (await api("/v1/actions", { method: "POST", body: JSON.stringify(a) })).status,
+      403,
+    );
+  });
+});
+
+describe("phase 4 activity and admin", () => {
+  it("queries activity records", async () => {
+    const res = await api("/v1/activity?limit=20");
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json.records));
+    assert.ok(res.json.records.length > 0);
+  });
+
+  it("rejects unknown admin commandId", async () => {
+    const s = ctx.sessions.listSessions()[0]!;
+    const r = await api("/v1/actions", {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: s.sessionId,
+        toolName: "admin.run_command",
+        arguments: { commandId: "not_real" },
+        actor: "tester",
+        risk: "normal",
+      }),
+    });
+    assert.ok(r.status === 400 || r.status === 403);
+  });
+
+  it("requires approval for allowlisted admin command", async () => {
+    const s = ctx.sessions.listSessions()[0]!;
+    const r = await api("/v1/actions", {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: s.sessionId,
+        toolName: "admin.run_command",
+        arguments: { commandId: "time_day" },
+        actor: "tester",
+      }),
+    });
+    assert.equal(r.status, 409);
+    assert.equal(r.json.error.code, "APPROVAL_REQUIRED");
+    assert.equal(r.json.approval.action.arguments.command, "time set day");
+  });
+
+  it("patches permission mode settings", async () => {
+    const r = await api("/v1/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ permissionMode: "observe_only" }),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.permissionMode, "observe_only");
+    await api("/v1/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ permissionMode: "confirm_every_change" }),
+    });
+  });
 });
 
 void createServer;

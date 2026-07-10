@@ -1,10 +1,8 @@
 # IntelaCraft
 
-IntelaCraft is an AI-assisted control system for Minecraft Bedrock Dedicated Server. Phase 1 (Trusted Execution Foundation) is implemented: shared protocol, authenticated controller ↔ behavior-pack connection, read-only world inspection, health reporting, and audit logging.
+IntelaCraft is an AI-assisted control system for Minecraft Bedrock Dedicated Server. Phases 1–4 are implemented: trusted execution, safe mutations, agent/model integration, and a polished localhost webview with activity history, pragmatic admin tools, and hardening docs/tests.
 
-See the [product and technical specification](docs/SPEC.md) and [Phase 1 decisions](docs/spec/decisions.md).
-
-Phase 3 adds isolated Pi planning sessions, OpenAI-compatible provider discovery/testing, optional advisory Bedrock MCP access, structured plans, policy-validated proposed actions, and read-only verification plans. See [Phase 3 decisions](docs/spec/phase-3-decisions.md).
+See the [product and technical specification](docs/SPEC.md), [Phase 4 decisions](docs/spec/phase-4-decisions.md), [operations runbook](docs/ops/runbook.md), and [security review](docs/ops/security-review.md).
 
 ## Quick start
 
@@ -12,8 +10,11 @@ From the repo root:
 
 ```powershell
 npm run setup
+npm run build
 npm run dev
 ```
+
+Open the webview at `http://127.0.0.1:8787/` and enter the same bearer token as `INTELACRAFT_BDS_TOKEN`.
 
 In another terminal:
 
@@ -38,20 +39,15 @@ Or use the PowerShell launcher:
 | Command | What it does |
 |---------|----------------|
 | `npm run setup` | Install + build + create `.env` |
-| `npm run dev` | Start the controller (loads `.env`) |
+| `npm run build` | Build protocol, controller, packs, and webview |
+| `npm run dev` | Start the controller (serves webview + API) |
 | `npm run health` | Show controller / BDS connection status |
 | `npm run inspect -- <tool>` | Queue a read tool and wait for the result |
 | `npm run deploy` | Build + deploy Bedrock packs to `DEPLOY_PATH` |
-| `npm test` | Run protocol + controller tests |
-| `npm run build` | Build all packages |
+| `npm test` | Run protocol + controller (+ e2e) tests |
+| `npm run load-smoke` | Concurrent poll/enqueue smoke (controller must be running) |
 
-Inspect tools: `players`, `status`, `time`, `weather`, `rules`, `block`, `region`.
-
-```powershell
-npm run inspect -- players
-npm run inspect -- status
-npm run inspect -- block '{\"dimension\":\"minecraft:overworld\",\"position\":{\"x\":0,\"y\":64,\"z\":0}}'
-```
+Inspect tools: `players`, `status`, `time`, `weather`, `rules`, `block`, `region`, `entities`, `scoreboard`, `tags`.
 
 ## Configure BDS
 
@@ -61,41 +57,48 @@ Enable script networking / admin modules for the IntelaCraft pack, then set:
 |------|------|---------|
 | Variable | `intelacraft:controller_url` | `http://127.0.0.1:8787` |
 | Variable | `intelacraft:server_id` | `my-bds` |
+| Variable | `intelacraft:admin_commands` | same JSON as `INTELACRAFT_ADMIN_COMMANDS` |
+| Variable | `intelacraft:protected_regions` | optional JSON regions |
 | Secret | `intelacraft:bds_token` | same as `INTELACRAFT_BDS_TOKEN` in `.env` |
 
 Examples: [apps/bedrock-addon/bds-config.example/](apps/bedrock-addon/bds-config.example/).
-
-For pack deploy, create `apps/bedrock-addon/.env`:
-
-```text
-DEPLOY_PATH=<Minecraft data directory>
-DOWNLOAD_PATH=<release output directory>
-```
-
-Then:
-
-```powershell
-npm run deploy
-```
 
 ## Repository layout
 
 ```text
 apps/bedrock-addon/       Behavior + resource packs
-services/controller/      HTTP controller + audit log
+apps/webview/             React control panel (served by controller)
+services/controller/      HTTP controller + audit + activity API
 packages/shared-protocol/ Shared message types / validators
-scripts/                  setup / dev / health / inspect CLIs
+packages/pi-extension/    Isolated Pi planning
+packages/mcp-connection/  Optional advisory MCP client
 docs/SPEC.md
+docs/ops/                 Runbook + security review
 ```
 
-## API surface (Phase 1)
+## API surface (Phase 4)
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/v1/health` | no | Controller + BDS heartbeat status |
+| GET | `/` | no | Webview static UI |
+| GET | `/v1/health` | no | Controller + BDS + agent summary |
 | POST | `/v1/bds/handshake` | bearer | Protocol negotiate / session bind |
 | POST | `/v1/bds/poll` | bearer | Dequeue one pending action |
 | POST | `/v1/bds/events` | bearer | Report operation results |
 | POST | `/v1/bds/heartbeat` | bearer | Connection health |
-| POST | `/v1/actions` | bearer | Enqueue a validated read action |
+| POST | `/v1/actions` | bearer | Enqueue a validated action |
 | GET | `/v1/events` | bearer | Recent operation events |
+| GET | `/v1/events/stream` | bearer | SSE operation progress |
+| GET | `/v1/activity` | bearer | Searchable activity history |
+| DELETE | `/v1/activity` | bearer | Purge activity history |
+| GET/PATCH | `/v1/settings` | bearer | Permission mode + admin command labels |
+| POST | `/v1/emergency-disable` | bearer | Toggle emergency disable |
+| GET/POST | `/v1/providers` | bearer | Provider profiles |
+| POST | `/v1/providers/:id/test` | bearer | Test provider |
+| POST | `/v1/providers/:id/models` | bearer | Discover models |
+| GET | `/v1/mcp/status` | bearer | MCP availability |
+| POST/GET | `/v1/pi/sessions` | bearer | Isolated Pi sessions |
+| POST/GET | `/v1/tasks` | bearer | Planning tasks |
+| POST | `/v1/tasks/:id/approve` | bearer | Approve + enqueue proposed actions |
+| POST | `/v1/tasks/:id/reject` | bearer | Reject plan |
+| POST | `/v1/tasks/:id/cancel` | bearer | Cancel in-flight task |

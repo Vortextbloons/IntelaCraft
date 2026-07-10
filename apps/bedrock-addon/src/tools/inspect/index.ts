@@ -5,10 +5,13 @@ import {
   type ActionRequestMessage,
   type DimensionId,
   type InspectBlockArgs,
+  type InspectEntitiesArgs,
   type InspectGameRulesArgs,
   type InspectPlayersArgs,
   type InspectRegionArgs,
+  type InspectScoreboardArgs,
   type InspectServerStatusArgs,
+  type InspectTagsArgs,
   type InspectTimeArgs,
   type InspectWeatherArgs,
   type ReadToolName,
@@ -64,6 +67,12 @@ export function executeInspectTool(action: ActionRequestMessage): ToolResult {
         return inspectWeather(action.arguments as unknown as InspectWeatherArgs);
       case "inspect.game_rules":
         return inspectGameRules(action.arguments as unknown as InspectGameRulesArgs);
+      case "inspect.entities":
+        return inspectEntities(action.arguments as unknown as InspectEntitiesArgs);
+      case "inspect.scoreboard":
+        return inspectScoreboard(action.arguments as unknown as InspectScoreboardArgs);
+      case "inspect.tags":
+        return inspectTags(action.arguments as unknown as InspectTagsArgs);
       default:
         return {
           ok: false,
@@ -84,11 +93,7 @@ function inspectServerStatus(args: InspectServerStatusArgs): ToolResult {
     players: players.map((p) => p.name),
   };
   if (args.includeDimensions) {
-    result.dimensions = [
-      "minecraft:overworld",
-      "minecraft:nether",
-      "minecraft:the_end",
-    ];
+    result.dimensions = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"];
   }
   return {
     ok: true,
@@ -248,5 +253,118 @@ function inspectGameRules(args: InspectGameRulesArgs): ToolResult {
     completedWork: names.length,
     totalEstimatedWork: names.length,
     message: `Read ${names.length} game rule(s)`,
+  };
+}
+
+function inspectEntities(args: InspectEntitiesArgs): ToolResult {
+  const dimension = getDimension(args.dimension);
+  const filter = args.typeFilter?.toLowerCase();
+  const limit = args.limit ?? 64;
+  const entities = dimension.getEntities();
+  const matched = [];
+  for (const entity of entities) {
+    if (filter && !entity.typeId.toLowerCase().includes(filter)) continue;
+    const loc = entity.location;
+    matched.push({
+      id: entity.id,
+      typeId: entity.typeId,
+      nameTag: entity.nameTag || undefined,
+      location: {
+        x: Math.floor(loc.x),
+        y: Math.floor(loc.y),
+        z: Math.floor(loc.z),
+      },
+    });
+    if (matched.length >= limit) break;
+  }
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      count: matched.length,
+      truncated: entities.length > matched.length,
+      entities: matched,
+    },
+    completedWork: matched.length,
+    totalEstimatedWork: matched.length,
+    message: `Found ${matched.length} entit${matched.length === 1 ? "y" : "ies"}`,
+  };
+}
+
+function inspectScoreboard(args: InspectScoreboardArgs): ToolResult {
+  const scoreboard = world.scoreboard;
+  const objectives = scoreboard.getObjectives();
+  const selected = args.objective
+    ? objectives.filter((o) => o.id === args.objective)
+    : objectives;
+  if (args.objective && selected.length === 0) {
+    return {
+      ok: false,
+      code: "OBJECTIVE_NOT_FOUND",
+      message: `Objective '${args.objective}' not found`,
+    };
+  }
+  const result = selected.map((obj) => {
+    const participants = obj.getParticipants();
+    const scores = participants.slice(0, 64).map((p) => ({
+      displayName: p.displayName,
+      score: obj.getScore(p) ?? null,
+    }));
+    return {
+      id: obj.id,
+      displayName: obj.displayName,
+      participantCount: participants.length,
+      scores,
+    };
+  });
+  return {
+    ok: true,
+    result: { objectives: result },
+    completedWork: result.length,
+    totalEstimatedWork: result.length,
+    message: `Read ${result.length} objective(s)`,
+  };
+}
+
+function inspectTags(args: InspectTagsArgs): ToolResult {
+  if (args.player !== false) {
+    const player = world
+      .getPlayers()
+      .find((p) => p.name === args.target || p.id === args.target);
+    if (player) {
+      const tags = player.getTags();
+      return {
+        ok: true,
+        result: { kind: "player", name: player.name, id: player.id, tags },
+        completedWork: tags.length,
+        totalEstimatedWork: tags.length,
+        message: `Player ${player.name} has ${tags.length} tag(s)`,
+      };
+    }
+  }
+  for (const dimId of ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"] as const) {
+    const entities = world.getDimension(dimId).getEntities();
+    const entity = entities.find((e) => e.id === args.target || e.nameTag === args.target);
+    if (entity) {
+      const tags = entity.getTags();
+      return {
+        ok: true,
+        result: {
+          kind: "entity",
+          id: entity.id,
+          typeId: entity.typeId,
+          nameTag: entity.nameTag || undefined,
+          tags,
+        },
+        completedWork: tags.length,
+        totalEstimatedWork: tags.length,
+        message: `Entity ${entity.typeId} has ${tags.length} tag(s)`,
+      };
+    }
+  }
+  return {
+    ok: false,
+    code: "TARGET_NOT_FOUND",
+    message: `No player or entity matched '${args.target}'`,
   };
 }

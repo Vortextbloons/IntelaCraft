@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   PROTOCOL_VERSION,
+  PERMISSION_MODES,
   createEnvelope,
   isProtocolCompatible,
   newId,
@@ -10,20 +11,25 @@ import {
   validateOperationEvent,
   validatePoll,
   type ActionRequestMessage,
+  type PermissionMode,
 } from "@intelacraft/shared-protocol";
+import type { ActivityStore } from "./activity.js";
 import type { AuditLog } from "./audit.js";
 import type { ControllerConfig } from "./config.js";
 import { readJson, requireAuth, sendJson } from "./http.js";
-import type { EventStore, SessionStore } from "./store.js";
+import type { EventStore, SessionStore, SettingsStore } from "./store.js";
 import { approvalRequired, classify, enforceMode, payloadHash } from "./policy.js";
 import type { AgentRuntime } from "./agent.js";
+import { tryServeStatic } from "./static.js";
 
 export interface AppContext {
   config: ControllerConfig;
   sessions: SessionStore;
   events: EventStore;
   audit: AuditLog;
-  agent?:AgentRuntime;
+  activity: ActivityStore;
+  settings: SettingsStore;
+  agent?: AgentRuntime;
 }
 
 export function createApp(ctx: AppContext) {
@@ -55,6 +61,11 @@ async function handleRequest(
     return handleHealth(ctx, res);
   }
 
+  // Static webview (unauthenticated) — API under /v1 always wins
+  if (method === "GET" && !path.startsWith("/v1/")) {
+    if (tryServeStatic(req, res, ctx.config.webviewDistPath, path)) return;
+  }
+
   if (!requireAuth(req, res, ctx.config.bdsToken)) {
     return;
   }
@@ -77,22 +88,175 @@ async function handleRequest(
   if (method === "GET" && path === "/v1/events") {
     return handleListEvents(ctx, res);
   }
-  if (method === "POST" && path === "/v1/emergency-disable") {
-    const body=await readJson(req) as Record<string,unknown>;
-    const sessionId=typeof body.sessionId==="string"?body.sessionId:ctx.sessions.listSessions()[0]?.sessionId;
-    if(!sessionId||!ctx.sessions.setEmergencyDisabled(sessionId,body.disabled!==false)){sendJson(res,404,{error:{code:"NO_SESSION",message:"Unknown session"}});return;}
-    ctx.audit.append({type:"emergency_disable",sessionId,disabled:body.disabled!==false,actor:body.actor??"controller"});
-    sendJson(res,200,{ok:true,sessionId,emergencyDisabled:body.disabled!==false}); return;
+  if (method === "GET" && path === "/v1/events/stream") {
+    return handleEventStream(ctx, req, res);
   }
-  if(ctx.agent&&method==="GET"&&path==="/v1/providers"){sendJson(res,200,{providers:ctx.agent.listProviders()});return;}
-  if(ctx.agent&&method==="POST"&&path==="/v1/providers"){const b=await readJson(req) as any;sendJson(res,201,{provider:ctx.agent.saveProvider(b)});return;}
-  const providerTest=/^\/v1\/providers\/([^/]+)\/(test|models)$/.exec(path);if(ctx.agent&&method==="POST"&&providerTest){const id=decodeURIComponent(providerTest[1]);sendJson(res,200,providerTest[2]==="test"?await ctx.agent.test(id):{models:await ctx.agent.models(id)});return;}
-  if(ctx.agent&&method==="GET"&&path==="/v1/mcp/status"){sendJson(res,200,ctx.agent.mcp.status());return;}
-  if(ctx.agent&&method==="POST"&&path==="/v1/pi/sessions"){const b=await readJson(req) as any;sendJson(res,201,{session:await ctx.agent.createSession(String(b.providerId??"default"))});return;}
-  if(ctx.agent&&method==="GET"&&path==="/v1/pi/sessions"){sendJson(res,200,{sessions:ctx.agent.listSessions()});return;}
-  if(ctx.agent&&method==="POST"&&path==="/v1/tasks"){const b=await readJson(req) as any;const bdsSessionId=String(b.bdsSessionId??ctx.sessions.listSessions()[0]?.sessionId??"");if(!bdsSessionId){sendJson(res,400,{error:{code:"NO_SESSION",message:"No BDS session"}});return;}sendJson(res,201,{task:await ctx.agent.createTask({...b,bdsSessionId})});return;}
-  if(ctx.agent&&method==="GET"&&path==="/v1/tasks"){sendJson(res,200,{tasks:ctx.agent.listTasks()});return;}
-  const taskMatch=/^\/v1\/tasks\/([^/]+)$/.exec(path);if(ctx.agent&&method==="GET"&&taskMatch){const task=ctx.agent.getTask(decodeURIComponent(taskMatch[1]));if(!task){sendJson(res,404,{error:{code:"NOT_FOUND",message:"Task not found"}});return;}sendJson(res,200,{task});return;}
+  if (method === "GET" && path === "/v1/activity") {
+    return handleActivityQuery(ctx, url, res);
+  }
+  if (method === "DELETE" && path === "/v1/activity") {
+    const result = ctx.activity.purge();
+    ctx.audit.append({ type: "activity_purged", removed: result.removed, actor: "controller" });
+    sendJson(res, 200, { ok: true, ...result });
+    return;
+  }
+  if (method === "GET" && path === "/v1/settings") {
+    sendJson(res, 200, {
+      ...ctx.settings.get(),
+      adminCommands: Object.entries(ctx.config.adminCommands).map(([id, e]) => ({
+        id,
+        label: e.label,
+        risk: e.risk,
+      })),
+    });
+    return;
+  }
+  if (method === "PATCH" && path === "/v1/settings") {
+    const body = (await readJson(req)) as { permissionMode?: string };
+    if (
+      body.permissionMode &&
+      !(PERMISSION_MODES as readonly string[]).includes(body.permissionMode)
+    ) {
+      sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid permissionMode" } });
+      return;
+    }
+    const next = ctx.settings.patch({
+      permissionMode: body.permissionMode as PermissionMode | undefined,
+    });
+    ctx.audit.append({ type: "settings_updated", ...next });
+    sendJson(res, 200, next);
+    return;
+  }
+  if (method === "POST" && path === "/v1/emergency-disable") {
+    const body = (await readJson(req)) as Record<string, unknown>;
+    const sessionId =
+      typeof body.sessionId === "string"
+        ? body.sessionId
+        : ctx.sessions.listSessions()[0]?.sessionId;
+    if (!sessionId || !ctx.sessions.setEmergencyDisabled(sessionId, body.disabled !== false)) {
+      sendJson(res, 404, { error: { code: "NO_SESSION", message: "Unknown session" } });
+      return;
+    }
+    ctx.audit.append({
+      type: "emergency_disable",
+      sessionId,
+      disabled: body.disabled !== false,
+      actor: body.actor ?? "controller",
+    });
+    sendJson(res, 200, {
+      ok: true,
+      sessionId,
+      emergencyDisabled: body.disabled !== false,
+    });
+    return;
+  }
+
+  if (ctx.agent && method === "GET" && path === "/v1/providers") {
+    sendJson(res, 200, { providers: ctx.agent.listProviders() });
+    return;
+  }
+  if (ctx.agent && method === "POST" && path === "/v1/providers") {
+    const b = (await readJson(req)) as any;
+    sendJson(res, 201, { provider: ctx.agent.saveProvider(b) });
+    return;
+  }
+  const providerTest = /^\/v1\/providers\/([^/]+)\/(test|models)$/.exec(path);
+  if (ctx.agent && method === "POST" && providerTest) {
+    const id = decodeURIComponent(providerTest[1]);
+    sendJson(
+      res,
+      200,
+      providerTest[2] === "test" ? await ctx.agent.test(id) : { models: await ctx.agent.models(id) },
+    );
+    return;
+  }
+  if (ctx.agent && method === "GET" && path === "/v1/mcp/status") {
+    sendJson(res, 200, ctx.agent.mcp.status());
+    return;
+  }
+  if (ctx.agent && method === "POST" && path === "/v1/pi/sessions") {
+    const b = (await readJson(req)) as any;
+    sendJson(res, 201, { session: await ctx.agent.createSession(String(b.providerId ?? "default")) });
+    return;
+  }
+  if (ctx.agent && method === "GET" && path === "/v1/pi/sessions") {
+    sendJson(res, 200, { sessions: ctx.agent.listSessions() });
+    return;
+  }
+  if (ctx.agent && method === "POST" && path === "/v1/tasks") {
+    const b = (await readJson(req)) as any;
+    const bdsSessionId = String(
+      b.bdsSessionId ?? ctx.sessions.listSessions()[0]?.sessionId ?? "",
+    );
+    if (!bdsSessionId) {
+      sendJson(res, 400, { error: { code: "NO_SESSION", message: "No BDS session" } });
+      return;
+    }
+    const permissionMode =
+      (b.permissionMode as PermissionMode | undefined) ?? ctx.settings.get().permissionMode;
+    const task = await ctx.agent.createTask({ ...b, bdsSessionId, permissionMode });
+    ctx.audit.append({
+      type: "task_lifecycle",
+      taskId: task.id,
+      state: task.state,
+      request: b.request,
+    });
+    sendJson(res, 201, { task });
+    return;
+  }
+  if (ctx.agent && method === "GET" && path === "/v1/tasks") {
+    sendJson(res, 200, { tasks: ctx.agent.listTasks() });
+    return;
+  }
+  const taskAction = /^\/v1\/tasks\/([^/]+)\/(approve|reject|cancel)$/.exec(path);
+  if (ctx.agent && method === "POST" && taskAction) {
+    const taskId = decodeURIComponent(taskAction[1]);
+    const action = taskAction[2];
+    const b = (await readJson(req)) as Record<string, unknown>;
+    try {
+      if (action === "approve") {
+        const task = ctx.agent.approveTask(taskId, {
+          approvedBy: String(b.approvedBy ?? "webview"),
+          sessions: ctx.sessions,
+          audit: ctx.audit,
+        });
+        sendJson(res, 200, { task });
+        return;
+      }
+      if (action === "reject") {
+        const task = ctx.agent.rejectTask(taskId, {
+          rejectedBy: String(b.rejectedBy ?? "webview"),
+          reason: typeof b.reason === "string" ? b.reason : undefined,
+          audit: ctx.audit,
+        });
+        sendJson(res, 200, { task });
+        return;
+      }
+      const task = ctx.agent.cancelTask(taskId, {
+        cancelledBy: String(b.cancelledBy ?? "webview"),
+        sessions: ctx.sessions,
+        audit: ctx.audit,
+      });
+      sendJson(res, 200, { task });
+      return;
+    } catch (e) {
+      const err = e as Error & { code?: string; status?: number };
+      sendJson(res, err.status ?? 400, {
+        error: { code: err.code ?? "TASK_ERROR", message: err.message },
+      });
+      return;
+    }
+  }
+  const taskMatch = /^\/v1\/tasks\/([^/]+)$/.exec(path);
+  if (ctx.agent && method === "GET" && taskMatch) {
+    const task = ctx.agent.getTask(decodeURIComponent(taskMatch[1]));
+    if (!task) {
+      sendJson(res, 404, { error: { code: "NOT_FOUND", message: "Task not found" } });
+      return;
+    }
+    sendJson(res, 200, { task });
+    return;
+  }
 
   sendJson(res, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
 }
@@ -100,9 +264,7 @@ async function handleRequest(
 function handleHealth(ctx: AppContext, res: ServerResponse): void {
   const now = Date.now();
   const sessions = ctx.sessions.listSessions().map((s) => {
-    const ageMs = s.lastHeartbeatAt
-      ? now - Date.parse(s.lastHeartbeatAt)
-      : null;
+    const ageMs = s.lastHeartbeatAt ? now - Date.parse(s.lastHeartbeatAt) : null;
     const connected =
       ageMs !== null && !Number.isNaN(ageMs) && ageMs <= ctx.config.heartbeatStaleMs;
     return {
@@ -114,6 +276,7 @@ function handleHealth(ctx: AppContext, res: ServerResponse): void {
       heartbeatAgeMs: ageMs,
       connected,
       health: s.lastHealth,
+      emergencyDisabled: ctx.sessions.isEmergencyDisabled(s.sessionId),
     };
   });
   sendJson(res, 200, {
@@ -121,7 +284,15 @@ function handleHealth(ctx: AppContext, res: ServerResponse): void {
     protocolVersion: PROTOCOL_VERSION,
     bdsConnected: sessions.some((s) => s.connected),
     sessions,
-    agent: ctx.agent ? { pi: true, sessions: ctx.agent.listSessions().length, providers: ctx.agent.listProviders().length, mcp: ctx.agent.mcp.status() } : { pi: false },
+    settings: ctx.settings.get(),
+    agent: ctx.agent
+      ? {
+          pi: true,
+          sessions: ctx.agent.listSessions().length,
+          providers: ctx.agent.listProviders().length,
+          mcp: ctx.agent.mcp.status(),
+        }
+      : { pi: false },
   });
 }
 
@@ -229,6 +400,7 @@ async function handleEvents(
     result: parsed.value.result,
     error: parsed.value.error,
   });
+  ctx.agent?.onOperationEvent(parsed.value.actionId, parsed.value.state, ctx.audit);
   sendJson(res, 200, { ok: true });
 }
 
@@ -285,23 +457,47 @@ async function handleEnqueueAction(
       });
       return;
     }
+    let args: Record<string, unknown> =
+      typeof input.arguments === "object" && input.arguments !== null
+        ? { ...(input.arguments as Record<string, unknown>) }
+        : {};
+    if (input.toolName === "admin.run_command") {
+      const commandId = String(args.commandId ?? "");
+      const entry = ctx.config.adminCommands[commandId];
+      if (!entry) {
+        sendJson(res, 400, {
+          error: { code: "UNKNOWN_COMMAND", message: `Unknown commandId '${commandId}'` },
+        });
+        return;
+      }
+      args = { commandId, command: entry.command };
+    }
+    const toolName = String(input.toolName ?? "");
+    const defaultRisk =
+      typeof input.risk === "string"
+        ? input.risk
+        : toolName.startsWith("inspect.")
+          ? "read"
+          : toolName === "admin.run_command"
+            ? (ctx.config.adminCommands[String(args.commandId)]?.risk ?? "normal")
+            : toolName === "control.emergency_disable"
+              ? "strong"
+              : "normal";
     const draft = {
       ...createEnvelope("action_request", sessionId, newId("req")),
       messageType: "action_request" as const,
       actionId: typeof input.actionId === "string" ? input.actionId : newId("action"),
       idempotencyKey:
-        typeof input.idempotencyKey === "string"
-          ? input.idempotencyKey
-          : newId("idem"),
+        typeof input.idempotencyKey === "string" ? input.idempotencyKey : newId("idem"),
       toolName: input.toolName,
-      arguments:
-        typeof input.arguments === "object" && input.arguments !== null
-          ? (input.arguments as Record<string, unknown>)
-          : {},
+      arguments: args,
       actor: typeof input.actor === "string" ? input.actor : "controller",
-      permissionMode: input.permissionMode ?? "confirm_every_change",
-      risk: input.risk ?? "read",
-      noApprovalReason: "read_risk_no_approval",
+      permissionMode: input.permissionMode ?? ctx.settings.get().permissionMode,
+      risk: defaultRisk,
+      noApprovalReason:
+        typeof input.noApprovalReason === "string"
+          ? input.noApprovalReason
+          : "pending_approval_check",
       expiresAt:
         typeof input.expiresAt === "string"
           ? input.expiresAt
@@ -318,18 +514,82 @@ async function handleEnqueueAction(
     return;
   }
 
-  const policy={protectedRegions:ctx.config.protectedRegions,builderRegions:ctx.config.builderRegions};
-  const classification=classify(action,policy);
-  if(classification.risk!==action.risk){ sendJson(res,400,{error:{code:"RISK_MISMATCH",message:`Expected risk ${classification.risk}: ${classification.reason}`}}); return; }
-  const denied=enforceMode(action.permissionMode,action,policy);
-  if(denied){sendJson(res,403,{error:{code:"POLICY_DENIED",message:denied}});return;}
-  const hash=payloadHash(action);
-  if(approvalRequired(action.permissionMode,action.risk,action,policy)){
-    if(!action.approval){sendJson(res,409,{error:{code:"APPROVAL_REQUIRED",message:"Exact payload approval required"},approval:{payloadHash:hash,risk:action.risk,action}});return;}
-    if(action.approval.payloadHash!==hash){sendJson(res,409,{error:{code:"APPROVAL_INVALID",message:"Approval does not match immutable action payload"}});return;}
-    if(Date.now()-Date.parse(action.approval.approvedAt)>5*60*1000){sendJson(res,409,{error:{code:"APPROVAL_EXPIRED",message:"Approval is stale"}});return;}
+  const policy = {
+    protectedRegions: ctx.config.protectedRegions,
+    builderRegions: ctx.config.builderRegions,
+    adminCommands: ctx.config.adminCommands,
+  };
+  const classification = classify(action, policy);
+  if (classification.risk !== action.risk) {
+    // Auto-correct risk for convenience drafts when client sent default "read"
+    if (
+      action.risk === "read" &&
+      classification.risk !== "read" &&
+      classification.risk !== "prohibited"
+    ) {
+      action = { ...action, risk: classification.risk, noApprovalReason: undefined };
+    } else {
+      sendJson(res, 400, {
+        error: {
+          code: "RISK_MISMATCH",
+          message: `Expected risk ${classification.risk}: ${classification.reason}`,
+        },
+      });
+      return;
+    }
   }
-  if(ctx.sessions.isEmergencyDisabled(action.sessionId)&&action.risk!=="read"){sendJson(res,503,{error:{code:"EMERGENCY_DISABLED",message:"Mutations are disabled"}});return;}
+  const denied = enforceMode(action.permissionMode, action, policy);
+  if (denied) {
+    ctx.audit.append({
+      type: "policy_denied",
+      actionId: action.actionId,
+      toolName: action.toolName,
+      actor: action.actor,
+      reason: denied,
+      risk: action.risk,
+    });
+    sendJson(res, 403, { error: { code: "POLICY_DENIED", message: denied } });
+    return;
+  }
+  const hash = payloadHash(action);
+  if (approvalRequired(action.permissionMode, action.risk, action, policy)) {
+    if (!action.approval) {
+      sendJson(res, 409, {
+        error: { code: "APPROVAL_REQUIRED", message: "Exact payload approval required" },
+        approval: { payloadHash: hash, risk: action.risk, action },
+      });
+      return;
+    }
+    if (action.approval.payloadHash !== hash) {
+      sendJson(res, 409, {
+        error: {
+          code: "APPROVAL_INVALID",
+          message: "Approval does not match immutable action payload",
+        },
+      });
+      return;
+    }
+    if (Date.now() - Date.parse(action.approval.approvedAt) > 5 * 60 * 1000) {
+      sendJson(res, 409, {
+        error: { code: "APPROVAL_EXPIRED", message: "Approval is stale" },
+      });
+      return;
+    }
+    ctx.audit.append({
+      type: "approval_granted",
+      actionId: action.actionId,
+      actor: action.approval.approvedBy,
+      risk: action.risk,
+      payloadHash: hash,
+      toolName: action.toolName,
+    });
+  }
+  if (ctx.sessions.isEmergencyDisabled(action.sessionId) && action.risk !== "read") {
+    sendJson(res, 503, {
+      error: { code: "EMERGENCY_DISABLED", message: "Mutations are disabled" },
+    });
+    return;
+  }
   const result = ctx.sessions.enqueue(action.sessionId, action);
   if (!result.ok) {
     sendJson(res, 409, { error: { code: result.code, message: result.message } });
@@ -356,4 +616,39 @@ async function handleEnqueueAction(
 
 function handleListEvents(ctx: AppContext, res: ServerResponse): void {
   sendJson(res, 200, { events: ctx.events.recent(100) });
+}
+
+function handleActivityQuery(ctx: AppContext, url: URL, res: ServerResponse): void {
+  const records = ctx.activity.query({
+    taskId: url.searchParams.get("taskId") ?? undefined,
+    actionId: url.searchParams.get("actionId") ?? undefined,
+    operationId: url.searchParams.get("operationId") ?? undefined,
+    type: url.searchParams.get("type") ?? undefined,
+    since: url.searchParams.get("since") ?? undefined,
+    limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 100,
+  });
+  sendJson(res, 200, { records });
+}
+
+function handleEventStream(
+  ctx: AppContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+  const unsub = ctx.events.subscribe((record) => {
+    res.write(`event: operation\ndata: ${JSON.stringify(record)}\n\n`);
+  });
+  const keepAlive = setInterval(() => {
+    res.write(`: ping\n\n`);
+  }, 15000);
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    unsub();
+  });
 }

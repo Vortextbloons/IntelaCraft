@@ -36,6 +36,10 @@ import type {
   InspectServerStatusArgs,
   InspectTimeArgs,
   InspectWeatherArgs,
+  InspectEntitiesArgs,
+  InspectScoreboardArgs,
+  InspectTagsArgs,
+  AdminRunCommandArgs,
   FillBlocksArgs,
   MessageEnvelope,
   OperationEventMessage,
@@ -438,6 +442,12 @@ export function validateToolArguments(
       return asArgs(validateInspectWeather(args));
     case "inspect.game_rules":
       return asArgs(validateInspectGameRules(args));
+    case "inspect.entities":
+      return asArgs(validateInspectEntities(args));
+    case "inspect.scoreboard":
+      return asArgs(validateInspectScoreboard(args));
+    case "inspect.tags":
+      return asArgs(validateInspectTags(args));
     case "world.fill_blocks":
       return asArgs(validateFillBlocks(args));
     case "control.cancel":
@@ -446,6 +456,8 @@ export function validateToolArguments(
     case "control.emergency_disable":
       if(typeof args.disabled!=="boolean") return fail("INVALID_ARGS","disabled must be boolean");
       return ok({disabled:args.disabled});
+    case "admin.run_command":
+      return asArgs(validateAdminRunCommand(args));
     default:
       return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
   }
@@ -539,4 +551,60 @@ function validateInspectGameRules(
     return ok({ names: args.names as string[] });
   }
   return ok({});
+}
+
+function validateInspectEntities(
+  args: Record<string, unknown>,
+): ValidateResult<InspectEntitiesArgs> {
+  if (!isDimensionId(args.dimension)) {
+    return fail("INVALID_ARGS", "dimension is required");
+  }
+  if (args.typeFilter !== undefined && typeof args.typeFilter !== "string") {
+    return fail("INVALID_ARGS", "typeFilter must be a string");
+  }
+  const limit = args.limit === undefined ? 64 : args.limit;
+  if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 128) {
+    return fail("INVALID_ARGS", "limit must be an integer 1-128");
+  }
+  return ok({
+    dimension: args.dimension,
+    typeFilter: typeof args.typeFilter === "string" ? args.typeFilter : undefined,
+    limit: limit as number,
+  });
+}
+
+function validateInspectScoreboard(
+  args: Record<string, unknown>,
+): ValidateResult<InspectScoreboardArgs> {
+  if (args.objective !== undefined && typeof args.objective !== "string") {
+    return fail("INVALID_ARGS", "objective must be a string");
+  }
+  return ok({
+    objective: typeof args.objective === "string" ? args.objective : undefined,
+  });
+}
+
+function validateInspectTags(args: Record<string, unknown>): ValidateResult<InspectTagsArgs> {
+  if (!isNonEmptyString(args.target)) {
+    return fail("INVALID_ARGS", "target is required");
+  }
+  return ok({
+    target: args.target,
+    player: args.player === undefined ? true : Boolean(args.player),
+  });
+}
+
+function validateAdminRunCommand(
+  args: Record<string, unknown>,
+): ValidateResult<AdminRunCommandArgs> {
+  if (!isNonEmptyString(args.commandId)) {
+    return fail("INVALID_ARGS", "commandId is required");
+  }
+  if (args.command !== undefined && typeof args.command !== "string") {
+    return fail("INVALID_ARGS", "command must be a string when present");
+  }
+  return ok({
+    commandId: args.commandId,
+    command: typeof args.command === "string" ? args.command : undefined,
+  });
 }

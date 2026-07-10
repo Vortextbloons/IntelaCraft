@@ -2,6 +2,7 @@ import type {
   ActionRequestMessage,
   HeartbeatMessage,
   OperationEventMessage,
+  PermissionMode,
 } from "@intelacraft/shared-protocol";
 import { isExpired } from "@intelacraft/shared-protocol";
 
@@ -20,8 +21,16 @@ export class SessionStore {
   private queues = new Map<string, ActionRequestMessage[]>();
   private seenIdempotency = new Map<string, string>();
   private emergencyDisabled = new Set<string>();
-  setEmergencyDisabled(sessionId:string, value:boolean): boolean { if(!this.sessions.has(sessionId))return false; value?this.emergencyDisabled.add(sessionId):this.emergencyDisabled.delete(sessionId); return true; }
-  isEmergencyDisabled(sessionId:string): boolean { return this.emergencyDisabled.has(sessionId); }
+
+  setEmergencyDisabled(sessionId: string, value: boolean): boolean {
+    if (!this.sessions.has(sessionId)) return false;
+    value ? this.emergencyDisabled.add(sessionId) : this.emergencyDisabled.delete(sessionId);
+    return true;
+  }
+
+  isEmergencyDisabled(sessionId: string): boolean {
+    return this.emergencyDisabled.has(sessionId);
+  }
 
   upsertSession(session: BdsSession): void {
     const existingSessionId = this.sessionsByServer.get(session.serverId);
@@ -53,7 +62,10 @@ export class SessionStore {
     return true;
   }
 
-  enqueue(sessionId: string, action: ActionRequestMessage): { ok: true } | { ok: false; code: string; message: string } {
+  enqueue(
+    sessionId: string,
+    action: ActionRequestMessage,
+  ): { ok: true } | { ok: false; code: string; message: string } {
     if (!this.sessions.has(sessionId)) {
       return { ok: false, code: "NO_SESSION", message: "Unknown sessionId" };
     }
@@ -98,17 +110,49 @@ export interface EventRecord {
   event: OperationEventMessage;
 }
 
+type EventListener = (record: EventRecord) => void;
+
 export class EventStore {
   private events: EventRecord[] = [];
+  private listeners = new Set<EventListener>();
 
-  add(event: OperationEventMessage): void {
-    this.events.push({ receivedAt: new Date().toISOString(), event });
+  add(event: OperationEventMessage): EventRecord {
+    const record: EventRecord = { receivedAt: new Date().toISOString(), event };
+    this.events.push(record);
     if (this.events.length > 5000) {
       this.events.splice(0, this.events.length - 5000);
     }
+    for (const listener of this.listeners) {
+      try {
+        listener(record);
+      } catch {
+        // ignore subscriber errors
+      }
+    }
+    return record;
   }
 
   recent(limit = 50): EventRecord[] {
     return this.events.slice(-limit);
+  }
+
+  subscribe(listener: EventListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+}
+
+export class SettingsStore {
+  constructor(private permissionMode: PermissionMode) {}
+
+  get() {
+    return { permissionMode: this.permissionMode };
+  }
+
+  patch(input: { permissionMode?: PermissionMode }) {
+    if (input.permissionMode) this.permissionMode = input.permissionMode;
+    return this.get();
   }
 }

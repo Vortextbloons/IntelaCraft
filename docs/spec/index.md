@@ -12,6 +12,9 @@ This directory contains the IntelaCraft specification split into logical groups 
 | [operations.md](operations.md) | 9-11 | Building Jobs, Model Providers, Security & Reliability |
 | [delivery.md](delivery.md) | 12-17 | Observability, Acceptance Criteria, Delivery Phases, Repository Structure, Open Decisions, Success Definition |
 | [decisions.md](decisions.md) | — | Resolved Phase 1 transport, auth, and version choices |
+| [phase-2-decisions.md](phase-2-decisions.md) | — | Build limits, approval binding, emergency disable |
+| [phase-3-decisions.md](phase-3-decisions.md) | — | Pi isolation, providers, MCP advisory planning |
+| [phase-4-decisions.md](phase-4-decisions.md) | — | Webview, activity history, admin allowlist |
 
 ## Full Specification
 

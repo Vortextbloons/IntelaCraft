@@ -1,4 +1,5 @@
 {
   "intelacraft:controller_url": "http://127.0.0.1:8787",
-  "intelacraft:server_id": "bds-default"
+  "intelacraft:server_id": "bds-default",
+  "intelacraft:admin_commands": "{\"time_day\":{\"command\":\"time set day\",\"risk\":\"normal\",\"label\":\"Set time to day\"}}"
 }

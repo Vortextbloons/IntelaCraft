@@ -22,7 +22,9 @@ if (!existsSync(addonEnv)) {
 
 console.log("");
 console.log("  Ready. Next:");
-console.log("    npm run dev          start the controller");
+console.log("    npm run build        build packs + webview");
+console.log("    npm run dev          start the controller (serves UI at /)");
+console.log("    open http://127.0.0.1:8787/");
 console.log("    npm run health       check controller + BDS link");
 console.log("    npm run inspect -- players");
 console.log("    npm run deploy       build + deploy Bedrock packs");

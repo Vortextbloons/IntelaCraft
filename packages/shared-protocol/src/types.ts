@@ -157,3 +157,30 @@ export interface InspectGameRulesArgs {
 export interface InspectServerStatusArgs {
   includeDimensions?: boolean;
 }
+
+export interface InspectEntitiesArgs {
+  dimension: DimensionId;
+  /** Optional type id substring filter (case-insensitive). */
+  typeFilter?: string;
+  /** Soft cap on returned entities (default 64, max 128). */
+  limit?: number;
+}
+
+export interface InspectScoreboardArgs {
+  /** When set, return only this objective. */
+  objective?: string;
+}
+
+export interface InspectTagsArgs {
+  /** Player name or entity id to inspect. */
+  target: string;
+  /** Prefer player lookup when true (default). */
+  player?: boolean;
+}
+
+export interface AdminRunCommandArgs {
+  /** Allowlisted command id — never a free-form command string from the client. */
+  commandId: string;
+  /** Resolved by the controller from the allowlist before enqueue; revalidated by the add-on. */
+  command?: string;
+}

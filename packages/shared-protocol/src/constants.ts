@@ -52,8 +52,16 @@ export const READ_TOOLS = [
   "inspect.time",
   "inspect.weather",
   "inspect.game_rules",
+  "inspect.entities",
+  "inspect.scoreboard",
+  "inspect.tags",
 ] as const;
-export const MUTATION_TOOLS = ["world.fill_blocks", "control.cancel", "control.emergency_disable"] as const;
+export const MUTATION_TOOLS = [
+  "world.fill_blocks",
+  "control.cancel",
+  "control.emergency_disable",
+  "admin.run_command",
+] as const;
 
 export type ReadToolName = (typeof READ_TOOLS)[number];
 export type MutationToolName = (typeof MUTATION_TOOLS)[number];
