@@ -1138,6 +1138,8 @@ var ControllerClient = class {
     req.timeout = 10;
     req.headers = [
       new HttpHeader("Content-Type", "application/json"),
+      // Secret must already be the full header value, e.g. "Bearer <token>"
+      // (SecretString cannot be concatenated in script).
       new HttpHeader("Authorization", this.authToken)
     ];
     const response = await http.request(req);
@@ -1148,6 +1150,11 @@ var ControllerClient = class {
       } catch {
         parsed = { raw: response.body };
       }
+    }
+    if (response.status < 200 || response.status >= 300) {
+      const err = parsed && typeof parsed === "object" && "error" in parsed && parsed.error;
+      const message = err && typeof err.message === "string" ? err.message : `HTTP ${response.status}`;
+      throw new Error(message);
     }
     return { status: response.status, body: parsed };
   }

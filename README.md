@@ -43,15 +43,24 @@ Or use the PowerShell launcher:
 | `npm run dev` | Start the controller (serves webview + API) |
 | `npm run health` | Show controller / BDS connection status |
 | `npm run inspect -- <tool>` | Queue a read tool and wait for the result |
-| `npm run deploy` | Build + deploy Bedrock packs to `DEPLOY_PATH` |
-| `npm test` | Run protocol + controller (+ e2e) tests |
+| `npm run deploy` | Deploy packs; if `BDS_PATH` is set, also configure BDS |
+| `npm run configure-bds` | Write BDS variables/secrets/permissions + deploy packs |
+| `npm test` | Run protocol + controller tests |
 | `npm run load-smoke` | Concurrent poll/enqueue smoke (controller must be running) |
 
 Inspect tools: `players`, `status`, `time`, `weather`, `rules`, `block`, `region`, `entities`, `scoreboard`, `tags`.
 
 ## Configure BDS
 
-Enable script networking / admin modules for the IntelaCraft pack, then set:
+Set `BDS_PATH` in the repo `.env` to your Bedrock Dedicated Server folder (the one with `bedrock_server.exe`), then:
+
+```powershell
+npm run configure-bds
+# or
+npm run deploy
+```
+
+That merges IntelaCraft into `config/default/variables.json`, `secrets.json`, and `permissions.json` (without wiping other keys), deploys packs to `development_*_packs`, and enables them on worlds.
 
 | Kind | Name | Example |
 |------|------|---------|
@@ -59,10 +68,11 @@ Enable script networking / admin modules for the IntelaCraft pack, then set:
 | Variable | `intelacraft:server_id` | `my-bds` |
 | Variable | `intelacraft:admin_commands` | same JSON as `INTELACRAFT_ADMIN_COMMANDS` |
 | Variable | `intelacraft:protected_regions` | optional JSON regions |
-| Secret | `intelacraft:bds_token` | same as `INTELACRAFT_BDS_TOKEN` in `.env` |
+| Secret | `intelacraft:bds_token` | `Bearer` + same value as `INTELACRAFT_BDS_TOKEN` (full Authorization header; required because scripts cannot concatenate SecretString) |
 
-Examples: [apps/bedrock-addon/bds-config.example/](apps/bedrock-addon/bds-config.example/).
+Manual examples: [apps/bedrock-addon/bds-config.example/](apps/bedrock-addon/bds-config.example/).
 
+For client `com.mojang` pack-only deploy (no BDS config), omit `BDS_PATH` and set `DEPLOY_PATH` in `apps/bedrock-addon/.env` instead.
 ## Repository layout
 
 ```text

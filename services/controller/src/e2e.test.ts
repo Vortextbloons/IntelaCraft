@@ -33,6 +33,7 @@ const ctx = {
     protectedRegions: [],
     builderRegions: [],
     piStoragePath: join(dir, "pi"),
+    providersPath: join(dir, "providers.json"),
     adminCommands: {},
     webviewDistPath: join(dir, "wv"),
     defaultPermissionMode: "confirm_every_change" as const,

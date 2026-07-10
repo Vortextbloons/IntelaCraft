@@ -38,12 +38,21 @@ export function createApp(ctx: AppContext) {
       await handleRequest(ctx, req, res);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Internal error";
-      if (message === "Invalid JSON" || message === "Body too large") {
+      if (
+        message === "Invalid JSON" ||
+        message === "Body too large" ||
+        message.includes("required") ||
+        message.startsWith("API key") ||
+        message.startsWith("Provider ") ||
+        message.startsWith("Unknown provider") ||
+        message.includes("invalid") ||
+        message.includes("API key")
+      ) {
         sendJson(res, 400, { error: { code: "BAD_REQUEST", message } });
         return;
       }
       console.error(err);
-      sendJson(res, 500, { error: { code: "INTERNAL", message: "Internal error" } });
+      sendJson(res, 500, { error: { code: "INTERNAL", message } });
     }
   });
 }
@@ -152,12 +161,21 @@ async function handleRequest(
   }
 
   if (ctx.agent && method === "GET" && path === "/v1/providers") {
-    sendJson(res, 200, { providers: ctx.agent.listProviders() });
+    const active = ctx.agent.getActiveProvider();
+    sendJson(res, 200, {
+      providers: ctx.agent.listProviders(),
+      activeProviderId: active.activeProviderId,
+    });
     return;
   }
   if (ctx.agent && method === "POST" && path === "/v1/providers") {
     const b = (await readJson(req)) as any;
     sendJson(res, 201, { provider: ctx.agent.saveProvider(b) });
+    return;
+  }
+  if (ctx.agent && method === "POST" && path === "/v1/providers/active") {
+    const b = (await readJson(req)) as any;
+    sendJson(res, 200, ctx.agent.setActiveProvider(String(b.providerId ?? "")));
     return;
   }
   const providerTest = /^\/v1\/providers\/([^/]+)\/(test|models)$/.exec(path);
@@ -202,6 +220,45 @@ async function handleRequest(
       request: b.request,
     });
     sendJson(res, 201, { task });
+    return;
+  }
+  if (ctx.agent && method === "POST" && path === "/v1/tasks/stream") {
+    const b = (await readJson(req)) as any;
+    const bdsSessionId = String(
+      b.bdsSessionId ?? ctx.sessions.listSessions()[0]?.sessionId ?? "",
+    );
+    if (!bdsSessionId) {
+      sendJson(res, 400, { error: { code: "NO_SESSION", message: "No BDS session" } });
+      return;
+    }
+    const permissionMode =
+      (b.permissionMode as PermissionMode | undefined) ?? ctx.settings.get().permissionMode;
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    const writeEvent = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    writeEvent("ready", { ok: true });
+    try {
+      const task = await ctx.agent.createTaskStream({ ...b, bdsSessionId, permissionMode }, (text) => {
+        writeEvent("delta", { text });
+      });
+      ctx.audit.append({
+        type: "task_lifecycle",
+        taskId: task.id,
+        state: task.state,
+        request: b.request,
+      });
+      writeEvent("task", { task });
+    } catch (e) {
+      writeEvent("error", {
+        message: e instanceof Error ? e.message : "Planning failed",
+      });
+    }
+    res.end();
     return;
   }
   if (ctx.agent && method === "GET" && path === "/v1/tasks") {
@@ -290,6 +347,7 @@ function handleHealth(ctx: AppContext, res: ServerResponse): void {
           pi: true,
           sessions: ctx.agent.listSessions().length,
           providers: ctx.agent.listProviders().length,
+          activeProviderId: ctx.agent.getActiveProvider().activeProviderId,
           mcp: ctx.agent.mcp.status(),
         }
       : { pi: false },

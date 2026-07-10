@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import {
   createActionRequest,
   newId,
@@ -14,6 +15,7 @@ import {
   discoverModels,
   initializePiSession,
   planRequest,
+  planRequestStream,
   publicProfile,
   testProvider,
   type AgentPlan,
@@ -54,14 +56,21 @@ export interface AgentTask {
   permissionMode?: PermissionMode;
 }
 
+interface ProvidersFile {
+  activeProviderId: string;
+  providers: ProviderProfile[];
+}
+
 export class AgentRuntime {
   private profiles = new Map<string, ProviderProfile>();
+  private activeProviderId = "";
   private pi = new Map<string, PiSession>();
   private tasks = new Map<string, AgentTask>();
   readonly mcp: AdvisoryMcpClient;
 
   constructor(private config: ControllerConfig) {
     this.mcp = new AdvisoryMcpClient(config.mcpUrl, config.mcpToken);
+    this.loadProviders();
     if (config.providerBaseUrl && config.providerApiKey && config.providerModel) {
       this.saveProvider({
         id: "default",
@@ -73,12 +82,88 @@ export class AgentRuntime {
     }
   }
 
-  saveProvider(p: ProviderProfile) {
-    if (!p.id || !p.baseUrl || !p.apiKey || !p.model) {
-      throw new Error("Provider id, baseUrl, apiKey, and model are required");
+  private loadProviders(): void {
+    try {
+      if (!existsSync(this.config.providersPath)) return;
+      const raw = JSON.parse(readFileSync(this.config.providersPath, "utf8")) as ProvidersFile;
+      const rows = Array.isArray(raw?.providers) ? raw.providers : [];
+      for (const row of rows) {
+        if (!row?.id || !row.baseUrl || !row.apiKey || !row.model) continue;
+        let apiKey: string;
+        try {
+          apiKey = sanitizeApiKey(String(row.apiKey));
+        } catch {
+          console.error(`Skipping provider ${row.id}: invalid API key in providers.json`);
+          continue;
+        }
+        this.profiles.set(row.id, {
+          id: String(row.id),
+          name: String(row.name || row.id),
+          baseUrl: String(row.baseUrl).replace(/\/$/, ""),
+          apiKey,
+          model: String(row.model),
+        });
+      }
+      const active = String(raw.activeProviderId ?? "");
+      this.activeProviderId =
+        (active && this.profiles.has(active) && active) ||
+        this.profiles.keys().next().value ||
+        "";
+    } catch (err) {
+      console.error("Failed to load providers file:", err);
     }
-    this.profiles.set(p.id, { ...p });
-    return publicProfile(p);
+  }
+
+  private persistProviders(): void {
+    const payload: ProvidersFile = {
+      activeProviderId: this.activeProviderId,
+      providers: [...this.profiles.values()],
+    };
+    mkdirSync(dirname(this.config.providersPath), { recursive: true });
+    writeFileSync(this.config.providersPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  }
+
+  saveProvider(p: Partial<ProviderProfile> & Pick<ProviderProfile, "id">) {
+    const prev = this.profiles.get(p.id);
+    const baseUrl = (p.baseUrl ?? prev?.baseUrl ?? "").replace(/\/$/, "");
+    const model = p.model ?? prev?.model ?? "";
+    let apiKey = p.apiKey?.trim() || prev?.apiKey || "";
+    if (p.apiKey != null && p.apiKey.trim()) {
+      apiKey = sanitizeApiKey(p.apiKey);
+    }
+    if (!p.id || !baseUrl || !model) {
+      throw new Error("Provider id, baseUrl, and model are required");
+    }
+    if (!apiKey) throw new Error("API key is required — connect the provider first");
+    const next: ProviderProfile = {
+      id: p.id,
+      name: p.name || prev?.name || p.id,
+      baseUrl,
+      apiKey,
+      model,
+    };
+    this.profiles.set(p.id, next);
+    this.activeProviderId = p.id;
+    this.persistProviders();
+    return publicProfile(next);
+  }
+
+  setActiveProvider(id: string) {
+    if (!this.profiles.has(id)) throw new Error("Unknown provider profile");
+    this.activeProviderId = id;
+    this.persistProviders();
+    return this.getActiveProvider();
+  }
+
+  getActiveProvider() {
+    const id =
+      (this.activeProviderId && this.profiles.has(this.activeProviderId) && this.activeProviderId) ||
+      this.profiles.keys().next().value ||
+      "";
+    return {
+      activeProviderId: id,
+      provider: id ? publicProfile(this.profiles.get(id)!) : null,
+    };
   }
 
   listProviders() {
@@ -114,6 +199,37 @@ export class AgentRuntime {
     bdsSessionId: string;
     actor?: string;
   }) {
+    return this.createTaskInternal(input);
+  }
+
+  /** Same as createTask but streams model tokens via onDelta. */
+  async createTaskStream(
+    input: {
+      piSessionId: string;
+      request: string;
+      worldContext?: unknown;
+      useMcp?: boolean;
+      permissionMode?: PermissionMode;
+      bdsSessionId: string;
+      actor?: string;
+    },
+    onDelta: (text: string) => void,
+  ) {
+    return this.createTaskInternal(input, onDelta);
+  }
+
+  private async createTaskInternal(
+    input: {
+      piSessionId: string;
+      request: string;
+      worldContext?: unknown;
+      useMcp?: boolean;
+      permissionMode?: PermissionMode;
+      bdsSessionId: string;
+      actor?: string;
+    },
+    onDelta?: (text: string) => void,
+  ) {
     const s = this.pi.get(input.piSessionId);
     if (!s) throw new Error("Unknown Pi session");
     const task: AgentTask = {
@@ -130,63 +246,82 @@ export class AgentRuntime {
     this.tasks.set(task.id, task);
     task.state = "planning";
     try {
-      const advice = input.useMcp ? await this.mcp.query(input.request) : undefined;
-      const plan = await planRequest(
-        this.needProvider(s.providerId),
-        input.request,
-        redactSecrets(input.worldContext ?? {}),
-        redactSecrets(advice),
-      );
-      for (const step of [...plan.inspection, ...plan.verification]) {
-        if (!step.toolName.startsWith("inspect.")) {
-          throw new Error("Inspection and verification steps must be read-only");
-        }
-        const v = validateToolArguments(step.toolName as ToolName, step.arguments);
-        if (!v.ok) throw new Error(`Invalid ${step.toolName}: ${v.error.message}`);
-      }
-      const policy = {
-        protectedRegions: this.config.protectedRegions,
-        builderRegions: this.config.builderRegions,
-        adminCommands: this.config.adminCommands,
-      };
-      const proposed = plan.actions.map((a) => {
-        const tool = a.toolName as ToolName;
-        let args = a.arguments;
-        if (tool === "admin.run_command") {
-          const commandId = String(args.commandId ?? "");
-          const entry = this.config.adminCommands[commandId];
-          if (!entry) throw new Error(`Unknown admin commandId '${commandId}'`);
-          args = { commandId, command: entry.command };
-        }
-        const valid = validateToolArguments(tool, args);
-        if (!valid.ok) throw new Error(`Invalid model tool ${a.toolName}: ${valid.error.message}`);
-        const draft = createActionRequest({
-          sessionId: input.bdsSessionId,
-          requestId: newId("req"),
-          actionId: newId("action"),
-          idempotencyKey: newId("idem"),
-          toolName: tool,
-          arguments: valid.value,
-          actor: input.actor ?? "pi-agent",
-          permissionMode: input.permissionMode ?? this.config.defaultPermissionMode,
-          risk: tool.startsWith("inspect.") ? "read" : "normal",
-        });
-        const c = classify(draft, policy);
-        return {
-          ...draft,
-          risk: c.risk as RiskClass,
-          noApprovalReason: c.risk === "read" ? "read_risk_no_approval" : undefined,
-        };
-      });
-      task.plan = plan;
-      task.proposedActions = proposed;
-      task.state = proposed.some((a) => a.risk !== "read") ? "awaiting_approval" : "planned";
+      const advice = input.useMcp === false ? null : await this.mcp.query(input.request);
+      const provider = this.needProvider(s.providerId);
+      const world = redactSecrets(input.worldContext ?? {});
+      const mcp = advice == null ? undefined : redactSecrets(advice);
+      const plan = onDelta
+        ? await planRequestStream(provider, input.request, world, mcp, onDelta)
+        : await planRequest(provider, input.request, world, mcp);
+      this.applyPlanToTask(task, plan, input);
     } catch (e) {
       task.state = "failed";
       task.error = e instanceof Error ? e.message : "Planning failed";
     }
     task.updatedAt = new Date().toISOString();
     return this.publicTask(task);
+  }
+
+  private applyPlanToTask(
+    task: AgentTask,
+    plan: AgentPlan,
+    input: { bdsSessionId: string; actor?: string; permissionMode?: PermissionMode },
+  ) {
+    for (const step of [...plan.inspection, ...plan.verification]) {
+      if (!step.toolName.startsWith("inspect.")) {
+        throw new Error("Inspection and verification steps must be read-only");
+      }
+      const v = validateToolArguments(step.toolName as ToolName, step.arguments);
+      if (!v.ok) throw new Error(`Invalid ${step.toolName}: ${v.error.message}`);
+    }
+    const policy = {
+      protectedRegions: this.config.protectedRegions,
+      builderRegions: this.config.builderRegions,
+      adminCommands: this.config.adminCommands,
+    };
+    const proposed = plan.actions.map((a) => {
+      const tool = a.toolName as ToolName;
+      let args = a.arguments;
+      if (tool === "admin.run_command") {
+        const commandId = String(args.commandId ?? "");
+        const entry = this.config.adminCommands[commandId];
+        if (!entry) throw new Error(`Unknown admin commandId '${commandId}'`);
+        args = { commandId, command: entry.command };
+      }
+      const valid = validateToolArguments(tool, args);
+      if (!valid.ok) throw new Error(`Invalid model tool ${a.toolName}: ${valid.error.message}`);
+      const draft = createActionRequest({
+        sessionId: input.bdsSessionId,
+        requestId: newId("req"),
+        actionId: newId("action"),
+        idempotencyKey: newId("idem"),
+        toolName: tool,
+        arguments: valid.value,
+        actor: input.actor ?? "pi-agent",
+        permissionMode: input.permissionMode ?? this.config.defaultPermissionMode,
+        risk: tool.startsWith("inspect.") ? "read" : "normal",
+      });
+      const c = classify(draft, policy);
+      return {
+        ...draft,
+        risk: c.risk as RiskClass,
+        noApprovalReason: c.risk === "read" ? "read_risk_no_approval" : undefined,
+      };
+    });
+    task.plan = plan;
+    task.proposedActions = proposed;
+    const chatOnly =
+      plan.inspection.length === 0 &&
+      plan.actions.length === 0 &&
+      plan.verification.length === 0 &&
+      proposed.length === 0;
+    if (chatOnly) {
+      task.state = "completed";
+    } else if (proposed.some((a) => a.risk !== "read")) {
+      task.state = "awaiting_approval";
+    } else {
+      task.state = "planned";
+    }
   }
 
   approveTask(
@@ -202,12 +337,13 @@ export class AgentRuntime {
       });
     }
     const actions = task.proposedActions ?? [];
+    if (actions.length === 0) {
+      task.state = "completed";
+      task.updatedAt = new Date().toISOString();
+      input.audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
+      return this.publicTask(task);
+    }
     const enqueued: string[] = [];
-    const policy = {
-      protectedRegions: this.config.protectedRegions,
-      builderRegions: this.config.builderRegions,
-      adminCommands: this.config.adminCommands,
-    };
     for (const action of actions) {
       if (action.risk === "read") {
         const result = input.sessions.enqueue(action.sessionId, {
@@ -392,4 +528,17 @@ export class AgentRuntime {
   private publicTask(t: AgentTask) {
     return structuredClone(t);
   }
+}
+
+/** HTTP Authorization headers must be Latin-1 / ByteString-safe. */
+function sanitizeApiKey(raw: string): string {
+  const key = raw.trim().replace(/^Bearer\s+/i, "");
+  if (!key) throw new Error("API key is empty");
+  if (/grammarly|iterable|not supported/i.test(key)) {
+    throw new Error("That looks like a browser extension error, not an API key — paste the key again");
+  }
+  if (/[^\x20-\x7E]/.test(key)) {
+    throw new Error("API key contains invalid characters — paste only the key text");
+  }
+  return key;
 }

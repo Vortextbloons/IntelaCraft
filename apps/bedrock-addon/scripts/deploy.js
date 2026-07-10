@@ -60,12 +60,16 @@ function prod() {
   mkdirSync(tempDir, { recursive: true });
 
   console.log("Zipping behavior pack...");
+  const bpZip = join(tempDir, ADDON_NAME + "_BP.zip");
+  execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${BP_SRC}\\*' -DestinationPath '${bpZip}' -Force"`, { stdio: "pipe" });
   const bpMcpack = join(tempDir, ADDON_NAME + "_BP.mcpack");
-  execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${BP_SRC}\\*' -DestinationPath '${bpMcpack}' -Force"`, { stdio: "pipe" });
+  renameSync(bpZip, bpMcpack);
   const packs = ["'" + bpMcpack + "'"];
   console.log("Zipping resource pack...");
+  const rpZip = join(tempDir, ADDON_NAME + "_RP.zip");
+  execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${RP_SRC}\\*' -DestinationPath '${rpZip}' -Force"`, { stdio: "pipe" });
   const rpMcpack = join(tempDir, ADDON_NAME + "_RP.mcpack");
-  execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${RP_SRC}\\*' -DestinationPath '${rpMcpack}' -Force"`, { stdio: "pipe" });
+  renameSync(rpZip, rpMcpack);
   packs.push("'" + rpMcpack + "'");
   console.log("Creating .mcaddon...");
   const releaseName = process.env.DEV_PACK === "1" ? ADDON_NAME + "-dev" : ADDON_NAME;

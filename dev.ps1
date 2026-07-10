@@ -17,7 +17,8 @@ function Show-Help {
   Write-Host "  .\dev.ps1 setup        install + build"
   Write-Host "  .\dev.ps1 health       check controller / BDS"
   Write-Host "  .\dev.ps1 inspect <tool> [json]"
-  Write-Host "  .\dev.ps1 deploy       deploy Bedrock packs"
+  Write-Host "  .\dev.ps1 deploy       deploy packs + configure BDS (if BDS_PATH set)"
+  Write-Host "  .\dev.ps1 configure-bds write BDS variables/secrets/permissions + packs"
   Write-Host "  .\dev.ps1 test         run tests"
   Write-Host "  .\dev.ps1 build        build all packages"
   Write-Host ""
@@ -37,6 +38,7 @@ switch ($cmd) {
     npm run inspect -- $rest
   }
   "deploy" { npm run deploy }
+  "configure-bds" { npm run configure-bds }
   "test" { npm test }
   "build" { npm run build }
   "help" { Show-Help }

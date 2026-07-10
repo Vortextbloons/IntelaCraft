@@ -33,6 +33,7 @@ const ctx = {
     protectedRegions: [],
     builderRegions: [],
     piStoragePath: join(dir, "pi"),
+    providersPath: join(dir, "providers.json"),
     adminCommands: {
       time_day: { command: "time set day", risk: "normal" as const, label: "Day" },
       stop_server: { command: "stop", risk: "strong" as const, label: "Stop" },

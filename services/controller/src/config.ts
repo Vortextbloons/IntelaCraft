@@ -27,6 +27,7 @@ export interface ControllerConfig {
   providerApiKey?: string;
   providerModel?: string;
   piStoragePath: string;
+  providersPath: string;
   mcpUrl?: string;
   mcpToken?: string;
   adminCommands: Record<string, AdminCommandEntry>;
@@ -59,6 +60,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControllerConf
     providerApiKey: env.INTELACRAFT_PROVIDER_API_KEY,
     providerModel: env.INTELACRAFT_PROVIDER_MODEL,
     piStoragePath: resolve(env.INTELACRAFT_PI_STORAGE_PATH ?? "./data/pi"),
+    providersPath: resolve(env.INTELACRAFT_PROVIDERS_PATH ?? "./data/providers.json"),
     mcpUrl: env.INTELACRAFT_MCP_URL,
     mcpToken: env.INTELACRAFT_MCP_TOKEN,
     adminCommands: parseAdminCommands(env.INTELACRAFT_ADMIN_COMMANDS),

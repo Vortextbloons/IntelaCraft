@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ApiError, api, clearToken, getToken, setToken } from "./api";
 
 type Health = {
@@ -9,7 +9,6 @@ type Health = {
     serverId: string;
     connected: boolean;
     emergencyDisabled?: boolean;
-    health?: { playerCount?: number };
   }>;
   settings?: { permissionMode: string };
   agent?: {
@@ -24,7 +23,13 @@ type Task = {
   id: string;
   request: string;
   state: string;
-  plan?: { summary: string; notes?: string[] };
+  plan?: {
+    summary: string;
+    notes?: string[];
+    inspection?: Array<{ toolName: string; summary?: string; arguments?: Record<string, unknown> }>;
+    actions?: Array<{ toolName: string; summary?: string; arguments?: Record<string, unknown> }>;
+    verification?: Array<{ toolName: string; summary?: string; arguments?: Record<string, unknown> }>;
+  };
   proposedActions?: Array<{
     actionId: string;
     toolName: string;
@@ -33,6 +38,28 @@ type Task = {
   }>;
   error?: string;
 };
+
+function taskNeedsPlanCard(task: Task): boolean {
+  if (["awaiting_approval", "running", "partial"].includes(task.state)) return true;
+  if ((task.proposedActions?.length ?? 0) > 0) return true;
+  if ((task.plan?.inspection?.length ?? 0) > 0) return true;
+  if ((task.plan?.verification?.length ?? 0) > 0) return true;
+  if ((task.plan?.actions?.length ?? 0) > 0) return true;
+  return false;
+}
+
+function previewStreamingText(raw: string): string {
+  const m = raw.match(/"summary"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (m) {
+    try {
+      return JSON.parse(`"${m[1]}"`);
+    } catch {
+      return m[1];
+    }
+  }
+  if (raw.length < 8) return "Planning…";
+  return raw.length > 280 ? `${raw.slice(0, 280)}…` : raw;
+}
 
 type Provider = {
   id: string;
@@ -53,7 +80,12 @@ type ActivityRecord = {
   toolName?: string;
 };
 
-type ChatMsg = { role: "user" | "system" | "assistant"; text: string };
+type ChatMsg = {
+  id: string;
+  role: "user" | "system" | "assistant";
+  text: string;
+  taskId?: string;
+};
 
 type Progress = {
   actionId: string;
@@ -71,38 +103,106 @@ const MODES = [
   "trusted_administrator",
 ] as const;
 
+const PROVIDER_PRESETS = [
+  {
+    id: "opencode-zen",
+    name: "OpenCode Zen",
+    baseUrl: "https://opencode.ai/zen/v1",
+    model: "gpt-5.4-mini",
+    hint: "Paste key from opencode.ai/auth — models auto-load",
+  },
+  {
+    id: "opencode-go",
+    name: "OpenCode Go",
+    baseUrl: "https://opencode.ai/zen/go/v1",
+    model: "qwen3-coder",
+    hint: "OpenCode Go subscription models",
+  },
+  {
+    id: "openai",
+    name: "OpenAI / Codex",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    hint: "OpenAI API key — Codex-capable chat models preferred",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openai/gpt-4.1-mini",
+    hint: "OpenRouter key — many Codex-style models",
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+    hint: "Fast open models",
+  },
+  {
+    id: "ollama",
+    name: "Ollama (local)",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "llama3.2",
+    hint: "Local — no key needed (use any string)",
+  },
+  {
+    id: "custom",
+    name: "Custom OpenAI-compatible",
+    baseUrl: "http://127.0.0.1:8080/v1",
+    model: "local-model",
+    hint: "Any /v1 chat-completions gateway",
+  },
+] as const;
+
+const WELCOME_TEXT =
+  "New session. Connect a provider in the composer, pick a model from its catalog, then chat.";
+
+function uid(prefix = "msg") {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function welcomeMsg(): ChatMsg {
+  return { id: "welcome", role: "system", text: WELCOME_TEXT };
+}
+
 export function App() {
   const [tokenInput, setTokenInput] = useState("");
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [chat, setChat] = useState<ChatMsg[]>([
-    {
-      role: "system",
-      text: "Connected to IntelaCraft control panel. Configure a provider, start a Pi session, then ask for a world task.",
-    },
-  ]);
+  const [chat, setChat] = useState<ChatMsg[]>([welcomeMsg()]);
   const [prompt, setPrompt] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [activeProviderId, setActiveProviderId] = useState<string>("");
   const [piSessionId, setPiSessionId] = useState<string | null>(null);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [browseProviderId, setBrowseProviderId] = useState("opencode-zen");
+  const [connectKey, setConnectKey] = useState("");
+  const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showKeyUpdate, setShowKeyUpdate] = useState(false);
   const [activity, setActivity] = useState<ActivityRecord[]>([]);
   const [activityFilter, setActivityFilter] = useState("");
   const [progress, setProgress] = useState<Progress | null>(null);
   const [permissionMode, setPermissionMode] = useState("confirm_every_change");
-  const [providerForm, setProviderForm] = useState({
-    id: "default",
-    name: "Default",
-    baseUrl: "https://api.openai.com/v1",
-    model: "gpt-4o-mini",
-    apiKey: "",
-  });
+  const [pickerPanel, setPickerPanel] = useState<"none" | "providers" | "models">("none");
+  const [drawer, setDrawer] = useState<"none" | "safety" | "activity">("none");
   const [busy, setBusy] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   const selectedTask = useMemo(
-    () => tasks.find((t) => t.id === selectedTaskId) ?? tasks[0] ?? null,
+    () => tasks.find((t) => t.id === selectedTaskId) ?? null,
     [tasks, selectedTaskId],
+  );
+
+  const activeProvider = useMemo(
+    () => providers.find((p) => p.id === activeProviderId) ?? providers[0] ?? null,
+    [providers, activeProviderId],
   );
 
   const refresh = useCallback(async () => {
@@ -110,8 +210,9 @@ export function App() {
       const [h, t, p, a, s] = await Promise.all([
         api<Health>("/v1/health"),
         api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
-        api<{ providers: Provider[] }>("/v1/providers").catch(() => ({
+        api<{ providers: Provider[]; activeProviderId?: string }>("/v1/providers").catch(() => ({
           providers: [] as Provider[],
+          activeProviderId: "",
         })),
         api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
         api<{ permissionMode: string }>("/v1/settings"),
@@ -122,6 +223,13 @@ export function App() {
       setActivity([...a.records].reverse());
       setPermissionMode(s.permissionMode);
       if (h.settings?.permissionMode) setPermissionMode(h.settings.permissionMode);
+      setActiveProviderId((prev) => {
+        if (p.activeProviderId && p.providers.some((x) => x.id === p.activeProviderId)) {
+          return p.activeProviderId;
+        }
+        if (prev && p.providers.some((x) => x.id === prev)) return prev;
+        return p.providers[0]?.id ?? "";
+      });
       setError(null);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
@@ -163,12 +271,35 @@ export function App() {
     return () => es.close();
   }, [authed, refresh]);
 
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chat, selectedTask, progress]);
+
+  useEffect(() => {
+    function onDocClick(ev: MouseEvent) {
+      if (!pickerRef.current?.contains(ev.target as Node)) setPickerPanel("none");
+    }
+    if (pickerPanel !== "none") document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [pickerPanel]);
+
+  useEffect(() => {
+    if (!activeProvider) return;
+    setBrowseProviderId(activeProvider.id);
+  }, [activeProvider?.id]);
+
+  function startNewChat() {
+    setChat([welcomeMsg()]);
+    setSelectedTaskId(null);
+    setProgress(null);
+    setPrompt("");
+    setError(null);
+  }
+
   async function login(e: FormEvent) {
     e.preventDefault();
     setToken(tokenInput.trim());
     try {
-      await api("/v1/health");
-      // health is public; verify token with settings
       await api("/v1/settings");
       setAuthed(true);
       setError(null);
@@ -179,42 +310,238 @@ export function App() {
     }
   }
 
-  async function saveProvider() {
-    setBusy(true);
+  function presetFor(id: string) {
+    return PROVIDER_PRESETS.find((p) => p.id === id);
+  }
+
+  function savedProvider(id: string) {
+    return providers.find((p) => p.id === id);
+  }
+
+  function catalogFor(providerId: string) {
+    return modelsByProvider[providerId] ?? [];
+  }
+
+  async function fetchProviderCatalog(providerId: string, opts?: { preferModel?: string; trackLoading?: boolean }) {
+    if (opts?.trackLoading !== false) setModelsLoading(true);
     try {
-      await api("/v1/providers", {
-        method: "POST",
-        body: JSON.stringify({
-          id: providerForm.id,
-          name: providerForm.name,
-          baseUrl: providerForm.baseUrl,
-          model: providerForm.model,
-          apiKey: providerForm.apiKey,
-        }),
+      const res = await api<{ models: string[] }>(
+        `/v1/providers/${encodeURIComponent(providerId)}/models`,
+        { method: "POST", body: "{}" },
+      );
+      const list = res.models ?? [];
+      setModelsByProvider((prev) => ({ ...prev, [providerId]: list }));
+      return list;
+    } catch (e) {
+      setModelsByProvider((prev) => ({ ...prev, [providerId]: [] }));
+      throw e;
+    } finally {
+      if (opts?.trackLoading !== false) setModelsLoading(false);
+    }
+  }
+
+  async function upsertProvider(input: {
+    id: string;
+    name: string;
+    baseUrl: string;
+    model: string;
+    apiKey?: string;
+  }) {
+    const body: Record<string, string> = {
+      id: input.id,
+      name: input.name,
+      baseUrl: input.baseUrl,
+      model: input.model,
+    };
+    if (input.apiKey) body.apiKey = input.apiKey;
+    const existing = savedProvider(input.id);
+    if (
+      !body.apiKey &&
+      !existing?.apiKeyConfigured &&
+      (input.id === "ollama" ||
+        input.baseUrl.includes("127.0.0.1") ||
+        input.baseUrl.includes("localhost"))
+    ) {
+      body.apiKey = "local";
+    }
+    const res = await api<{ provider: Provider }>("/v1/providers", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    setActiveProviderId(res.provider.id);
+    await refresh();
+    return res.provider;
+  }
+
+  /** Connect a provider once — pulls the full model catalog. */
+  async function connectProvider(providerId: string) {
+    const preset = presetFor(providerId);
+    const existing = savedProvider(providerId);
+    const name = existing?.name ?? preset?.name ?? providerId;
+    const baseUrl =
+      customBaseUrl.trim() ||
+      existing?.baseUrl ||
+      preset?.baseUrl ||
+      "https://api.openai.com/v1";
+    const model = existing?.model || preset?.model || "gpt-4.1-mini";
+    const key = connectKey.trim();
+
+    if (!key && !existing?.apiKeyConfigured && providerId !== "ollama") {
+      setError("Paste an API key to connect this provider");
+      return;
+    }
+    if (key && (/[^\x20-\x7E]/.test(key) || /grammarly|iterable|not supported/i.test(key))) {
+      setError("That paste isn’t an API key (browser extension noise). Copy only the key from opencode.ai/auth.");
+      setConnectKey("");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const provider = await upsertProvider({
+        id: providerId,
+        name,
+        baseUrl,
+        model,
+        apiKey: key || undefined,
       });
-      setProviderForm((f) => ({ ...f, apiKey: "" }));
+      setConnectKey("");
+      setShowKeyUpdate(false);
+      setBrowseProviderId(provider.id);
+      let list: string[] = [];
+      try {
+        list = await fetchProviderCatalog(provider.id, { preferModel: provider.model });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not pull provider models");
+      }
+      const chosen =
+        (list.includes(provider.model) && provider.model) || list[0] || provider.model;
+      if (chosen !== provider.model) {
+        await upsertProvider({
+          id: provider.id,
+          name: provider.name,
+          baseUrl: provider.baseUrl,
+          model: chosen,
+        });
+      }
+      await ensurePiSession(provider.id);
       setChat((c) => [
         ...c,
-        { role: "system", text: `Provider '${providerForm.id}' saved (key stored server-side).` },
+        {
+          id: uid(),
+          role: "system",
+          text: list.length
+            ? `Connected ${provider.name} — ${list.length} models loaded · using ${chosen}`
+            : `Connected ${provider.name} · ${chosen}`,
+        },
       ]);
-      await refresh();
+      setPickerPanel("models");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save provider failed");
+      setError(e instanceof Error ? e.message : "Connect provider failed");
     } finally {
       setBusy(false);
     }
   }
 
-  async function testProvider() {
+  async function selectModel(providerId: string, model: string) {
+    const provider = savedProvider(providerId);
+    const preset = presetFor(providerId);
+    if (!provider && !preset) return;
     setBusy(true);
+    setError(null);
     try {
-      const result = await api<{ ok: boolean; model: string }>(
-        `/v1/providers/${encodeURIComponent(providerForm.id)}/test`,
-        { method: "POST", body: "{}" },
-      );
+      const updated = await upsertProvider({
+        id: providerId,
+        name: provider?.name ?? preset!.name,
+        baseUrl: provider?.baseUrl ?? preset!.baseUrl,
+        model,
+      });
+      await ensurePiSession(updated.id);
       setChat((c) => [
         ...c,
-        { role: "system", text: `Provider test OK — model ${result.model}.` },
+        { id: uid(), role: "system", text: `Using ${updated.name} · ${model}` },
+      ]);
+      setPickerPanel("none");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not select model");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openProvider(providerId: string) {
+    setBrowseProviderId(providerId);
+    setConnectKey("");
+    setCustomBaseUrl("");
+    setShowAdvanced(false);
+    setShowKeyUpdate(false);
+  }
+
+  async function refreshCatalog(providerId = browseProviderId) {
+    const existing = savedProvider(providerId);
+    if (!existing?.apiKeyConfigured) {
+      setError("Connect the provider first");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const list = await fetchProviderCatalog(providerId, { preferModel: existing.model });
+      if (!list.length) setError("Provider returned no models");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Model discovery failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshAllCatalogs() {
+    const connected = providers.filter((p) => p.apiKeyConfigured);
+    if (!connected.length) return;
+    setModelsLoading(true);
+    setError(null);
+    try {
+      await Promise.all(
+        connected.map(async (p) => {
+          try {
+            await fetchProviderCatalog(p.id, { preferModel: p.model, trackLoading: false });
+          } catch {
+            // keep other providers
+          }
+        }),
+      );
+    } finally {
+      setModelsLoading(false);
+    }
+  }
+
+  async function openModelsPanel() {
+    setPickerPanel((cur) => (cur === "models" ? "none" : "models"));
+    const connected = providers.filter((p) => p.apiKeyConfigured);
+    const missing = connected.filter((p) => !catalogFor(p.id).length);
+    if (missing.length) void refreshAllCatalogs();
+  }
+
+  async function testBrowseProvider() {
+    const id = browseProviderId;
+    if (!savedProvider(id)?.apiKeyConfigured) {
+      setError("Connect the provider first");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<{ ok: boolean; model: string; models?: string[] }>(
+        `/v1/providers/${encodeURIComponent(id)}/test`,
+        { method: "POST", body: "{}" },
+      );
+      if (result.models?.length) {
+        setModelsByProvider((prev) => ({ ...prev, [id]: result.models! }));
+      }
+      setChat((c) => [
+        ...c,
+        { id: uid(), role: "system", text: `Provider test OK — ${result.model}` },
       ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Provider test failed");
@@ -223,60 +550,139 @@ export function App() {
     }
   }
 
-  async function startPi() {
-    setBusy(true);
-    try {
-      const res = await api<{ session: { id: string } }>("/v1/pi/sessions", {
-        method: "POST",
-        body: JSON.stringify({ providerId: providerForm.id }),
-      });
-      setPiSessionId(res.session.id);
-      setChat((c) => [
-        ...c,
-        { role: "system", text: `Pi session ${res.session.id} ready.` },
-      ]);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Pi session failed");
-    } finally {
-      setBusy(false);
-    }
+  async function ensurePiSession(providerId = activeProviderId) {
+    if (!providerId) throw new Error("Select a provider first");
+    const res = await api<{ session: { id: string } }>("/v1/pi/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId }),
+    });
+    setPiSessionId(res.session.id);
+    return res.session.id;
   }
 
   async function submitTask(e: FormEvent) {
     e.preventDefault();
     if (!prompt.trim()) return;
-    if (!piSessionId) {
-      setError("Start a Pi session first");
+    if (!health?.bdsConnected) {
+      setError(
+        "Bedrock (BDS) is not connected. Start your Minecraft Dedicated Server with the IntelaCraft packs, then try again.",
+      );
       return;
     }
     setBusy(true);
+    setError(null);
     const text = prompt.trim();
     setPrompt("");
-    setChat((c) => [...c, { role: "user", text }]);
+    const assistantId = uid();
+    setChat((c) => [
+      ...c,
+      { id: uid(), role: "user", text },
+      { id: assistantId, role: "assistant", text: "Planning…" },
+    ]);
+    let rawStream = "";
     try {
-      const res = await api<{ task: Task }>("/v1/tasks", {
+      let session = piSessionId;
+      if (!session) {
+        if (!activeProviderId) {
+          throw new Error("Connect a provider first (Providers menu)");
+        }
+        session = await ensurePiSession(activeProviderId);
+      }
+      const token = getToken();
+      if (!token) throw new Error("Not signed in");
+      const res = await fetch("/v1/tasks/stream", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          Accept: "text/event-stream",
+        },
         body: JSON.stringify({
-          piSessionId,
+          piSessionId: session,
           request: text,
           permissionMode,
           useMcp: true,
         }),
       });
-      setSelectedTaskId(res.task.id);
-      setChat((c) => [
-        ...c,
-        {
-          role: "assistant",
-          text: res.task.error
-            ? `Task failed: ${res.task.error}`
-            : `Plan (${res.task.state}): ${res.task.plan?.summary ?? "ready"}`,
-        },
-      ]);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new ApiError(
+          res.status,
+          body?.error?.code ?? "HTTP_ERROR",
+          body?.error?.message ?? `Request failed (${res.status})`,
+          body,
+        );
+      }
+      if (!res.body) throw new Error("No stream from controller");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let eventName = "message";
+      let finalTask: Task | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n");
+        buffer = parts.pop() ?? "";
+        for (const line of parts) {
+          if (line.startsWith("event:")) {
+            eventName = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            const data = line.slice(5).trim();
+            if (!data) continue;
+            let parsed: any = {};
+            try {
+              parsed = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            if (eventName === "delta" && typeof parsed.text === "string") {
+              rawStream += parsed.text;
+              const preview = previewStreamingText(rawStream);
+              setChat((c) =>
+                c.map((m) => (m.id === assistantId ? { ...m, text: preview } : m)),
+              );
+            } else if (eventName === "task" && parsed.task) {
+              finalTask = parsed.task as Task;
+            } else if (eventName === "error") {
+              throw new Error(String(parsed.message ?? "Planning failed"));
+            }
+          } else if (!line.trim()) {
+            eventName = "message";
+          }
+        }
+      }
+
+      if (!finalTask) throw new Error("Stream ended without a task");
+      setTasks((t) => [finalTask!, ...t.filter((x) => x.id !== finalTask!.id)]);
+      const reply = finalTask.error
+        ? `Failed: ${finalTask.error}`
+        : finalTask.plan?.summary || `Done (${finalTask.state})`;
+      setChat((c) =>
+        c.map((m) =>
+          m.id === assistantId ? { ...m, text: reply, taskId: finalTask!.id } : m,
+        ),
+      );
+      if (taskNeedsPlanCard(finalTask)) {
+        setSelectedTaskId(finalTask.id);
+      } else {
+        setSelectedTaskId(null);
+      }
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Task failed");
+      const msg =
+        err instanceof ApiError && err.code === "NO_SESSION"
+          ? "Bedrock (BDS) is not connected. Start the dedicated server with IntelaCraft packs loaded."
+          : err instanceof Error
+            ? err.message
+            : "Task failed";
+      setError(msg);
+      setChat((c) =>
+        c.map((m) => (m.id === assistantId ? { ...m, text: msg } : m)),
+      );
     } finally {
       setBusy(false);
     }
@@ -292,7 +698,7 @@ export function App() {
       );
       setChat((c) => [
         ...c,
-        { role: "system", text: `Approved task ${res.task.id} → ${res.task.state}` },
+        { id: uid(), role: "system", text: `Approved — now ${res.task.state}` },
       ]);
       await refresh();
     } catch (e) {
@@ -310,6 +716,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ rejectedBy: "webview" }),
       });
+      setChat((c) => [...c, { id: uid(), role: "system", text: "Plan rejected" }]);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Reject failed");
@@ -369,7 +776,7 @@ export function App() {
       <div className="login-gate">
         <form className="login-panel stack" onSubmit={login}>
           <h1>IntelaCraft</h1>
-          <p>Enter the controller bearer token to open the control panel.</p>
+          <p>Enter the controller bearer token to open chat.</p>
           <label>
             Bearer token
             <input
@@ -391,7 +798,6 @@ export function App() {
 
   const mcp = health?.agent?.mcp;
   const emergencyOn = health?.sessions?.some((s) => s.emergencyDisabled);
-
   const filteredActivity = activityFilter
     ? activity.filter(
         (r) =>
@@ -400,295 +806,529 @@ export function App() {
           r.actionId?.includes(activityFilter),
       )
     : activity;
-
   const progressPct =
     progress && progress.totalEstimatedWork > 0
       ? Math.min(100, Math.round((progress.completedWork / progress.totalEstimatedWork) * 100))
       : 0;
+  const modelLabel = activeProvider ? activeProvider.model : "Select model";
+  const providerLabel = activeProvider
+    ? activeProvider.name
+    : providers.some((p) => p.apiKeyConfigured)
+      ? "Providers"
+      : "Connect provider";
+  const providerChoices = [
+    ...PROVIDER_PRESETS,
+    ...providers
+      .filter((p) => !PROVIDER_PRESETS.some((x) => x.id === p.id))
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        baseUrl: p.baseUrl,
+        model: p.model,
+        hint: "Saved custom provider",
+      })),
+  ];
+  const connectedProviders = providers.filter((p) => p.apiKeyConfigured);
+  const sessionConnected = Boolean(piSessionId) || (health?.agent?.sessions ?? 0) > 0;
 
   return (
-    <div className="app-shell">
-      <header className="brand-bar">
-        <div>
-          <h1>IntelaCraft</h1>
-          <p>Bedrock control panel — approve, watch, and audit world changes.</p>
+    <div className="chat-app">
+      <aside className="sidebar">
+        <div className="sidebar-brand">IntelaCraft</div>
+        <button type="button" className="sidebar-new" onClick={startNewChat}>
+          New chat
+        </button>
+        <div className="sidebar-threads" aria-label="Tasks">
+          {tasks.length === 0 ? (
+            <div className="sidebar-empty">No threads yet</div>
+          ) : (
+            tasks.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={t.id === selectedTaskId ? "thread-item active" : "thread-item"}
+                onClick={() => setSelectedTaskId(t.id)}
+              >
+                <span className="thread-title">{t.request || t.id}</span>
+                <span className="thread-meta">{t.state}</span>
+              </button>
+            ))
+          )}
         </div>
-        <div className="status-row" role="status" aria-live="polite">
-          <StatusPill
-            label="Controller"
-            state="ok"
-            detail="localhost"
-          />
-          <StatusPill
-            label="BDS"
-            state={health?.bdsConnected ? "ok" : "bad"}
-            detail={health?.bdsConnected ? "connected" : "offline"}
-          />
-          <StatusPill
-            label="Pi"
-            state={health?.agent?.pi && (health.agent.sessions > 0 || piSessionId) ? "ok" : "warn"}
-            detail={piSessionId ? "session" : `${health?.agent?.sessions ?? 0} sess`}
-          />
-          <StatusPill
-            label="Model"
-            state={providers.length ? "ok" : "warn"}
-            detail={`${providers.length} profile(s)`}
-          />
-          <StatusPill
-            label="MCP"
-            state={mcp?.available ? "ok" : mcp?.configured ? "warn" : "bad"}
-            detail={mcp?.available ? "up" : mcp?.configured ? "down" : "off"}
-          />
-          <button
-            className="ghost"
-            type="button"
-            onClick={() => {
-              clearToken();
-              setAuthed(false);
-            }}
-          >
-            Sign out
-          </button>
+        <div className="sidebar-footer">
+          <div className="conn-row" role="status">
+            <ConnDot label="BDS" state={health?.bdsConnected ? "ok" : "bad"} />
+            <ConnDot label="Model" state={activeProvider ? "ok" : "bad"} />
+            <ConnDot label="Session" state={sessionConnected ? "ok" : "warn"} />
+            <ConnDot
+              label="MCP"
+              state={mcp?.available ? "ok" : mcp?.configured ? "warn" : "off"}
+            />
+            {emergencyOn && <ConnDot label="EMERGENCY" state="bad" />}
+          </div>
+          <div className="sidebar-links">
+            <button
+              type="button"
+              className={drawer === "safety" ? "ghost active" : "ghost"}
+              onClick={() => setDrawer(drawer === "safety" ? "none" : "safety")}
+            >
+              Safety
+            </button>
+            <button
+              type="button"
+              className={drawer === "activity" ? "ghost active" : "ghost"}
+              onClick={() => setDrawer(drawer === "activity" ? "none" : "activity")}
+            >
+              Activity
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                clearToken();
+                setAuthed(false);
+              }}
+            >
+              Sign out
+            </button>
+          </div>
         </div>
-      </header>
+      </aside>
 
-      {error && <div className="error">{error}</div>}
+      <div className="workspace">
+        <div className="workspace-main">
+          {error && <div className="banner-error">{error}</div>}
+          {authed && health && !health.bdsConnected && (
+            <div className="banner-warn">
+              Bedrock server offline — start BDS with IntelaCraft packs so the BDS indicator turns green.
+            </div>
+          )}
 
-      <div className="layout">
-        <section className="stack">
-          <div className="panel">
-            <h2>Chat &amp; tasks</h2>
-            <div className="chat-log" aria-live="polite">
-              {chat.map((m, i) => (
-                <div key={i} className={`msg ${m.role}`}>
-                  {m.text}
+          <div className="transcript" aria-live="polite">
+            <div className="transcript-inner">
+              {chat.map((m) => (
+                <div key={m.id} className={`turn ${m.role}`}>
+                  <div className="turn-role">
+                    {m.role === "user" ? "You" : m.role === "assistant" ? "IntelaCraft" : "System"}
+                  </div>
+                  <div className="turn-body">{m.text}</div>
                 </div>
               ))}
+
+              {selectedTask && taskNeedsPlanCard(selectedTask) && (
+                <div className="inline-plan">
+                  <div className="inline-plan-head">
+                    <strong>Plan</strong>
+                    <span className="meta">{selectedTask.state}</span>
+                  </div>
+                  <p>{selectedTask.plan?.summary ?? selectedTask.error ?? "—"}</p>
+                  {(selectedTask.plan?.inspection ?? []).map((step, i) => (
+                    <div key={`insp-${i}`} className="action-card">
+                      <strong>{step.toolName}</strong>
+                      <div className="meta">inspect · {step.summary ?? ""}</div>
+                    </div>
+                  ))}
+                  {(selectedTask.proposedActions ?? []).map((a) => (
+                    <div key={a.actionId} className={`action-card ${a.risk === "strong" ? "strong" : ""}`}>
+                      <strong>{a.toolName}</strong>
+                      <div className="meta">risk {a.risk}</div>
+                      <pre>{JSON.stringify(a.arguments, null, 2)}</pre>
+                    </div>
+                  ))}
+                  {(selectedTask.plan?.verification ?? []).map((step, i) => (
+                    <div key={`ver-${i}`} className="action-card">
+                      <strong>{step.toolName}</strong>
+                      <div className="meta">verify · {step.summary ?? ""}</div>
+                    </div>
+                  ))}
+                  <div className="row">
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={
+                        busy ||
+                        !["awaiting_approval", "planned"].includes(selectedTask.state) ||
+                        !(selectedTask.proposedActions?.length)
+                      }
+                      onClick={() => void approveTask()}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || !["awaiting_approval", "planned"].includes(selectedTask.state)}
+                      onClick={() => void rejectTask()}
+                    >
+                      Reject
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => void cancelTask()}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {progress && (
+                <div className="inline-progress">
+                  <div className="meta">
+                    {progress.state} · {progress.completedWork}/{progress.totalEstimatedWork}
+                  </div>
+                  <div className="progress-bar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>
+                    <span style={{ width: `${progressPct}%` }} />
+                  </div>
+                  <div>{progress.message}</div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
             </div>
-            <form className="stack" onSubmit={submitTask}>
+          </div>
+
+          <div className="composer-wrap">
+            <form className="composer" onSubmit={submitTask}>
               <textarea
-                rows={3}
+                rows={2}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Ask for an inspection or bounded build…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={
+                  activeProvider
+                    ? "Message IntelaCraft…"
+                    : "Connect a provider first, then chat…"
+                }
               />
-              <div className="row">
-                <button className="primary" type="submit" disabled={busy}>
-                  Plan task
-                </button>
-                <button type="button" disabled={busy || !selectedTask} onClick={() => void cancelTask()}>
-                  Cancel task
+              <div className="composer-bar">
+                <div className="model-picker" ref={pickerRef}>
+                  <button
+                    type="button"
+                    className="model-trigger"
+                    aria-expanded={pickerPanel === "providers"}
+                    aria-haspopup="dialog"
+                    onClick={() =>
+                      setPickerPanel((cur) => (cur === "providers" ? "none" : "providers"))
+                    }
+                  >
+                    <span className="model-trigger-label">{providerLabel}</span>
+                    <span className="chev" aria-hidden>
+                      ▾
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="model-trigger"
+                    aria-expanded={pickerPanel === "models"}
+                    aria-haspopup="dialog"
+                    onClick={() => void openModelsPanel()}
+                  >
+                    <span className="model-trigger-label">{modelLabel}</span>
+                    <span className="chev" aria-hidden>
+                      ▾
+                    </span>
+                  </button>
+
+                  {pickerPanel === "providers" && (
+                    <div className="model-popover" role="dialog" aria-label="Connect providers">
+                      <div className="popover-section">
+                        <div className="popover-title">Connect providers</div>
+                        <p className="meta">
+                          Connect once with an API key. Models show up in the Models menu.
+                        </p>
+                        <ul className="provider-list">
+                          {providerChoices.map((p) => {
+                            const saved = savedProvider(p.id);
+                            const connected = Boolean(saved?.apiKeyConfigured);
+                            const selected = p.id === browseProviderId;
+                            return (
+                              <li key={p.id} className="provider-connect-block">
+                                <button
+                                  type="button"
+                                  className={selected ? "provider-item active" : "provider-item"}
+                                  onClick={() => void openProvider(p.id)}
+                                  disabled={busy}
+                                >
+                                  <span className="provider-name">{p.name}</span>
+                                  <span className="meta">
+                                    {connected
+                                      ? `Connected · ${catalogFor(p.id).length || "…"} models`
+                                      : p.hint}
+                                  </span>
+                                </button>
+
+                                {selected && !connected && (
+                                  <div className="provider-connect-form">
+                                    <label>
+                                      API key
+                                      <input
+                                        type="password"
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        data-gramm="false"
+                                        data-gramm_editor="false"
+                                        data-enable-grammarly="false"
+                                        value={connectKey}
+                                        placeholder={
+                                          p.id.startsWith("opencode")
+                                            ? "OpenCode key from opencode.ai/auth"
+                                            : p.id === "ollama"
+                                              ? "optional for local"
+                                              : "sk-…"
+                                        }
+                                        onChange={(e) => setConnectKey(e.target.value)}
+                                      />
+                                    </label>
+                                    <button
+                                      type="button"
+                                      className="ghost"
+                                      onClick={() => setShowAdvanced((v) => !v)}
+                                    >
+                                      {showAdvanced ? "Hide URL" : "Advanced URL"}
+                                    </button>
+                                    {showAdvanced && (
+                                      <label>
+                                        Base URL
+                                        <input
+                                          value={customBaseUrl}
+                                          onChange={(e) => setCustomBaseUrl(e.target.value)}
+                                          placeholder={p.baseUrl}
+                                        />
+                                      </label>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="primary"
+                                      disabled={busy}
+                                      onClick={() => void connectProvider(p.id)}
+                                    >
+                                      Connect
+                                    </button>
+                                  </div>
+                                )}
+
+                                {selected && connected && (
+                                  <div className="provider-connect-form">
+                                    <div className="row">
+                                      <button
+                                        type="button"
+                                        className="ghost"
+                                        disabled={busy}
+                                        onClick={() => void testBrowseProvider()}
+                                      >
+                                        Test
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="ghost"
+                                        disabled={busy || modelsLoading}
+                                        onClick={() => void refreshCatalog(p.id)}
+                                      >
+                                        Refresh models
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="ghost"
+                                        disabled={busy}
+                                        onClick={() => setShowKeyUpdate((v) => !v)}
+                                      >
+                                        {showKeyUpdate ? "Cancel" : "Update key"}
+                                      </button>
+                                    </div>
+                                    {showKeyUpdate && (
+                                      <div className="row">
+                                        <input
+                                          type="password"
+                                          autoComplete="off"
+                                          spellCheck={false}
+                                          data-gramm="false"
+                                          data-gramm_editor="false"
+                                          data-enable-grammarly="false"
+                                          value={connectKey}
+                                          placeholder="New API key"
+                                          onChange={(e) => setConnectKey(e.target.value)}
+                                        />
+                                        <button
+                                          type="button"
+                                          className="primary"
+                                          disabled={busy || !connectKey.trim()}
+                                          onClick={() => void connectProvider(p.id)}
+                                        >
+                                          Save key
+                                        </button>
+                                      </div>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="ghost"
+                                      onClick={() => setPickerPanel("models")}
+                                    >
+                                      Open models →
+                                    </button>
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {pickerPanel === "models" && (
+                    <div className="model-popover models-popover" role="dialog" aria-label="Select model">
+                      <div className="popover-section">
+                        <div className="popover-head">
+                          <div className="popover-title">Models by provider</div>
+                          <button
+                            type="button"
+                            className="ghost"
+                            disabled={busy || modelsLoading || !connectedProviders.length}
+                            onClick={() => void refreshAllCatalogs()}
+                          >
+                            {modelsLoading ? "Loading…" : "Refresh all"}
+                          </button>
+                        </div>
+
+                        {!connectedProviders.length ? (
+                          <div className="empty-models">
+                            <p className="meta">No providers connected yet.</p>
+                            <button
+                              type="button"
+                              className="primary"
+                              onClick={() => setPickerPanel("providers")}
+                            >
+                              Connect a provider
+                            </button>
+                          </div>
+                        ) : (
+                          connectedProviders.map((p) => {
+                            const catalog = catalogFor(p.id);
+                            return (
+                              <div key={p.id} className="model-group">
+                                <div className="model-group-head">
+                                  <span className="model-group-title">{p.name}</span>
+                                  <span className="meta">
+                                    {modelsLoading && !catalog.length
+                                      ? "loading…"
+                                      : `${catalog.length} models`}
+                                  </span>
+                                </div>
+                                {catalog.length === 0 ? (
+                                  <p className="meta">No models yet — refresh this provider.</p>
+                                ) : (
+                                  <ul className="model-list">
+                                    {catalog.map((m) => (
+                                      <li key={m}>
+                                        <button
+                                          type="button"
+                                          className={
+                                            activeProvider?.id === p.id && activeProvider.model === m
+                                              ? "model-item active"
+                                              : "model-item"
+                                          }
+                                          disabled={busy}
+                                          onClick={() => void selectModel(p.id, m)}
+                                        >
+                                          {m}
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <button
+                  className="primary send"
+                  type="submit"
+                  disabled={busy || !prompt.trim() || !health?.bdsConnected}
+                >
+                  Send
                 </button>
               </div>
             </form>
           </div>
+        </div>
 
-          <div className="panel">
-            <h2>Plan &amp; approval</h2>
-            {!selectedTask ? (
-              <p className="meta">No task selected yet.</p>
-            ) : (
+        {drawer !== "none" && (
+          <aside className="chat-drawer">
+            {drawer === "safety" && (
               <div className="stack">
-                <div className="meta">
-                  {selectedTask.id} · <strong>{selectedTask.state}</strong>
-                </div>
-                <p>{selectedTask.plan?.summary ?? selectedTask.error ?? "—"}</p>
-                {(selectedTask.proposedActions ?? []).map((a) => (
-                  <div
-                    key={a.actionId}
-                    className={`action-card ${a.risk === "strong" ? "strong" : ""}`}
-                  >
-                    <strong>{a.toolName}</strong>
-                    <div className="meta">
-                      risk {a.risk} · {a.actionId}
-                    </div>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>
-                      {JSON.stringify(a.arguments, null, 2)}
-                    </pre>
-                  </div>
-                ))}
+                <h2>Safety</h2>
+                <label>
+                  Permission mode
+                  <select value={permissionMode} onChange={(e) => void patchMode(e.target.value)}>
+                    {MODES.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <div className="row">
-                  <button
-                    className="primary"
-                    type="button"
-                    disabled={
-                      busy ||
-                      !["awaiting_approval", "planned"].includes(selectedTask.state)
-                    }
-                    onClick={() => void approveTask()}
-                  >
-                    Approve
+                  <button className="danger" type="button" disabled={busy} onClick={() => void emergency(true)}>
+                    Emergency disable
                   </button>
-                  <button
-                    type="button"
-                    disabled={
-                      busy ||
-                      !["awaiting_approval", "planned"].includes(selectedTask.state)
-                    }
-                    onClick={() => void rejectTask()}
-                  >
-                    Reject
+                  <button type="button" disabled={busy || !emergencyOn} onClick={() => void emergency(false)}>
+                    Clear
                   </button>
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="panel">
-            <h2>Batch progress</h2>
-            {!progress ? (
-              <p className="meta">Waiting for operation events…</p>
-            ) : (
+            {drawer === "activity" && (
               <div className="stack">
-                <div className="meta">
-                  {progress.actionId} · {progress.state}
-                </div>
-                <div className="progress-bar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>
-                  <span style={{ width: `${progressPct}%` }} />
-                </div>
-                <div>
-                  {progress.completedWork}/{progress.totalEstimatedWork} — {progress.message}
+                <h2>Activity</h2>
+                <input
+                  placeholder="Filter…"
+                  value={activityFilter}
+                  onChange={(e) => setActivityFilter(e.target.value)}
+                  aria-label="Filter activity"
+                />
+                <div className="activity-list">
+                  {filteredActivity.map((r, i) => (
+                    <div key={`${r.loggedAt}-${i}`} className="activity-item">
+                      <div>
+                        <strong>{r.type}</strong> · {new Date(r.loggedAt).toLocaleTimeString()}
+                      </div>
+                      <div className="meta">
+                        {[r.taskId, r.actionId, r.toolName, r.risk, r.state, r.message]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
-          </div>
-        </section>
-
-        <aside className="stack">
-          <div className="panel">
-            <h2>Providers</h2>
-            <div className="stack">
-              <label>
-                Profile id
-                <input
-                  value={providerForm.id}
-                  onChange={(e) => setProviderForm({ ...providerForm, id: e.target.value })}
-                />
-              </label>
-              <label>
-                Base URL
-                <input
-                  value={providerForm.baseUrl}
-                  onChange={(e) => setProviderForm({ ...providerForm, baseUrl: e.target.value })}
-                />
-              </label>
-              <label>
-                Model
-                <input
-                  value={providerForm.model}
-                  onChange={(e) => setProviderForm({ ...providerForm, model: e.target.value })}
-                />
-              </label>
-              <label>
-                API key {providers.find((p) => p.id === providerForm.id)?.apiKeyConfigured ? "(configured — leave blank to keep)" : ""}
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={providerForm.apiKey}
-                  placeholder={
-                    providers.find((p) => p.id === providerForm.id)?.apiKeyConfigured
-                      ? "••••••••"
-                      : ""
-                  }
-                  onChange={(e) => setProviderForm({ ...providerForm, apiKey: e.target.value })}
-                />
-              </label>
-              <div className="row">
-                <button type="button" className="primary" disabled={busy} onClick={() => void saveProvider()}>
-                  Save
-                </button>
-                <button type="button" disabled={busy} onClick={() => void testProvider()}>
-                  Test
-                </button>
-                <button type="button" disabled={busy} onClick={() => void startPi()}>
-                  Start Pi
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="panel">
-            <h2>Safety</h2>
-            <div className="stack">
-              <label>
-                Permission mode
-                <select
-                  value={permissionMode}
-                  onChange={(e) => void patchMode(e.target.value)}
-                >
-                  {MODES.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="row">
-                <button
-                  className="danger"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void emergency(true)}
-                >
-                  Emergency disable
-                </button>
-                <button type="button" disabled={busy || !emergencyOn} onClick={() => void emergency(false)}>
-                  Clear disable
-                </button>
-              </div>
-              {emergencyOn && <div className="error">Emergency disable is active</div>}
-            </div>
-          </div>
-
-          <div className="panel">
-            <h2>Activity history</h2>
-            <input
-              placeholder="Filter by type / task / action…"
-              value={activityFilter}
-              onChange={(e) => setActivityFilter(e.target.value)}
-              aria-label="Filter activity"
-            />
-            <div className="activity-list" style={{ marginTop: "0.75rem" }}>
-              {filteredActivity.map((r, i) => (
-                <div key={`${r.loggedAt}-${i}`} className="activity-item">
-                  <div>
-                    <strong>{r.type}</strong> · {new Date(r.loggedAt).toLocaleTimeString()}
-                  </div>
-                  <div className="meta">
-                    {[r.taskId, r.actionId, r.toolName, r.risk, r.state, r.message]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+          </aside>
+        )}
       </div>
     </div>
   );
 }
 
-function StatusPill({
+export function ConnDot({
   label,
   state,
-  detail,
 }: {
   label: string;
-  state: "ok" | "warn" | "bad";
-  detail: string;
+  state: "ok" | "warn" | "bad" | "off";
 }) {
   return (
-    <span className="pill">
+    <span className="conn-dot">
       <span className={`dot ${state}`} aria-hidden />
-      <span>
-        {label}: {detail}
-      </span>
+      <span>{label}</span>
     </span>
   );
 }
 
-/** Fetch-based SSE client (native EventSource cannot set Authorization). */
 function createAuthorizedEventSource(url: string, token: string) {
   const controller = new AbortController();
   const listeners = new Map<string, Set<(ev: { data: string }) => void>>();
@@ -724,7 +1364,7 @@ function createAuthorizedEventSource(url: string, token: string) {
         }
       }
     } catch {
-      // closed or aborted
+      // closed
     }
   })();
 
