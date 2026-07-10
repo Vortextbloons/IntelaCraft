@@ -9,10 +9,40 @@ import {
   type ProviderProfile,
 } from "./index.js";
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
   if (req.url === "/v1/models") {
     res.end(JSON.stringify({ data: [{ id: "test-model" }] }));
+    return;
+  }
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  let parsed: any = {};
+  try {
+    parsed = body ? JSON.parse(body) : {};
+  } catch {
+    parsed = {};
+  }
+  if (Array.isArray(parsed.tools) && parsed.tools.length) {
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              role: "assistant",
+              tool_calls: [
+                {
+                  id: "call_1",
+                  type: "function",
+                  function: { name: "ping", arguments: '{"message":"OK"}' },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
     return;
   }
   res.end(
@@ -36,7 +66,9 @@ after(() => server.close());
 describe("IntelaCraft Pi extension", () => {
   it("discovers and tests models via OpenAI-compatible HTTP", async () => {
     assert.deepEqual(await discoverModels(p), ["test-model"]);
-    assert.equal((await testProvider(p)).ok, true);
+    const result = await testProvider(p);
+    assert.equal(result.ok, true);
+    assert.equal(result.toolCalling, true);
   });
   it("fallback planRequest suggests inspect.players for online asks", async () => {
     const plan = await planRequest(p, "who is online", {});

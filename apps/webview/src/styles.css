@@ -862,3 +862,226 @@ label {
     padding-bottom: 9rem;
   }
 }
+
+/* —— Chat overhaul —— */
+:root {
+  --stone: #2a2a28;
+  --moss: #6b8f71;
+  --risk-normal: #c9a227;
+  --risk-strong: #e5484d;
+}
+
+.transcript-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.transcript-scroll .transcript {
+  overflow: visible;
+  height: auto;
+  min-height: 100%;
+}
+
+.world-context {
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--stone) 35%, var(--bg-raised));
+  border-radius: var(--radius-sm);
+}
+
+.world-context-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.world-facts {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.world-facts code {
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.reasoning-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-raised) 80%, #1a2218);
+  overflow: hidden;
+}
+
+.reasoning-block.streaming {
+  border-color: color-mix(in srgb, var(--moss) 45%, var(--border));
+}
+
+.reasoning-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0.45rem 0.65rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.reasoning-body {
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #b7c4b0;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.turn-status {
+  font-style: italic;
+}
+
+.turn.streaming .turn-bubble {
+  position: relative;
+}
+
+.stream-caret {
+  display: inline-block;
+  width: 0.45rem;
+  height: 1em;
+  margin-left: 0.15rem;
+  background: var(--moss);
+  animation: caret-blink 1s steps(1) infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes caret-blink {
+  50% { opacity: 0; }
+}
+
+.md-text code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--bg-input);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
+
+.tool-card,
+.plan-card {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.75rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.tool-card-head,
+.plan-card-head,
+.plan-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.65rem;
+  align-items: center;
+}
+
+.tool-phase,
+.plan-state,
+.risk-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.tool-card.phase-inspect { border-left: 3px solid var(--moss); }
+.tool-card.phase-mutate { border-left: 3px solid var(--risk-normal); }
+.tool-card.phase-verify { border-left: 3px solid #6a8caf; }
+.tool-card.phase-plan { border-left: 3px solid #7a7a82; }
+
+.tool-result,
+.plan-args pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  color: var(--muted);
+  max-height: 180px;
+  overflow: auto;
+}
+
+.plan-section {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.plan-section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plan-step {
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-input);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.plan-step.risk-strong {
+  border-color: color-mix(in srgb, var(--risk-strong) 50%, var(--border));
+}
+
+.risk-badge.risk-strong { color: #ffb4b0; }
+.risk-badge.risk-normal { color: #f0d9a8; }
+.risk-badge.risk-read { color: var(--moss); }
+
+.plan-facts {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.plan-facts code {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.plan-args summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.jump-latest {
+  position: sticky;
+  bottom: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.turn.assistant .turn-bubble {
+  background: transparent;
+  border: none;
+  padding-left: 0;
+}

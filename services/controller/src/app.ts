@@ -121,7 +121,7 @@ async function handleRequest(
     return;
   }
   if (method === "PATCH" && path === "/v1/settings") {
-    const body = (await readJson(req)) as { permissionMode?: string };
+    const body = (await readJson(req)) as { permissionMode?: string; thinkingLevel?: string };
     if (
       body.permissionMode &&
       !(PERMISSION_MODES as readonly string[]).includes(body.permissionMode)
@@ -129,9 +129,24 @@ async function handleRequest(
       sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid permissionMode" } });
       return;
     }
+    const thinkingLevels = ["off", "minimal", "low", "medium", "high"] as const;
+    if (body.thinkingLevel && !(thinkingLevels as readonly string[]).includes(body.thinkingLevel)) {
+      sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid thinkingLevel" } });
+      return;
+    }
     const next = ctx.settings.patch({
       permissionMode: body.permissionMode as PermissionMode | undefined,
+      thinkingLevel: body.thinkingLevel as
+        | "off"
+        | "minimal"
+        | "low"
+        | "medium"
+        | "high"
+        | undefined,
     });
+    if (next.thinkingLevel && ctx.agent) {
+      ctx.agent.setThinkingLevel(next.thinkingLevel);
+    }
     ctx.audit.append({ type: "settings_updated", ...next });
     sendJson(res, 200, next);
     return;
@@ -257,8 +272,10 @@ async function handleRequest(
           sessions: ctx.sessions,
           audit: ctx.audit,
         },
-        (text) => {
-          writeEvent("delta", { text });
+        (event) => {
+          if (event.type === "delta") writeEvent("delta", { text: event.text });
+          else if (event.type === "reasoning_delta") writeEvent("reasoning_delta", { text: event.text });
+          else if (event.type === "tool") writeEvent("tool", event);
         },
       );
       ctx.audit.append({
@@ -280,7 +297,7 @@ async function handleRequest(
     sendJson(res, 200, { tasks: ctx.agent.listTasks() });
     return;
   }
-  const taskAction = /^\/v1\/tasks\/([^/]+)\/(approve|reject|cancel)$/.exec(path);
+  const taskAction = /^\/v1\/tasks\/([^/]+)\/(approve|reject|cancel|replan)$/.exec(path);
   if (ctx.agent && method === "POST" && taskAction) {
     const taskId = decodeURIComponent(taskAction[1]);
     const action = taskAction[2];
@@ -298,23 +315,34 @@ async function handleRequest(
       if (action === "reject") {
         const task = ctx.agent.rejectTask(taskId, {
           rejectedBy: String(b.rejectedBy ?? "webview"),
+          audit: ctx.audit,
           reason: typeof b.reason === "string" ? b.reason : undefined,
+        });
+        sendJson(res, 200, { task });
+        return;
+      }
+      if (action === "cancel") {
+        const task = ctx.agent.cancelTask(taskId, {
+          cancelledBy: String(b.cancelledBy ?? "webview"),
+          sessions: ctx.sessions,
           audit: ctx.audit,
         });
         sendJson(res, 200, { task });
         return;
       }
-      const task = ctx.agent.cancelTask(taskId, {
-        cancelledBy: String(b.cancelledBy ?? "webview"),
-        sessions: ctx.sessions,
-        audit: ctx.audit,
-      });
-      sendJson(res, 200, { task });
-      return;
-    } catch (e) {
-      const err = e as Error & { code?: string; status?: number };
-      sendJson(res, err.status ?? 400, {
-        error: { code: err.code ?? "TASK_ERROR", message: err.message },
+      if (action === "replan") {
+        const task = await ctx.agent.editAndReplan(taskId, {
+          notes: String(b.notes ?? b.request ?? "Please revise the plan."),
+          sessions: ctx.sessions,
+          audit: ctx.audit,
+          history: Array.isArray(b.history) ? (b.history as any) : undefined,
+        });
+        sendJson(res, 200, { task });
+        return;
+      }
+    } catch (e: any) {
+      sendJson(res, e.status ?? 500, {
+        error: { code: e.code ?? "ERROR", message: e.message ?? "Task action failed" },
       });
       return;
     }
@@ -486,6 +514,7 @@ async function handleEvents(
   ctx.agent?.onOperationEvent(parsed.value.actionId, parsed.value.state, ctx.audit, {
     message: parsed.value.message,
     result: parsed.value.result,
+    sessions: ctx.sessions,
   });
   sendJson(res, 200, { ok: true });
 }

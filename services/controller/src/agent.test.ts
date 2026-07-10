@@ -92,7 +92,7 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     assert.equal(polled.approval, undefined);
   });
 
-  it("keeps mutations in awaiting_approval while auto-running inspection", () => {
+  it("defers mutations until inspect completes (inspecting state)", () => {
     const agent = new AgentRuntime(config());
     const sessions = new SessionStore();
     const activity = new ActivityStore(join(dir, "audit-agent2.jsonl"), 30);
@@ -135,11 +135,11 @@ describe("AgentRuntime read-only inspect auto-run", () => {
       { bdsSessionId: sessionId },
     );
 
-    assert.equal(row.state, "awaiting_approval");
-    assert.equal(row.proposedActions?.length, 1);
-    assert.equal(row.proposedActions[0].toolName, "world.fill_blocks");
+    assert.equal(row.state, "inspecting");
+    assert.equal(row.proposedActions?.length, 0);
+    assert.equal(row.awaitingInspectReplan, true);
     (agent as any).enqueuePendingReads(row, sessions, audit);
-    assert.equal(row.state, "awaiting_approval");
+    assert.equal(row.state, "inspecting");
     assert.equal(row.enqueuedActionIds?.length, 1);
     const polled = sessions.dequeue(sessionId);
     assert.equal(polled?.toolName, "inspect.players");

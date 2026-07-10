@@ -22,7 +22,9 @@ import {
   type AgentPlan,
   type ChatTurn,
   type PiSession,
+  type PlanStreamEvent,
   type ProviderProfile,
+  type ThinkingLevel,
 } from "@intelacraft/pi-extension";
 import { AdvisoryMcpClient } from "@intelacraft/mcp-connection";
 import type { ControllerConfig } from "./config.js";
@@ -33,9 +35,11 @@ import type { AuditLog } from "./audit.js";
 export type AgentTaskState =
   | "submitted"
   | "planning"
+  | "inspecting"
   | "awaiting_approval"
   | "planned"
   | "running"
+  | "verifying"
   | "rejected"
   | "cancelled"
   | "completed"
@@ -54,11 +58,27 @@ export interface AgentTask {
   proposedActions?: ActionRequestMessage[];
   /** Read-only inspection actions auto-enqueued without approval. */
   pendingReads?: ActionRequestMessage[];
+  /** Verification reads to run after mutations. */
+  pendingVerification?: ActionRequestMessage[];
   enqueuedActionIds?: string[];
+  completedActionIds?: string[];
+  /** Action IDs that belong to the current inspect wave (for replan gating). */
+  inspectActionIds?: string[];
+  /** Action IDs that belong to mutation wave. */
+  mutationActionIds?: string[];
+  /** Action IDs that belong to verification wave. */
+  verifyActionIds?: string[];
   error?: string;
   bdsSessionId?: string;
   actor?: string;
   permissionMode?: PermissionMode;
+  metrics?: {
+    planLatencyMs?: number;
+    validationRetries?: number;
+    usedNormalizeFallback?: boolean;
+  };
+  /** True when we deferred mutations until inspect completes + replan. */
+  awaitingInspectReplan?: boolean;
 }
 
 interface ProvidersFile {
@@ -73,6 +93,7 @@ export class AgentRuntime {
   private tasks = new Map<string, AgentTask>();
   /** Multi-turn chat memory keyed by Pi session id. */
   private chatHistory = new Map<string, ChatTurn[]>();
+  private thinkingLevel: ThinkingLevel = "off";
   readonly mcp: AdvisoryMcpClient;
 
   constructor(private config: ControllerConfig) {
@@ -87,6 +108,14 @@ export class AgentRuntime {
         model: config.providerModel,
       });
     }
+  }
+
+  setThinkingLevel(level: ThinkingLevel) {
+    this.thinkingLevel = level;
+  }
+
+  getThinkingLevel() {
+    return this.thinkingLevel;
   }
 
   private loadProviders(): void {
@@ -188,7 +217,7 @@ export class AgentRuntime {
   async createSession(providerId: string) {
     const p = this.needProvider(providerId);
     const s = createPiSession(resolve(this.config.piStoragePath), p);
-    await initializePiSession(s, p);
+    await initializePiSession(s, p, this.thinkingLevel);
     this.pi.set(s.id, s);
     return s;
   }
@@ -212,7 +241,7 @@ export class AgentRuntime {
     return this.createTaskInternal(input);
   }
 
-  /** Same as createTask but streams model tokens via onDelta. */
+  /** Same as createTask but streams model tokens via onEvent. */
   async createTaskStream(
     input: {
       piSessionId: string;
@@ -226,9 +255,27 @@ export class AgentRuntime {
       audit?: AuditLog;
       history?: ChatTurn[];
     },
-    onDelta: (text: string) => void,
+    onEvent: (event: PlanStreamEvent) => void,
   ) {
-    return this.createTaskInternal(input, onDelta);
+    return this.createTaskInternal(input, onEvent);
+  }
+
+  private buildWorldContext(sessions?: SessionStore, clientWorld?: unknown): unknown {
+    const live = sessions?.listSessions()?.[0];
+    const health = live?.lastHealth;
+    const server = {
+      serverId: live?.serverId,
+      connected: Boolean(live),
+      emergencyDisabled: live ? sessions?.isEmergencyDisabled(live.sessionId) : false,
+      playersOnline: health?.playerCount,
+      tick: health?.tick,
+      ok: health?.ok,
+    };
+    return redactSecrets({
+      server,
+      client: clientWorld ?? {},
+      adminCommandIds: Object.keys(this.config.adminCommands),
+    });
   }
 
   private async createTaskInternal(
@@ -244,7 +291,7 @@ export class AgentRuntime {
       audit?: AuditLog;
       history?: ChatTurn[];
     },
-    onDelta?: (text: string) => void,
+    onEvent?: (event: PlanStreamEvent) => void,
   ) {
     const s = this.pi.get(input.piSessionId);
     if (!s) throw new Error("Unknown Pi session");
@@ -258,25 +305,42 @@ export class AgentRuntime {
       bdsSessionId: input.bdsSessionId,
       actor: input.actor ?? "pi-agent",
       permissionMode: input.permissionMode ?? this.config.defaultPermissionMode,
+      completedActionIds: [],
+      metrics: { validationRetries: 0 },
     };
     this.tasks.set(task.id, task);
     task.state = "planning";
+    const planStarted = Date.now();
     try {
       const advice = input.useMcp === false ? null : await this.mcp.query(input.request);
       const provider = this.needProvider(s.providerId);
-      await refreshPiSessionProvider(s, provider);
-      const world = redactSecrets(input.worldContext ?? {});
+      await refreshPiSessionProvider(s, provider, this.thinkingLevel);
+      const world = this.buildWorldContext(input.sessions, input.worldContext);
       const mcp = advice == null ? undefined : redactSecrets(advice);
-      // Keep a mirror for activity/UI; Pi session owns the real multi-turn memory.
-      this.resolveHistory(s.id, input.history);
-      const plan = await planWithPiSession(s.id, input.request, world, mcp, onDelta);
+      const history = this.resolveHistory(s.id, input.history);
+      const adminCommandIds = Object.keys(this.config.adminCommands);
+
+      const plan = await this.planWithValidationRetry(
+        s.id,
+        input.request,
+        world,
+        mcp,
+        {
+          thinkingLevel: this.thinkingLevel,
+          adminCommandIds,
+          history,
+          onEvent,
+        },
+        task,
+        input,
+      );
+
       this.applyPlanToTask(task, plan, input);
       this.appendHistory(s.id, { role: "user", content: input.request });
       this.appendHistory(s.id, {
         role: "assistant",
         content: this.planHistoryText(plan),
       });
-      // Read-only inspect steps never need approval — enqueue immediately.
       if (input.sessions && input.audit) {
         this.enqueuePendingReads(task, input.sessions, input.audit);
       }
@@ -284,8 +348,66 @@ export class AgentRuntime {
       task.state = "failed";
       task.error = e instanceof Error ? e.message : "Planning failed";
     }
+    task.metrics = {
+      ...(task.metrics ?? {}),
+      planLatencyMs: Date.now() - planStarted,
+    };
     task.updatedAt = new Date().toISOString();
     return this.publicTask(task);
+  }
+
+  private async planWithValidationRetry(
+    sessionId: string,
+    request: string,
+    world: unknown,
+    mcp: unknown,
+    opts: {
+      thinkingLevel?: ThinkingLevel;
+      adminCommandIds?: string[];
+      history?: ChatTurn[];
+      onEvent?: (event: PlanStreamEvent) => void;
+      validationError?: string;
+    },
+    task: AgentTask,
+    input: { bdsSessionId: string; actor?: string; permissionMode?: PermissionMode },
+  ): Promise<AgentPlan> {
+    let lastError: string | undefined = opts.validationError;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const plan = await planWithPiSession(sessionId, request, world, mcp, {
+        ...opts,
+        validationError: lastError,
+      });
+      try {
+        this.validatePlanTools(plan);
+        // Dry-run materialize to catch arg errors before applying.
+        for (const step of plan.inspection) this.materializeAction(step, input, true);
+        for (const step of plan.actions) this.materializeAction(step, input, false);
+        for (const step of plan.verification) this.materializeAction(step, input, true);
+        return plan;
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : "Invalid plan";
+        task.metrics = {
+          ...(task.metrics ?? {}),
+          validationRetries: (task.metrics?.validationRetries ?? 0) + 1,
+        };
+        if (attempt === 1) throw e;
+        opts.onEvent?.({
+          type: "tool",
+          name: "validate_plan",
+          phase: "start",
+          detail: lastError,
+        });
+      }
+    }
+    throw new Error(lastError ?? "Planning failed");
+  }
+
+  private validatePlanTools(plan: AgentPlan) {
+    for (const step of [...plan.inspection, ...plan.verification]) {
+      if (!step.toolName.startsWith("inspect.")) {
+        throw new Error("Inspection and verification steps must be read-only");
+      }
+    }
   }
 
   private resolveHistory(piSessionId: string, clientHistory?: ChatTurn[]): ChatTurn[] {
@@ -363,30 +485,37 @@ export class AgentRuntime {
     plan: AgentPlan,
     input: { bdsSessionId: string; actor?: string; permissionMode?: PermissionMode },
   ) {
+    this.validatePlanTools(plan);
     for (const step of [...plan.inspection, ...plan.verification]) {
-      if (!step.toolName.startsWith("inspect.")) {
-        throw new Error("Inspection and verification steps must be read-only");
-      }
       const v = validateToolArguments(step.toolName as ToolName, step.arguments);
       if (!v.ok) throw new Error(`Invalid ${step.toolName}: ${v.error.message}`);
     }
-    // Inspection runs immediately (no approval). Mutations wait for Approve.
-    // Verification stays on the plan until after mutations complete (future hook).
     const reads = plan.inspection.map((step) => this.materializeAction(step, input, true));
     const proposed = plan.actions.map((a) => this.materializeAction(a, input, false));
+    const verification = plan.verification.map((step) => this.materializeAction(step, input, true));
     task.plan = plan;
     task.pendingReads = reads;
+    task.pendingVerification = verification;
     task.proposedActions = proposed;
+    task.awaitingInspectReplan = false;
+    task.inspectActionIds = [];
+    task.mutationActionIds = [];
+    task.verifyActionIds = [];
+
     const chatOnly =
       plan.inspection.length === 0 &&
       plan.actions.length === 0 &&
       plan.verification.length === 0;
     if (chatOnly) {
       task.state = "completed";
+    } else if (reads.length > 0 && proposed.some((a) => a.risk !== "read")) {
+      // Defer mutation approval until inspect completes and we re-plan.
+      task.awaitingInspectReplan = true;
+      task.proposedActions = [];
+      task.state = "inspecting";
     } else if (proposed.some((a) => a.risk !== "read")) {
       task.state = "awaiting_approval";
     } else if (reads.length > 0) {
-      // Inspect-only: proposedActions mirrors reads for UI/progress correlation.
       task.proposedActions = reads;
       task.state = "planned";
     } else {
@@ -405,6 +534,7 @@ export class AgentRuntime {
       return;
     }
     const enqueued: string[] = [...(task.enqueuedActionIds ?? [])];
+    const inspectIds: string[] = [...(task.inspectActionIds ?? [])];
     for (const action of actions) {
       const result = sessions.enqueue(action.sessionId, {
         ...action,
@@ -422,6 +552,7 @@ export class AgentRuntime {
         return;
       }
       enqueued.push(action.actionId);
+      inspectIds.push(action.actionId);
       audit.append({
         type: "action_enqueued",
         taskId: task.id,
@@ -435,12 +566,190 @@ export class AgentRuntime {
       });
     }
     task.enqueuedActionIds = enqueued;
+    task.inspectActionIds = inspectIds;
     task.pendingReads = [];
-    // Inspect-only plans move to running; mutation plans stay awaiting_approval.
     if (task.state === "planned") {
       task.state = "running";
       audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
+    } else if (task.state === "inspecting") {
+      audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
     }
+  }
+
+  private enqueueVerification(task: AgentTask, sessions: SessionStore, audit: AuditLog) {
+    const actions = task.pendingVerification ?? [];
+    if (actions.length === 0) {
+      task.state = "completed";
+      audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
+      return;
+    }
+    task.state = "verifying";
+    const enqueued: string[] = [...(task.enqueuedActionIds ?? [])];
+    const verifyIds: string[] = [];
+    for (const action of actions) {
+      const result = sessions.enqueue(action.sessionId, {
+        ...action,
+        noApprovalReason: "read_risk_no_approval",
+      });
+      if (!result.ok) {
+        task.state = "partial";
+        task.error = result.message;
+        audit.append({
+          type: "task_lifecycle",
+          taskId: task.id,
+          state: task.state,
+          error: result.message,
+        });
+        return;
+      }
+      enqueued.push(action.actionId);
+      verifyIds.push(action.actionId);
+      audit.append({
+        type: "action_enqueued",
+        taskId: task.id,
+        sessionId: action.sessionId,
+        actionId: action.actionId,
+        toolName: action.toolName,
+        actor: action.actor,
+        risk: action.risk,
+        arguments: action.arguments,
+        noApprovalReason: "verification_read",
+      });
+    }
+    task.enqueuedActionIds = enqueued;
+    task.verifyActionIds = verifyIds;
+    task.pendingVerification = [];
+    audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
+  }
+
+  /** After inspect wave completes, re-plan mutations with real world facts. */
+  async replanAfterInspection(
+    taskId: string,
+    sessions: SessionStore,
+    audit: AuditLog,
+    onEvent?: (event: PlanStreamEvent) => void,
+  ) {
+    const task = this.tasks.get(taskId);
+    if (!task || !task.awaitingInspectReplan) return this.publicTask(task!);
+    const s = this.pi.get(task.piSessionId);
+    if (!s) {
+      task.state = "failed";
+      task.error = "Pi session missing for replan";
+      return this.publicTask(task);
+    }
+    task.state = "planning";
+    task.awaitingInspectReplan = false;
+    audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state, phase: "replan" });
+    try {
+      const provider = this.needProvider(s.providerId);
+      await refreshPiSessionProvider(s, provider, this.thinkingLevel);
+      const world = this.buildWorldContext(sessions);
+      const history = this.chatHistory.get(s.id) ?? [];
+      const plan = await this.planWithValidationRetry(
+        s.id,
+        `Inspection finished for the original request. Propose the final mutation plan now (prefer empty inspection if facts are known).\nOriginal request: ${task.request}`,
+        world,
+        undefined,
+        {
+          thinkingLevel: this.thinkingLevel,
+          adminCommandIds: Object.keys(this.config.adminCommands),
+          history,
+          onEvent,
+        },
+        task,
+        {
+          bdsSessionId: task.bdsSessionId!,
+          actor: task.actor,
+          permissionMode: task.permissionMode,
+        },
+      );
+      // Keep original request on the task; apply refined plan.
+      this.applyPlanToTask(task, plan, {
+        bdsSessionId: task.bdsSessionId!,
+        actor: task.actor,
+        permissionMode: task.permissionMode,
+      });
+      // If replan still wants inspect-only deferral, just enqueue reads again.
+      const nextState = task.state as AgentTaskState;
+      if (nextState === "inspecting" || (nextState === "planned" && (task.pendingReads?.length ?? 0) > 0)) {
+        this.enqueuePendingReads(task, sessions, audit);
+      }
+      this.appendHistory(s.id, {
+        role: "assistant",
+        content: this.planHistoryText(plan),
+      });
+    } catch (e) {
+      task.state = "failed";
+      task.error = e instanceof Error ? e.message : "Replan failed";
+    }
+    task.updatedAt = new Date().toISOString();
+    audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
+    return this.publicTask(task);
+  }
+
+  /** Edit-and-replan: reject current mutations and plan again with user notes. */
+  async editAndReplan(
+    taskId: string,
+    input: {
+      notes: string;
+      sessions: SessionStore;
+      audit: AuditLog;
+      history?: ChatTurn[];
+      onEvent?: (event: PlanStreamEvent) => void;
+    },
+  ) {
+    const task = this.tasks.get(taskId);
+    if (!task) throw Object.assign(new Error("Task not found"), { code: "NOT_FOUND", status: 404 });
+    if (task.state !== "awaiting_approval" && task.state !== "planned" && task.state !== "inspecting") {
+      throw Object.assign(new Error(`Task cannot be edited in state ${task.state}`), {
+        code: "INVALID_STATE",
+        status: 409,
+      });
+    }
+    const s = this.pi.get(task.piSessionId);
+    if (!s) throw new Error("Unknown Pi session");
+    task.state = "planning";
+    task.error = undefined;
+    input.audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state, phase: "edit_replan" });
+    const request = `${task.request}\n\nUser edit notes: ${input.notes}`;
+    try {
+      const provider = this.needProvider(s.providerId);
+      await refreshPiSessionProvider(s, provider, this.thinkingLevel);
+      const world = this.buildWorldContext(input.sessions);
+      const history = this.resolveHistory(s.id, input.history);
+      const plan = await this.planWithValidationRetry(
+        s.id,
+        request,
+        world,
+        undefined,
+        {
+          thinkingLevel: this.thinkingLevel,
+          adminCommandIds: Object.keys(this.config.adminCommands),
+          history,
+          onEvent: input.onEvent,
+        },
+        task,
+        {
+          bdsSessionId: task.bdsSessionId!,
+          actor: task.actor,
+          permissionMode: task.permissionMode,
+        },
+      );
+      task.request = request;
+      this.applyPlanToTask(task, plan, {
+        bdsSessionId: task.bdsSessionId!,
+        actor: task.actor,
+        permissionMode: task.permissionMode,
+      });
+      this.enqueuePendingReads(task, input.sessions, input.audit);
+      this.appendHistory(s.id, { role: "user", content: input.notes });
+      this.appendHistory(s.id, { role: "assistant", content: this.planHistoryText(plan) });
+    } catch (e) {
+      task.state = "failed";
+      task.error = e instanceof Error ? e.message : "Edit replan failed";
+    }
+    task.updatedAt = new Date().toISOString();
+    return this.publicTask(task);
   }
 
   approveTask(
@@ -463,6 +772,7 @@ export class AgentRuntime {
       return this.publicTask(task);
     }
     const enqueued: string[] = [...(task.enqueuedActionIds ?? [])];
+    const mutationIds: string[] = [];
     for (const action of actions) {
       if (action.risk === "read") {
         // Already auto-enqueued via enqueuePendingReads — skip duplicates.
@@ -509,6 +819,7 @@ export class AgentRuntime {
         throw Object.assign(new Error(result.message), { code: result.code, status: 409 });
       }
       enqueued.push(approved.actionId);
+      mutationIds.push(approved.actionId);
       input.audit.append({
         type: "approval_granted",
         taskId: task.id,
@@ -531,6 +842,7 @@ export class AgentRuntime {
       });
     }
     task.enqueuedActionIds = enqueued;
+    task.mutationActionIds = [...(task.mutationActionIds ?? []), ...mutationIds];
     task.state = "running";
     task.updatedAt = new Date().toISOString();
     input.audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
@@ -604,22 +916,40 @@ export class AgentRuntime {
     actionId: string,
     state: string,
     audit: AuditLog,
-    detail?: { message?: string; result?: unknown },
+    detail?: {
+      message?: string;
+      result?: unknown;
+      sessions?: SessionStore;
+      toolName?: string;
+    },
   ) {
     for (const task of this.tasks.values()) {
       if (!task.enqueuedActionIds?.includes(actionId)) continue;
       if (task.state === "cancelled" || task.state === "rejected") return;
+
+      const terminal =
+        state === "completed" ||
+        state === "partially_completed" ||
+        state === "failed" ||
+        state === "cancelled";
+
       if (state === "running") {
-        task.state = "running";
-      } else if (state === "completed") {
-        const allDone = (task.enqueuedActionIds ?? []).every((id) => id === actionId) ||
-          task.enqueuedActionIds!.length === 1;
-        // Mark completed when any terminal success arrives for single-action; multi-action stays running until all known
-        if (allDone || task.enqueuedActionIds!.length <= 1) task.state = "completed";
-        else task.state = "running";
+        if (task.state !== "inspecting" && task.state !== "verifying") {
+          task.state = "running";
+        }
+      }
+
+      if (terminal) {
+        const completed = new Set(task.completedActionIds ?? []);
+        completed.add(actionId);
+        task.completedActionIds = [...completed];
+
         if (detail?.message || detail?.result !== undefined) {
           const tool =
-            task.proposedActions?.find((a) => a.actionId === actionId)?.toolName ?? "tool";
+            detail.toolName ??
+            task.proposedActions?.find((a) => a.actionId === actionId)?.toolName ??
+            task.plan?.inspection?.find(() => true)?.toolName ??
+            "tool";
           const resultText =
             detail.result !== undefined
               ? `${detail.message ?? "ok"}\n${JSON.stringify(detail.result).slice(0, 1500)}`
@@ -628,20 +958,58 @@ export class AgentRuntime {
             role: "assistant",
             content: `[tool result ${tool}] ${resultText}`.slice(0, 4000),
           });
-          void injectPiToolResult(
-            task.piSessionId,
-            tool,
-            detail.message ?? "ok",
-            detail.result,
-          );
+          void injectPiToolResult(task.piSessionId, tool, detail.message ?? "ok", detail.result);
         }
-      } else if (state === "partially_completed") {
-        task.state = "partial";
-      } else if (state === "failed") {
-        task.state = "failed";
-      } else if (state === "cancelled") {
-        task.state = "cancelled";
+
+        if (state === "failed") {
+          task.state = "failed";
+        } else if (state === "cancelled") {
+          task.state = "cancelled";
+        } else if (state === "partially_completed") {
+          task.state = "partial";
+        } else if (state === "completed") {
+          const inspectIds = task.inspectActionIds ?? [];
+          const mutationIds = task.mutationActionIds ?? [];
+          const verifyIds = task.verifyActionIds ?? [];
+          const done = (ids: string[]) =>
+            ids.length > 0 && ids.every((id) => completed.has(id));
+
+          if (task.awaitingInspectReplan && done(inspectIds) && detail?.sessions) {
+            void this.replanAfterInspection(task.id, detail.sessions, audit);
+          } else if (task.state === "inspecting" && done(inspectIds) && !task.awaitingInspectReplan) {
+            task.state = "completed";
+          } else if (
+            (task.state === "running" || mutationIds.length > 0) &&
+            mutationIds.length > 0 &&
+            done(mutationIds)
+          ) {
+            if ((task.pendingVerification?.length ?? 0) > 0 && detail?.sessions) {
+              this.enqueueVerification(task, detail.sessions, audit);
+            } else if (verifyIds.length === 0) {
+              task.state = "completed";
+            }
+          } else if (task.state === "verifying" && done(verifyIds)) {
+            task.state = "completed";
+          } else if (
+            inspectIds.length > 0 &&
+            done(inspectIds) &&
+            mutationIds.length === 0 &&
+            !task.awaitingInspectReplan &&
+            task.state !== "awaiting_approval"
+          ) {
+            // Inspect-only task
+            task.state = "completed";
+          } else if (
+            (task.enqueuedActionIds ?? []).every((id) => completed.has(id)) &&
+            task.state !== "awaiting_approval" &&
+            task.state !== "inspecting" &&
+            task.state !== "verifying"
+          ) {
+            task.state = "completed";
+          }
+        }
       }
+
       task.updatedAt = new Date().toISOString();
       audit.append({
         type: "task_lifecycle",
@@ -677,6 +1045,7 @@ export class AgentRuntime {
   private publicTask(t: AgentTask) {
     const clone = structuredClone(t);
     delete clone.pendingReads;
+    delete clone.pendingVerification;
     return clone;
   }
 }

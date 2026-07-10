@@ -145,14 +145,20 @@ export class EventStore {
 }
 
 export class SettingsStore {
+  private thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" = "off";
+
   constructor(private permissionMode: PermissionMode) {}
 
   get() {
-    return { permissionMode: this.permissionMode };
+    return { permissionMode: this.permissionMode, thinkingLevel: this.thinkingLevel };
   }
 
-  patch(input: { permissionMode?: PermissionMode }) {
+  patch(input: {
+    permissionMode?: PermissionMode;
+    thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
+  }) {
     if (input.permissionMode) this.permissionMode = input.permissionMode;
+    if (input.thinkingLevel) this.thinkingLevel = input.thinkingLevel;
     return this.get();
   }
 }

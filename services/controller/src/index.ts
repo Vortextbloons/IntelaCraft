@@ -19,6 +19,7 @@ function main(): void {
   const audit = new AuditLog(config.auditPath, activity);
   const settings = new SettingsStore(config.defaultPermissionMode);
   const agent = new AgentRuntime(config);
+  agent.setThinkingLevel(settings.get().thinkingLevel);
   const server = createApp({ config, sessions, events, audit, activity, settings, agent });
 
   server.listen(config.port, "127.0.0.1", () => {

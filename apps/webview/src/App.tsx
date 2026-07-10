@@ -1,140 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ApiError, api, clearToken, getToken, setToken } from "./api";
-
-type Health = {
-  ok: boolean;
-  bdsConnected: boolean;
-  sessions: Array<{
-    sessionId: string;
-    serverId: string;
-    connected: boolean;
-    emergencyDisabled?: boolean;
-  }>;
-  settings?: { permissionMode: string };
-  agent?: {
-    pi: boolean;
-    sessions: number;
-    providers: number;
-    mcp?: { configured?: boolean; available?: boolean };
-  };
-};
-
-type Task = {
-  id: string;
-  request: string;
-  state: string;
-  plan?: {
-    summary: string;
-    notes?: string[];
-    inspection?: Array<{ toolName: string; summary?: string; arguments?: Record<string, unknown> }>;
-    actions?: Array<{ toolName: string; summary?: string; arguments?: Record<string, unknown> }>;
-    verification?: Array<{ toolName: string; summary?: string; arguments?: Record<string, unknown> }>;
-  };
-  proposedActions?: Array<{
-    actionId: string;
-    toolName: string;
-    risk: string;
-    arguments: Record<string, unknown>;
-  }>;
-  enqueuedActionIds?: string[];
-  error?: string;
-};
-
-function taskNeedsPlanCard(task: Task): boolean {
-  return ["awaiting_approval", "running", "partial", "planned"].includes(task.state);
-}
-
-function taskNeedsApproval(task: Task): boolean {
-  return (
-    task.state === "awaiting_approval" &&
-    (task.proposedActions?.some((a) => a.risk !== "read") ?? false)
-  );
-}
-
-function previewStreamingText(raw: string): string {
-  const m = raw.match(/"summary"\s*:\s*"((?:\\.|[^"\\])*)"/);
-  if (m) {
-    try {
-      return JSON.parse(`"${m[1]}"`);
-    } catch {
-      return m[1];
-    }
-  }
-  if (raw.length < 8) return "Planning…";
-  return raw.length > 280 ? `${raw.slice(0, 280)}…` : raw;
-}
-
-type Provider = {
-  id: string;
-  name: string;
-  baseUrl: string;
-  model: string;
-  apiKeyConfigured: boolean;
-};
-
-type ActivityRecord = {
-  loggedAt: string;
-  type: string;
-  taskId?: string;
-  actionId?: string;
-  message?: string;
-  state?: string;
-  risk?: string;
-  toolName?: string;
-};
-
-type ChatMsg = {
-  id: string;
-  role: "user" | "system" | "assistant";
-  text: string;
-  taskId?: string;
-  toolRuns?: ToolRun[];
-};
-
-type ToolRun = {
-  actionId: string;
-  state: string;
-  completedWork: number;
-  totalEstimatedWork: number;
-  message: string;
-  result?: unknown;
-  error?: string;
-};
-
-type Progress = ToolRun;
-
-function formatInspectResult(message: string, result: unknown): string {
-  if (result && typeof result === "object") {
-    const r = result as {
-      count?: number;
-      players?: Array<{ name?: string; dimension?: string; location?: { x: number; y: number; z: number } }>;
-    };
-    if (Array.isArray(r.players)) {
-      if (r.players.length === 0) return "No players online.";
-      const lines = r.players.map((p) => {
-        const loc = p.location
-          ? ` @ ${Math.round(p.location.x)}, ${Math.round(p.location.y)}, ${Math.round(p.location.z)}`
-          : "";
-        return `• ${p.name ?? "?"}${p.dimension ? ` (${p.dimension})` : ""}${loc}`;
-      });
-      return `${message}\n${lines.join("\n")}`;
-    }
-  }
-  if (result !== undefined) {
-    return `${message}\n${JSON.stringify(result, null, 2)}`;
-  }
-  return message;
-}
-
-function isReadOnlyPlan(task: Task): boolean {
-  const mutations = (task.proposedActions ?? []).filter((a) => a.risk !== "read");
-  if (mutations.length > 0) return false;
-  if ((task.plan?.actions?.length ?? 0) > 0) return false;
-  return (
-    (task.proposedActions?.length ?? 0) > 0 ||
-    (task.plan?.inspection?.length ?? 0) > 0
-  );
-}
+import {
+  ApiError,
+  api,
+  clearPiSessionId,
+  clearToken,
+  getPiSessionId,
+  getToken,
+  setPiSessionId,
+  setToken,
+} from "./api";
+import { ConnectionStrip } from "./components/ConnectionStrip";
+import { Transcript } from "./components/Transcript";
+import { WorldContextPanel } from "./components/WorldContextPanel";
+import {
+  isReadOnlyPlan,
+  taskNeedsPlanCard,
+  type ActivityRecord,
+  type ChatMsg,
+  type Health,
+  type MessagePart,
+  type Provider,
+  type Task,
+  type ThinkingLevel,
+  type ToolRun,
+} from "./types";
+import { formatInspectResult, summarizeArgs } from "./utils/format";
 
 const MODES = [
   "observe_only",
@@ -218,7 +108,7 @@ export function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [activeProviderId, setActiveProviderId] = useState<string>("");
-  const [piSessionId, setPiSessionId] = useState<string | null>(null);
+  const [piSessionId, setPiSessionIdState] = useState<string | null>(getPiSessionId);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
   const [modelsLoading, setModelsLoading] = useState(false);
   const [browseProviderId, setBrowseProviderId] = useState("opencode-zen");
@@ -233,7 +123,12 @@ export function App() {
   const [pickerPanel, setPickerPanel] = useState<"none" | "providers" | "models">("none");
   const [drawer, setDrawer] = useState<"none" | "safety" | "activity">("none");
   const [busy, setBusy] = useState(false);
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("off");
+  const [stickToBottom, setStickToBottom] = useState(true);
+  const [showJump, setShowJump] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const tasksRef = useRef<Task[]>([]);
   const chatRef = useRef<ChatMsg[]>(chat);
@@ -266,14 +161,16 @@ export function App() {
           activeProviderId: "",
         })),
         api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
-        api<{ permissionMode: string }>("/v1/settings"),
+        api<{ permissionMode: string; thinkingLevel?: ThinkingLevel }>("/v1/settings"),
       ]);
       setHealth(h);
       setTasks(t.tasks);
       setProviders(p.providers);
       setActivity([...a.records].reverse());
       setPermissionMode(s.permissionMode);
+      if (s.thinkingLevel) setThinkingLevel(s.thinkingLevel);
       if (h.settings?.permissionMode) setPermissionMode(h.settings.permissionMode);
+      if (h.settings?.thinkingLevel) setThinkingLevel(h.settings.thinkingLevel as ThinkingLevel);
       setActiveProviderId((prev) => {
         if (p.activeProviderId && p.providers.some((x) => x.id === p.activeProviderId)) {
           return p.activeProviderId;
@@ -309,6 +206,12 @@ export function App() {
         const e = record.event;
         const run: ToolRun = {
           actionId: e.actionId,
+          toolName: (e as { toolName?: string }).toolName,
+          phase: String(e.actionId).includes("verify")
+            ? "verify"
+            : e.state === "running"
+              ? "mutate"
+              : "inspect",
           state: e.state,
           completedWork: e.completedWork,
           totalEstimatedWork: e.totalEstimatedWork,
@@ -345,8 +248,24 @@ export function App() {
   }, [authed, refresh]);
 
   useEffect(() => {
+    if (!stickToBottom) {
+      setShowJump(true);
+      return;
+    }
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat, selectedTask, progressByTask]);
+    setShowJump(false);
+  }, [chat, selectedTask, progressByTask, stickToBottom]);
+
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape" && busy) {
+        ev.preventDefault();
+        stopStreaming();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy]);
 
   useEffect(() => {
     function onDocClick(ev: MouseEvent) {
@@ -361,11 +280,22 @@ export function App() {
     setBrowseProviderId(activeProvider.id);
   }, [activeProvider?.id]);
 
+  function updatePiSessionId(id: string | null) {
+    setPiSessionIdState(id);
+    if (id) {
+      setPiSessionId(id);
+    } else {
+      clearPiSessionId();
+    }
+  }
+
   function startNewChat() {
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
     setChat([welcomeMsg()]);
     setSelectedTaskId(null);
     setProgressByTask({});
-    setPiSessionId(null);
+    updatePiSessionId(null);
     setPrompt("");
     setError(null);
   }
@@ -630,8 +560,48 @@ export function App() {
       method: "POST",
       body: JSON.stringify({ providerId }),
     });
-    setPiSessionId(res.session.id);
+    updatePiSessionId(res.session.id);
     return res.session.id;
+  }
+
+  function updateAssistant(
+    assistantId: string,
+    patch: Partial<ChatMsg> | ((m: ChatMsg) => ChatMsg),
+  ) {
+    setChat((c) =>
+      c.map((m) => {
+        if (m.id !== assistantId) return m;
+        return typeof patch === "function" ? patch(m) : { ...m, ...patch };
+      }),
+    );
+  }
+
+  function upsertToolPart(parts: MessagePart[] | undefined, part: Extract<MessagePart, { type: "tool_call" }>) {
+    const list = [...(parts ?? [])];
+    const idx = list.findIndex((p) => p.type === "tool_call" && p.id === part.id);
+    if (idx >= 0) list[idx] = { ...list[idx], ...part };
+    else list.push(part);
+    return list;
+  }
+
+  function stopStreaming() {
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
+    setBusy(false);
+    setChat((c) =>
+      c.map((m) =>
+        m.streaming
+          ? {
+              ...m,
+              streaming: false,
+              parts: (m.parts ?? []).map((p) =>
+                p.type === "reasoning" ? { ...p, streaming: false } : p,
+              ),
+              text: m.text || "Stopped.",
+            }
+          : m,
+      ),
+    );
   }
 
   async function submitTask(e: FormEvent) {
@@ -643,17 +613,28 @@ export function App() {
       );
       return;
     }
+    streamAbortRef.current?.abort();
+    const abort = new AbortController();
+    streamAbortRef.current = abort;
     setBusy(true);
     setError(null);
+    setStickToBottom(true);
     const text = prompt.trim();
     setPrompt("");
     const assistantId = uid();
     setChat((c) => [
       ...c,
       { id: uid(), role: "user", text },
-      { id: assistantId, role: "assistant", text: "Planning…" },
+      {
+        id: assistantId,
+        role: "assistant",
+        text: "",
+        streaming: true,
+        parts: [{ type: "status", text: "Planning…" }],
+      },
     ]);
-    let rawStream = "";
+    let streamedText = "";
+    let reasoningText = "";
     try {
       let session = piSessionId;
       if (!session) {
@@ -664,8 +645,14 @@ export function App() {
       }
       const token = getToken();
       if (!token) throw new Error("Not signed in");
+      const worldContext = {
+        playersOnline: health.sessions?.[0]?.health?.playerCount,
+        serverId: health.sessions?.[0]?.serverId,
+        tick: health.sessions?.[0]?.health?.tick,
+      };
       const res = await fetch("/v1/tasks/stream", {
         method: "POST",
+        signal: abort.signal,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -676,19 +663,22 @@ export function App() {
           request: text,
           permissionMode,
           useMcp: true,
+          worldContext,
           history: chat
             .filter(
               (m) =>
                 (m.role === "user" || m.role === "assistant") &&
                 m.id !== assistantId &&
                 m.text.trim() &&
-                m.text !== "Planning…" &&
                 m.id !== "welcome",
             )
             .slice(-16)
             .flatMap((m) => {
+              const content =
+                m.parts?.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("") ||
+                m.text;
               const turns: Array<{ role: "user" | "assistant"; content: string }> = [
-                { role: m.role as "user" | "assistant", content: m.text },
+                { role: m.role as "user" | "assistant", content },
               ];
               for (const run of m.toolRuns ?? []) {
                 if (run.state === "completed" || run.state === "failed") {
@@ -727,9 +717,9 @@ export function App() {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n");
-        buffer = parts.pop() ?? "";
-        for (const line of parts) {
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
           if (line.startsWith("event:")) {
             eventName = line.slice(6).trim();
           } else if (line.startsWith("data:")) {
@@ -742,11 +732,38 @@ export function App() {
               continue;
             }
             if (eventName === "delta" && typeof parsed.text === "string") {
-              rawStream += parsed.text;
-              const preview = previewStreamingText(rawStream);
-              setChat((c) =>
-                c.map((m) => (m.id === assistantId ? { ...m, text: preview } : m)),
-              );
+              streamedText += parsed.text;
+              updateAssistant(assistantId, (m) => {
+                const withoutStatus = (m.parts ?? []).filter((p) => p.type !== "status" && p.type !== "text");
+                return {
+                  ...m,
+                  text: streamedText,
+                  streaming: true,
+                  parts: [...withoutStatus, { type: "text", text: streamedText }],
+                };
+              });
+            } else if (eventName === "reasoning_delta" && typeof parsed.text === "string") {
+              reasoningText += parsed.text;
+              updateAssistant(assistantId, (m) => {
+                const rest = (m.parts ?? []).filter((p) => p.type !== "reasoning");
+                return {
+                  ...m,
+                  parts: [{ type: "reasoning", text: reasoningText, streaming: true }, ...rest],
+                };
+              });
+            } else if (eventName === "tool") {
+              const id = String(parsed.detail ?? parsed.name ?? "tool");
+              updateAssistant(assistantId, (m) => ({
+                ...m,
+                parts: upsertToolPart(m.parts, {
+                  type: "tool_call",
+                  id,
+                  name: String(parsed.name ?? "tool"),
+                  phase: "plan",
+                  state: parsed.phase === "end" ? "completed" : "running",
+                  argsSummary: parsed.detail,
+                }),
+              }));
             } else if (eventName === "task" && parsed.task) {
               finalTask = parsed.task as Task;
             } else if (eventName === "error") {
@@ -759,7 +776,6 @@ export function App() {
       }
 
       if (!finalTask) throw new Error("Stream ended without a task");
-      // Fallback: if inspect-only stayed in planned, kick it via approve (no confirmation needed).
       if (finalTask.state === "planned" && isReadOnlyPlan(finalTask)) {
         try {
           const kicked = await api<{ task: Task }>(
@@ -768,25 +784,53 @@ export function App() {
           );
           finalTask = kicked.task;
         } catch {
-          // leave planned; user can cancel
+          // leave planned
         }
       }
       setTasks((t) => [finalTask!, ...t.filter((x) => x.id !== finalTask!.id)]);
       const reply = finalTask.error
         ? `Failed: ${finalTask.error}`
-        : finalTask.plan?.summary || `Done (${finalTask.state})`;
-      setChat((c) =>
-        c.map((m) =>
-          m.id === assistantId ? { ...m, text: reply, taskId: finalTask!.id } : m,
-        ),
-      );
-      if (taskNeedsPlanCard(finalTask)) {
-        setSelectedTaskId(finalTask.id);
-      } else {
-        setSelectedTaskId(null);
-      }
+        : finalTask.plan?.summary || streamedText || `Done (${finalTask.state})`;
+      const inspectParts: MessagePart[] = (finalTask.plan?.inspection ?? []).map((step, i) => ({
+        type: "tool_call" as const,
+        id: `inspect-${i}`,
+        name: step.toolName,
+        phase: "inspect" as const,
+        state: "queued",
+        argsSummary: summarizeArgs(step.arguments),
+      }));
+      updateAssistant(assistantId, (m) => {
+        const reasoning = (m.parts ?? []).find((p) => p.type === "reasoning");
+        const parts: MessagePart[] = [];
+        if (reasoning && reasoning.type === "reasoning") {
+          parts.push({ ...reasoning, streaming: false });
+        }
+        parts.push({ type: "text", text: reply });
+        parts.push(...inspectParts);
+        if (finalTask!.state === "inspecting") {
+          parts.push({ type: "status", text: "Inspecting world…" });
+        } else if (finalTask!.state === "awaiting_approval") {
+          parts.push({ type: "status", text: "Waiting for approval" });
+        }
+        return {
+          ...m,
+          text: reply,
+          taskId: finalTask!.id,
+          streaming: false,
+          parts,
+        };
+      });
+      if (taskNeedsPlanCard(finalTask)) setSelectedTaskId(finalTask.id);
+      else setSelectedTaskId(null);
       await refresh();
     } catch (err) {
+      if (abort.signal.aborted) {
+        updateAssistant(assistantId, {
+          text: streamedText || "Stopped.",
+          streaming: false,
+        });
+        return;
+      }
       const msg =
         err instanceof ApiError && err.code === "NO_SESSION"
           ? "Bedrock (BDS) is not connected. Start the dedicated server with IntelaCraft packs loaded."
@@ -794,10 +838,9 @@ export function App() {
             ? err.message
             : "Task failed";
       setError(msg);
-      setChat((c) =>
-        c.map((m) => (m.id === assistantId ? { ...m, text: msg } : m)),
-      );
+      updateAssistant(assistantId, { text: msg, streaming: false, parts: [{ type: "text", text: msg }] });
     } finally {
+      if (streamAbortRef.current === abort) streamAbortRef.current = null;
       setBusy(false);
     }
   }
@@ -864,6 +907,38 @@ export function App() {
     }
   }
 
+  async function editAndReplan(task: Task) {
+    const notes = window.prompt("How should the plan change?", "Adjust bounds / block type / targets");
+    if (!notes?.trim()) return;
+    setBusy(true);
+    setSelectedTaskId(task.id);
+    try {
+      const res = await api<{ task: Task }>(`/v1/tasks/${encodeURIComponent(task.id)}/replan`, {
+        method: "POST",
+        body: JSON.stringify({ notes: notes.trim() }),
+      });
+      setTasks((t) => [res.task, ...t.filter((x) => x.id !== res.task.id)]);
+      setChat((c) =>
+        c.map((m) =>
+          m.taskId === task.id
+            ? {
+                ...m,
+                text: res.task.plan?.summary ?? m.text,
+                parts: [
+                  { type: "text", text: res.task.plan?.summary ?? m.text },
+                  { type: "status", text: `Replanned (${res.task.state})` },
+                ],
+              }
+            : m,
+        ),
+      );
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Replan failed");
+    } finally {
+      setBusy(false);
+    }
+  }
   async function deleteTask(id: string) {
     try {
       await api(`/v1/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -902,6 +977,21 @@ export function App() {
       setPermissionMode(mode);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Settings update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function patchThinking(level: ThinkingLevel) {
+    setBusy(true);
+    try {
+      await api("/v1/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ thinkingLevel: level }),
+      });
+      setThinkingLevel(level);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Thinking setting failed");
     } finally {
       setBusy(false);
     }
@@ -1003,16 +1093,14 @@ export function App() {
           )}
         </div>
         <div className="sidebar-footer">
-          <div className="conn-row" role="status">
-            <ConnDot label="BDS" state={health?.bdsConnected ? "ok" : "bad"} />
-            <ConnDot label="Model" state={activeProvider ? "ok" : "bad"} />
-            <ConnDot label="Session" state={sessionConnected ? "ok" : "warn"} />
-            <ConnDot
-              label="MCP"
-              state={mcp?.available ? "ok" : mcp?.configured ? "warn" : "off"}
-            />
-            {emergencyOn && <ConnDot label="EMERGENCY" state="bad" />}
-          </div>
+          <WorldContextPanel health={health} />
+          <ConnectionStrip
+            bds={Boolean(health?.bdsConnected)}
+            model={Boolean(activeProvider)}
+            session={sessionConnected}
+            mcp={mcp}
+            emergency={Boolean(emergencyOn)}
+          />
           <div className="sidebar-links">
             <button
               type="button"
@@ -1051,143 +1139,33 @@ export function App() {
             </div>
           )}
 
-          <div className="transcript" aria-live="polite">
-            <div className="transcript-inner">
-              {chat.map((m) => {
-                const task = m.taskId ? tasks.find((t) => t.id === m.taskId) : undefined;
-                const liveProgress = m.taskId ? progressByTask[m.taskId] : undefined;
-                const toolRuns = m.toolRuns?.length
-                  ? m.toolRuns
-                  : liveProgress
-                    ? [liveProgress]
-                    : [];
-                const showPlan = task && taskNeedsPlanCard(task);
-                return (
-                  <div key={m.id} className={`turn ${m.role}`}>
-                    <div className="turn-stack">
-                      <div className="turn-role">
-                        {m.role === "user"
-                          ? "You"
-                          : m.role === "assistant"
-                            ? "IntelaCraft"
-                            : "System"}
-                      </div>
-                      <div className="turn-bubble">
-                        <div className="turn-body">{m.text}</div>
-                      </div>
-
-                      {showPlan && task && (
-                        <div className="inline-plan">
-                          <div className="inline-plan-head">
-                            <strong>Plan</strong>
-                            <span className="meta">{task.state}</span>
-                          </div>
-                          {(task.plan?.inspection ?? []).map((step, i) => (
-                            <div key={`insp-${i}`} className="action-card">
-                              <strong>{step.toolName}</strong>
-                              <div className="meta">inspect · {step.summary ?? ""}</div>
-                            </div>
-                          ))}
-                          {(task.proposedActions ?? [])
-                            .filter((a) => a.risk !== "read")
-                            .map((a) => (
-                              <div
-                                key={a.actionId}
-                                className={`action-card ${a.risk === "strong" ? "strong" : ""}`}
-                              >
-                                <strong>{a.toolName}</strong>
-                                <div className="meta">risk {a.risk}</div>
-                                <pre>{JSON.stringify(a.arguments, null, 2)}</pre>
-                              </div>
-                            ))}
-                          {(task.plan?.verification ?? []).map((step, i) => (
-                            <div key={`ver-${i}`} className="action-card">
-                              <strong>{step.toolName}</strong>
-                              <div className="meta">verify · {step.summary ?? ""}</div>
-                            </div>
-                          ))}
-                          {task.state === "running" &&
-                            (task.proposedActions?.every((a) => a.risk === "read") ?? false) && (
-                              <div className="meta">Running read-only inspect — no approval needed.</div>
-                            )}
-                          <div className="row">
-                            {taskNeedsApproval(task) && (
-                              <button
-                                className="primary"
-                                type="button"
-                                disabled={busy}
-                                onClick={() => void approveTask(task)}
-                              >
-                                Approve
-                              </button>
-                            )}
-                            {taskNeedsApproval(task) && (
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => void rejectTask(task)}
-                              >
-                                Reject
-                              </button>
-                            )}
-                            {["awaiting_approval", "running", "planned", "partial"].includes(
-                              task.state,
-                            ) && (
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => void cancelTask(task)}
-                              >
-                                Cancel
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {toolRuns.map((run) => {
-                        const pct =
-                          run.totalEstimatedWork > 0
-                            ? Math.min(
-                                100,
-                                Math.round((run.completedWork / run.totalEstimatedWork) * 100),
-                              )
-                            : 0;
-                        const done =
-                          run.state === "completed" ||
-                          run.state === "failed" ||
-                          run.state === "partially_completed";
-                        return (
-                          <div key={run.actionId} className="inline-progress">
-                            <div className="meta">
-                              {run.state} · {run.completedWork}/{run.totalEstimatedWork}
-                            </div>
-                            {!done && (
-                              <div
-                                className="progress-bar"
-                                aria-valuenow={pct}
-                                aria-valuemin={0}
-                                aria-valuemax={100}
-                              >
-                                <span style={{ width: `${pct}%` }} />
-                              </div>
-                            )}
-                            <div>
-                              {run.error
-                                ? `Failed: ${run.error}`
-                                : done
-                                  ? formatInspectResult(run.message || run.state, run.result)
-                                  : run.message}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              <div ref={chatEndRef} />
-            </div>
+          <div
+            className="transcript-scroll"
+            ref={transcriptRef}
+            onScroll={(ev) => {
+              const el = ev.currentTarget;
+              const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              setStickToBottom(nearBottom);
+              setShowJump(!nearBottom);
+            }}
+          >
+            <Transcript
+              chat={chat}
+              tasks={tasks}
+              progressByTask={progressByTask}
+              busy={busy}
+              chatEndRef={chatEndRef}
+              showJump={showJump}
+              onJumpLatest={() => {
+                setStickToBottom(true);
+                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                setShowJump(false);
+              }}
+              onApprove={(task) => void approveTask(task)}
+              onReject={(task) => void rejectTask(task)}
+              onCancel={(task) => void cancelTask(task)}
+              onEditReplan={(task) => void editAndReplan(task)}
+            />
           </div>
 
           <div className="composer-wrap">
@@ -1452,13 +1430,19 @@ export function App() {
                     </div>
                   )}
                 </div>
-                <button
-                  className="primary send"
-                  type="submit"
-                  disabled={busy || !prompt.trim() || !health?.bdsConnected}
-                >
-                  Send
-                </button>
+                {busy ? (
+                  <button className="danger send" type="button" onClick={stopStreaming}>
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    className="primary send"
+                    type="submit"
+                    disabled={!prompt.trim() || !health?.bdsConnected}
+                  >
+                    Send
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -1473,6 +1457,19 @@ export function App() {
                   Permission mode
                   <select value={permissionMode} onChange={(e) => void patchMode(e.target.value)}>
                     {MODES.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Thinking level
+                  <select
+                    value={thinkingLevel}
+                    onChange={(e) => void patchThinking(e.target.value as ThinkingLevel)}
+                  >
+                    {(["off", "minimal", "low", "medium", "high"] as const).map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -1521,20 +1518,7 @@ export function App() {
   );
 }
 
-export function ConnDot({
-  label,
-  state,
-}: {
-  label: string;
-  state: "ok" | "warn" | "bad" | "off";
-}) {
-  return (
-    <span className="conn-dot">
-      <span className={`dot ${state}`} aria-hidden />
-      <span>{label}</span>
-    </span>
-  );
-}
+export { ConnDot } from "./components/ConnectionStrip";
 
 function createAuthorizedEventSource(url: string, token: string) {
   const controller = new AbortController();
