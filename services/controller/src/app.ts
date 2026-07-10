@@ -212,7 +212,13 @@ async function handleRequest(
     }
     const permissionMode =
       (b.permissionMode as PermissionMode | undefined) ?? ctx.settings.get().permissionMode;
-    const task = await ctx.agent.createTask({ ...b, bdsSessionId, permissionMode });
+    const task = await ctx.agent.createTask({
+      ...b,
+      bdsSessionId,
+      permissionMode,
+      sessions: ctx.sessions,
+      audit: ctx.audit,
+    });
     ctx.audit.append({
       type: "task_lifecycle",
       taskId: task.id,
@@ -243,9 +249,18 @@ async function handleRequest(
     };
     writeEvent("ready", { ok: true });
     try {
-      const task = await ctx.agent.createTaskStream({ ...b, bdsSessionId, permissionMode }, (text) => {
-        writeEvent("delta", { text });
-      });
+      const task = await ctx.agent.createTaskStream(
+        {
+          ...b,
+          bdsSessionId,
+          permissionMode,
+          sessions: ctx.sessions,
+          audit: ctx.audit,
+        },
+        (text) => {
+          writeEvent("delta", { text });
+        },
+      );
       ctx.audit.append({
         type: "task_lifecycle",
         taskId: task.id,
@@ -312,6 +327,16 @@ async function handleRequest(
       return;
     }
     sendJson(res, 200, { task });
+    return;
+  }
+  if (ctx.agent && method === "DELETE" && taskMatch) {
+    try {
+      ctx.agent.deleteTask(decodeURIComponent(taskMatch[1]));
+      sendJson(res, 200, { ok: true });
+    } catch (e) {
+      const err = e as Error;
+      sendJson(res, 404, { error: { code: "NOT_FOUND", message: err.message } });
+    }
     return;
   }
 
@@ -458,7 +483,10 @@ async function handleEvents(
     result: parsed.value.result,
     error: parsed.value.error,
   });
-  ctx.agent?.onOperationEvent(parsed.value.actionId, parsed.value.state, ctx.audit);
+  ctx.agent?.onOperationEvent(parsed.value.actionId, parsed.value.state, ctx.audit, {
+    message: parsed.value.message,
+    result: parsed.value.result,
+  });
   sendJson(res, 200, { ok: true });
 }
 

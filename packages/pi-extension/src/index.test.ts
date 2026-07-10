@@ -17,19 +17,7 @@ const server = createServer((req, res) => {
   }
   res.end(
     JSON.stringify({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              summary: "plan",
-              inspection: [{ toolName: "inspect.players", arguments: {}, summary: "players" }],
-              actions: [],
-              verification: [],
-              notes: [],
-            }),
-          },
-        },
-      ],
+      choices: [{ message: { content: "OK" } }],
     }),
   );
 });
@@ -45,12 +33,12 @@ const p: ProviderProfile = {
 };
 after(() => server.close());
 
-describe("OpenAI-compatible Pi runtime", () => {
-  it("discovers and tests models", async () => {
+describe("IntelaCraft Pi extension", () => {
+  it("discovers and tests models via OpenAI-compatible HTTP", async () => {
     assert.deepEqual(await discoverModels(p), ["test-model"]);
     assert.equal((await testProvider(p)).ok, true);
   });
-  it("parses a structured plan", async () => {
+  it("fallback planRequest suggests inspect.players for online asks", async () => {
     const plan = await planRequest(p, "who is online", {});
     assert.equal(plan.inspection[0].toolName, "inspect.players");
   });

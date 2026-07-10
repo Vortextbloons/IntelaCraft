@@ -3,7 +3,6 @@ import { dirname, resolve } from "node:path";
 import {
   createActionRequest,
   newId,
-  redactSecrets,
   validateToolArguments,
   type ActionRequestMessage,
   type PermissionMode,
@@ -14,11 +13,14 @@ import {
   createPiSession,
   discoverModels,
   initializePiSession,
-  planRequest,
-  planRequestStream,
+  injectPiToolResult,
+  planWithPiSession,
   publicProfile,
+  redactSecrets,
+  refreshPiSessionProvider,
   testProvider,
   type AgentPlan,
+  type ChatTurn,
   type PiSession,
   type ProviderProfile,
 } from "@intelacraft/pi-extension";
@@ -48,7 +50,10 @@ export interface AgentTask {
   createdAt: string;
   updatedAt: string;
   plan?: AgentPlan;
+  /** Mutations awaiting approval, or inspect-only actions once materialized. */
   proposedActions?: ActionRequestMessage[];
+  /** Read-only inspection actions auto-enqueued without approval. */
+  pendingReads?: ActionRequestMessage[];
   enqueuedActionIds?: string[];
   error?: string;
   bdsSessionId?: string;
@@ -66,6 +71,8 @@ export class AgentRuntime {
   private activeProviderId = "";
   private pi = new Map<string, PiSession>();
   private tasks = new Map<string, AgentTask>();
+  /** Multi-turn chat memory keyed by Pi session id. */
+  private chatHistory = new Map<string, ChatTurn[]>();
   readonly mcp: AdvisoryMcpClient;
 
   constructor(private config: ControllerConfig) {
@@ -181,7 +188,7 @@ export class AgentRuntime {
   async createSession(providerId: string) {
     const p = this.needProvider(providerId);
     const s = createPiSession(resolve(this.config.piStoragePath), p);
-    await initializePiSession(s);
+    await initializePiSession(s, p);
     this.pi.set(s.id, s);
     return s;
   }
@@ -198,6 +205,9 @@ export class AgentRuntime {
     permissionMode?: PermissionMode;
     bdsSessionId: string;
     actor?: string;
+    sessions?: SessionStore;
+    audit?: AuditLog;
+    history?: ChatTurn[];
   }) {
     return this.createTaskInternal(input);
   }
@@ -212,6 +222,9 @@ export class AgentRuntime {
       permissionMode?: PermissionMode;
       bdsSessionId: string;
       actor?: string;
+      sessions?: SessionStore;
+      audit?: AuditLog;
+      history?: ChatTurn[];
     },
     onDelta: (text: string) => void,
   ) {
@@ -227,6 +240,9 @@ export class AgentRuntime {
       permissionMode?: PermissionMode;
       bdsSessionId: string;
       actor?: string;
+      sessions?: SessionStore;
+      audit?: AuditLog;
+      history?: ChatTurn[];
     },
     onDelta?: (text: string) => void,
   ) {
@@ -248,18 +264,98 @@ export class AgentRuntime {
     try {
       const advice = input.useMcp === false ? null : await this.mcp.query(input.request);
       const provider = this.needProvider(s.providerId);
+      await refreshPiSessionProvider(s, provider);
       const world = redactSecrets(input.worldContext ?? {});
       const mcp = advice == null ? undefined : redactSecrets(advice);
-      const plan = onDelta
-        ? await planRequestStream(provider, input.request, world, mcp, onDelta)
-        : await planRequest(provider, input.request, world, mcp);
+      // Keep a mirror for activity/UI; Pi session owns the real multi-turn memory.
+      this.resolveHistory(s.id, input.history);
+      const plan = await planWithPiSession(s.id, input.request, world, mcp, onDelta);
       this.applyPlanToTask(task, plan, input);
+      this.appendHistory(s.id, { role: "user", content: input.request });
+      this.appendHistory(s.id, {
+        role: "assistant",
+        content: this.planHistoryText(plan),
+      });
+      // Read-only inspect steps never need approval — enqueue immediately.
+      if (input.sessions && input.audit) {
+        this.enqueuePendingReads(task, input.sessions, input.audit);
+      }
     } catch (e) {
       task.state = "failed";
       task.error = e instanceof Error ? e.message : "Planning failed";
     }
     task.updatedAt = new Date().toISOString();
     return this.publicTask(task);
+  }
+
+  private resolveHistory(piSessionId: string, clientHistory?: ChatTurn[]): ChatTurn[] {
+    const stored = this.chatHistory.get(piSessionId) ?? [];
+    if (!clientHistory?.length) return stored.slice(-16);
+    const normalized = clientHistory
+      .filter((t) => (t.role === "user" || t.role === "assistant") && t.content?.trim())
+      .map((t) => ({ role: t.role, content: String(t.content).slice(0, 4000) }))
+      .slice(-16);
+    // Client transcript is the source of truth for the open chat thread.
+    this.chatHistory.set(piSessionId, normalized);
+    return normalized;
+  }
+
+  private appendHistory(piSessionId: string, turn: ChatTurn) {
+    const rows = this.chatHistory.get(piSessionId) ?? [];
+    rows.push({ role: turn.role, content: turn.content.slice(0, 4000) });
+    while (rows.length > 32) rows.shift();
+    this.chatHistory.set(piSessionId, rows);
+  }
+
+  private planHistoryText(plan: AgentPlan): string {
+    const bits = [plan.summary];
+    for (const step of plan.inspection) {
+      bits.push(`[inspect] ${step.toolName}: ${step.summary}`);
+    }
+    for (const step of plan.actions) {
+      bits.push(`[action] ${step.toolName}: ${step.summary}`);
+    }
+    if (plan.notes?.length) bits.push(`notes: ${plan.notes.join("; ")}`);
+    return bits.filter(Boolean).join("\n").slice(0, 4000);
+  }
+
+  private materializeAction(
+    step: { toolName: string; arguments: Record<string, unknown> },
+    input: { bdsSessionId: string; actor?: string; permissionMode?: PermissionMode },
+    forceRead: boolean,
+  ): ActionRequestMessage {
+    const policy = {
+      protectedRegions: this.config.protectedRegions,
+      builderRegions: this.config.builderRegions,
+      adminCommands: this.config.adminCommands,
+    };
+    const tool = step.toolName as ToolName;
+    let args = step.arguments;
+    if (tool === "admin.run_command") {
+      const commandId = String(args.commandId ?? "");
+      const entry = this.config.adminCommands[commandId];
+      if (!entry) throw new Error(`Unknown admin commandId '${commandId}'`);
+      args = { commandId, command: entry.command };
+    }
+    const valid = validateToolArguments(tool, args);
+    if (!valid.ok) throw new Error(`Invalid model tool ${step.toolName}: ${valid.error.message}`);
+    const draft = createActionRequest({
+      sessionId: input.bdsSessionId,
+      requestId: newId("req"),
+      actionId: newId("action"),
+      idempotencyKey: newId("idem"),
+      toolName: tool,
+      arguments: valid.value,
+      actor: input.actor ?? "pi-agent",
+      permissionMode: input.permissionMode ?? this.config.defaultPermissionMode,
+      risk: forceRead || tool.startsWith("inspect.") ? "read" : "normal",
+    });
+    const c = classify(draft, policy);
+    return {
+      ...draft,
+      risk: c.risk as RiskClass,
+      noApprovalReason: c.risk === "read" ? "read_risk_no_approval" : undefined,
+    };
   }
 
   private applyPlanToTask(
@@ -274,53 +370,76 @@ export class AgentRuntime {
       const v = validateToolArguments(step.toolName as ToolName, step.arguments);
       if (!v.ok) throw new Error(`Invalid ${step.toolName}: ${v.error.message}`);
     }
-    const policy = {
-      protectedRegions: this.config.protectedRegions,
-      builderRegions: this.config.builderRegions,
-      adminCommands: this.config.adminCommands,
-    };
-    const proposed = plan.actions.map((a) => {
-      const tool = a.toolName as ToolName;
-      let args = a.arguments;
-      if (tool === "admin.run_command") {
-        const commandId = String(args.commandId ?? "");
-        const entry = this.config.adminCommands[commandId];
-        if (!entry) throw new Error(`Unknown admin commandId '${commandId}'`);
-        args = { commandId, command: entry.command };
-      }
-      const valid = validateToolArguments(tool, args);
-      if (!valid.ok) throw new Error(`Invalid model tool ${a.toolName}: ${valid.error.message}`);
-      const draft = createActionRequest({
-        sessionId: input.bdsSessionId,
-        requestId: newId("req"),
-        actionId: newId("action"),
-        idempotencyKey: newId("idem"),
-        toolName: tool,
-        arguments: valid.value,
-        actor: input.actor ?? "pi-agent",
-        permissionMode: input.permissionMode ?? this.config.defaultPermissionMode,
-        risk: tool.startsWith("inspect.") ? "read" : "normal",
-      });
-      const c = classify(draft, policy);
-      return {
-        ...draft,
-        risk: c.risk as RiskClass,
-        noApprovalReason: c.risk === "read" ? "read_risk_no_approval" : undefined,
-      };
-    });
+    // Inspection runs immediately (no approval). Mutations wait for Approve.
+    // Verification stays on the plan until after mutations complete (future hook).
+    const reads = plan.inspection.map((step) => this.materializeAction(step, input, true));
+    const proposed = plan.actions.map((a) => this.materializeAction(a, input, false));
     task.plan = plan;
+    task.pendingReads = reads;
     task.proposedActions = proposed;
     const chatOnly =
       plan.inspection.length === 0 &&
       plan.actions.length === 0 &&
-      plan.verification.length === 0 &&
-      proposed.length === 0;
+      plan.verification.length === 0;
     if (chatOnly) {
       task.state = "completed";
     } else if (proposed.some((a) => a.risk !== "read")) {
       task.state = "awaiting_approval";
+    } else if (reads.length > 0) {
+      // Inspect-only: proposedActions mirrors reads for UI/progress correlation.
+      task.proposedActions = reads;
+      task.state = "planned";
     } else {
       task.state = "planned";
+    }
+  }
+
+  /** Enqueue pending read-only inspect actions without an approval record. */
+  private enqueuePendingReads(task: AgentTask, sessions: SessionStore, audit: AuditLog) {
+    const actions = task.pendingReads ?? [];
+    if (actions.length === 0) {
+      if (task.state === "planned" && (task.proposedActions?.length ?? 0) === 0) {
+        task.state = "completed";
+        audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
+      }
+      return;
+    }
+    const enqueued: string[] = [...(task.enqueuedActionIds ?? [])];
+    for (const action of actions) {
+      const result = sessions.enqueue(action.sessionId, {
+        ...action,
+        noApprovalReason: "read_risk_no_approval",
+      });
+      if (!result.ok) {
+        task.state = "failed";
+        task.error = result.message;
+        audit.append({
+          type: "task_lifecycle",
+          taskId: task.id,
+          state: task.state,
+          error: result.message,
+        });
+        return;
+      }
+      enqueued.push(action.actionId);
+      audit.append({
+        type: "action_enqueued",
+        taskId: task.id,
+        sessionId: action.sessionId,
+        actionId: action.actionId,
+        toolName: action.toolName,
+        actor: action.actor,
+        risk: action.risk,
+        arguments: action.arguments,
+        noApprovalReason: "read_risk_no_approval",
+      });
+    }
+    task.enqueuedActionIds = enqueued;
+    task.pendingReads = [];
+    // Inspect-only plans move to running; mutation plans stay awaiting_approval.
+    if (task.state === "planned") {
+      task.state = "running";
+      audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
     }
   }
 
@@ -343,9 +462,11 @@ export class AgentRuntime {
       input.audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
       return this.publicTask(task);
     }
-    const enqueued: string[] = [];
+    const enqueued: string[] = [...(task.enqueuedActionIds ?? [])];
     for (const action of actions) {
       if (action.risk === "read") {
+        // Already auto-enqueued via enqueuePendingReads — skip duplicates.
+        if (enqueued.includes(action.actionId)) continue;
         const result = input.sessions.enqueue(action.sessionId, {
           ...action,
           noApprovalReason: "read_risk_no_approval",
@@ -479,7 +600,12 @@ export class AgentRuntime {
     return this.publicTask(task);
   }
 
-  onOperationEvent(actionId: string, state: string, audit: AuditLog) {
+  onOperationEvent(
+    actionId: string,
+    state: string,
+    audit: AuditLog,
+    detail?: { message?: string; result?: unknown },
+  ) {
     for (const task of this.tasks.values()) {
       if (!task.enqueuedActionIds?.includes(actionId)) continue;
       if (task.state === "cancelled" || task.state === "rejected") return;
@@ -491,6 +617,24 @@ export class AgentRuntime {
         // Mark completed when any terminal success arrives for single-action; multi-action stays running until all known
         if (allDone || task.enqueuedActionIds!.length <= 1) task.state = "completed";
         else task.state = "running";
+        if (detail?.message || detail?.result !== undefined) {
+          const tool =
+            task.proposedActions?.find((a) => a.actionId === actionId)?.toolName ?? "tool";
+          const resultText =
+            detail.result !== undefined
+              ? `${detail.message ?? "ok"}\n${JSON.stringify(detail.result).slice(0, 1500)}`
+              : (detail.message ?? "ok");
+          this.appendHistory(task.piSessionId, {
+            role: "assistant",
+            content: `[tool result ${tool}] ${resultText}`.slice(0, 4000),
+          });
+          void injectPiToolResult(
+            task.piSessionId,
+            tool,
+            detail.message ?? "ok",
+            detail.result,
+          );
+        }
       } else if (state === "partially_completed") {
         task.state = "partial";
       } else if (state === "failed") {
@@ -515,6 +659,11 @@ export class AgentRuntime {
     return t ? this.publicTask(t) : undefined;
   }
 
+  deleteTask(id: string) {
+    if (!this.tasks.has(id)) throw new Error("Task not found");
+    this.tasks.delete(id);
+  }
+
   listTasks() {
     return [...this.tasks.values()].map((t) => this.publicTask(t));
   }
@@ -526,7 +675,9 @@ export class AgentRuntime {
   }
 
   private publicTask(t: AgentTask) {
-    return structuredClone(t);
+    const clone = structuredClone(t);
+    delete clone.pendingReads;
+    return clone;
   }
 }
 

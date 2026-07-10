@@ -231,10 +231,17 @@ label {
 
 .thread-item {
   width: 100%;
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.thread-select {
+  flex: 1;
   text-align: left;
   background: transparent;
   border-color: transparent;
-  border-radius: var(--radius-sm);
   padding: 0.55rem 0.6rem;
   display: grid;
   gap: 0.15rem;
@@ -242,12 +249,33 @@ label {
 
 .thread-item:hover:not(:disabled) {
   background: var(--bg-hover);
-  border-color: transparent;
 }
 
 .thread-item.active {
   background: var(--bg-raised);
   border-color: var(--border-strong);
+}
+
+.thread-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.thread-item:hover .thread-delete {
+  opacity: 1;
+}
+
+.thread-delete:hover {
+  color: #ef4444;
 }
 
 .thread-title {
@@ -361,16 +389,41 @@ label {
 }
 
 .transcript-inner {
-  max-width: 720px;
+  max-width: 780px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 1.35rem;
+  gap: 1.15rem;
 }
 
 .turn {
+  display: flex;
+  width: 100%;
+}
+
+.turn-stack {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.45rem;
+  max-width: min(100%, 640px);
+  min-width: 0;
+}
+
+.turn.user {
+  justify-content: flex-end;
+}
+
+.turn.user .turn-stack {
+  align-items: flex-end;
+}
+
+.turn.assistant,
+.turn.system {
+  justify-content: flex-start;
+}
+
+.turn.assistant .turn-stack,
+.turn.system .turn-stack {
+  align-items: flex-start;
 }
 
 .turn-role {
@@ -379,6 +432,31 @@ label {
   letter-spacing: 0.02em;
   color: var(--muted);
   font-family: var(--font-mono);
+  padding: 0 0.35rem;
+}
+
+.turn-bubble {
+  border-radius: 1.1rem;
+  padding: 0.7rem 0.95rem;
+  line-height: 1.55;
+}
+
+.turn.user .turn-bubble {
+  background: color-mix(in srgb, #3f3f46 88%, #18181b);
+  border: 1px solid var(--border-strong);
+  border-bottom-right-radius: 0.35rem;
+}
+
+.turn.assistant .turn-bubble {
+  background: transparent;
+  border: none;
+  padding: 0.15rem 0.35rem;
+}
+
+.turn.system .turn-bubble {
+  background: transparent;
+  border: none;
+  padding: 0.15rem 0.35rem;
 }
 
 .turn-body {
@@ -391,6 +469,12 @@ label {
 .turn.system .turn-body {
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+.turn .inline-plan,
+.turn .inline-progress {
+  width: 100%;
+  max-width: 100%;
 }
 
 .inline-plan,

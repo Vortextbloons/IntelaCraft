@@ -36,16 +36,19 @@ type Task = {
     risk: string;
     arguments: Record<string, unknown>;
   }>;
+  enqueuedActionIds?: string[];
   error?: string;
 };
 
 function taskNeedsPlanCard(task: Task): boolean {
-  if (["awaiting_approval", "running", "partial"].includes(task.state)) return true;
-  if ((task.proposedActions?.length ?? 0) > 0) return true;
-  if ((task.plan?.inspection?.length ?? 0) > 0) return true;
-  if ((task.plan?.verification?.length ?? 0) > 0) return true;
-  if ((task.plan?.actions?.length ?? 0) > 0) return true;
-  return false;
+  return ["awaiting_approval", "running", "partial", "planned"].includes(task.state);
+}
+
+function taskNeedsApproval(task: Task): boolean {
+  return (
+    task.state === "awaiting_approval" &&
+    (task.proposedActions?.some((a) => a.risk !== "read") ?? false)
+  );
 }
 
 function previewStreamingText(raw: string): string {
@@ -85,15 +88,53 @@ type ChatMsg = {
   role: "user" | "system" | "assistant";
   text: string;
   taskId?: string;
+  toolRuns?: ToolRun[];
 };
 
-type Progress = {
+type ToolRun = {
   actionId: string;
   state: string;
   completedWork: number;
   totalEstimatedWork: number;
   message: string;
+  result?: unknown;
+  error?: string;
 };
+
+type Progress = ToolRun;
+
+function formatInspectResult(message: string, result: unknown): string {
+  if (result && typeof result === "object") {
+    const r = result as {
+      count?: number;
+      players?: Array<{ name?: string; dimension?: string; location?: { x: number; y: number; z: number } }>;
+    };
+    if (Array.isArray(r.players)) {
+      if (r.players.length === 0) return "No players online.";
+      const lines = r.players.map((p) => {
+        const loc = p.location
+          ? ` @ ${Math.round(p.location.x)}, ${Math.round(p.location.y)}, ${Math.round(p.location.z)}`
+          : "";
+        return `• ${p.name ?? "?"}${p.dimension ? ` (${p.dimension})` : ""}${loc}`;
+      });
+      return `${message}\n${lines.join("\n")}`;
+    }
+  }
+  if (result !== undefined) {
+    return `${message}\n${JSON.stringify(result, null, 2)}`;
+  }
+  return message;
+}
+
+function isReadOnlyPlan(task: Task): boolean {
+  const mutations = (task.proposedActions ?? []).filter((a) => a.risk !== "read");
+  if (mutations.length > 0) return false;
+  if ((task.plan?.actions?.length ?? 0) > 0) return false;
+  return (
+    (task.proposedActions?.length ?? 0) > 0 ||
+    (task.plan?.inspection?.length ?? 0) > 0
+  );
+}
 
 const MODES = [
   "observe_only",
@@ -187,18 +228,28 @@ export function App() {
   const [showKeyUpdate, setShowKeyUpdate] = useState(false);
   const [activity, setActivity] = useState<ActivityRecord[]>([]);
   const [activityFilter, setActivityFilter] = useState("");
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const [progressByTask, setProgressByTask] = useState<Record<string, ToolRun>>({});
   const [permissionMode, setPermissionMode] = useState("confirm_every_change");
   const [pickerPanel, setPickerPanel] = useState<"none" | "providers" | "models">("none");
   const [drawer, setDrawer] = useState<"none" | "safety" | "activity">("none");
   const [busy, setBusy] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const tasksRef = useRef<Task[]>([]);
+  const chatRef = useRef<ChatMsg[]>(chat);
 
   const selectedTask = useMemo(
     () => tasks.find((t) => t.id === selectedTaskId) ?? null,
     [tasks, selectedTaskId],
   );
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
+  useEffect(() => {
+    chatRef.current = chat;
+  }, [chat]);
 
   const activeProvider = useMemo(
     () => providers.find((p) => p.id === activeProviderId) ?? providers[0] ?? null,
@@ -253,16 +304,38 @@ export function App() {
     es.addEventListener("operation", (ev: { data: string }) => {
       try {
         const record = JSON.parse(ev.data) as {
-          event: Progress & { actionId: string };
+          event: ToolRun & { error?: { message?: string } };
         };
         const e = record.event;
-        setProgress({
+        const run: ToolRun = {
           actionId: e.actionId,
           state: e.state,
           completedWork: e.completedWork,
           totalEstimatedWork: e.totalEstimatedWork,
           message: e.message,
-        });
+          result: e.result,
+          error: e.error?.message,
+        };
+        const taskId =
+          tasksRef.current.find(
+            (t) =>
+              t.enqueuedActionIds?.includes(e.actionId) ||
+              t.proposedActions?.some((a) => a.actionId === e.actionId),
+          )?.id ??
+          chatRef.current.find((m) => m.taskId && m.toolRuns?.some((r) => r.actionId === e.actionId))
+            ?.taskId ??
+          null;
+
+        if (taskId) {
+          setProgressByTask((prev) => ({ ...prev, [taskId]: run }));
+          setChat((c) =>
+            c.map((m) => {
+              if (m.taskId !== taskId) return m;
+              const rest = (m.toolRuns ?? []).filter((r) => r.actionId !== e.actionId);
+              return { ...m, toolRuns: [...rest, run] };
+            }),
+          );
+        }
         void refresh();
       } catch {
         // ignore
@@ -273,7 +346,7 @@ export function App() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat, selectedTask, progress]);
+  }, [chat, selectedTask, progressByTask]);
 
   useEffect(() => {
     function onDocClick(ev: MouseEvent) {
@@ -291,7 +364,8 @@ export function App() {
   function startNewChat() {
     setChat([welcomeMsg()]);
     setSelectedTaskId(null);
-    setProgress(null);
+    setProgressByTask({});
+    setPiSessionId(null);
     setPrompt("");
     setError(null);
   }
@@ -602,6 +676,34 @@ export function App() {
           request: text,
           permissionMode,
           useMcp: true,
+          history: chat
+            .filter(
+              (m) =>
+                (m.role === "user" || m.role === "assistant") &&
+                m.id !== assistantId &&
+                m.text.trim() &&
+                m.text !== "Planning…" &&
+                m.id !== "welcome",
+            )
+            .slice(-16)
+            .flatMap((m) => {
+              const turns: Array<{ role: "user" | "assistant"; content: string }> = [
+                { role: m.role as "user" | "assistant", content: m.text },
+              ];
+              for (const run of m.toolRuns ?? []) {
+                if (run.state === "completed" || run.state === "failed") {
+                  turns.push({
+                    role: "assistant",
+                    content: `[tool result] ${
+                      run.error
+                        ? `Failed: ${run.error}`
+                        : formatInspectResult(run.message || run.state, run.result)
+                    }`,
+                  });
+                }
+              }
+              return turns;
+            }),
         }),
       });
       if (!res.ok) {
@@ -657,6 +759,18 @@ export function App() {
       }
 
       if (!finalTask) throw new Error("Stream ended without a task");
+      // Fallback: if inspect-only stayed in planned, kick it via approve (no confirmation needed).
+      if (finalTask.state === "planned" && isReadOnlyPlan(finalTask)) {
+        try {
+          const kicked = await api<{ task: Task }>(
+            `/v1/tasks/${encodeURIComponent(finalTask.id)}/approve`,
+            { method: "POST", body: JSON.stringify({ approvedBy: "webview-auto" }) },
+          );
+          finalTask = kicked.task;
+        } catch {
+          // leave planned; user can cancel
+        }
+      }
       setTasks((t) => [finalTask!, ...t.filter((x) => x.id !== finalTask!.id)]);
       const reply = finalTask.error
         ? `Failed: ${finalTask.error}`
@@ -688,18 +802,16 @@ export function App() {
     }
   }
 
-  async function approveTask() {
-    if (!selectedTask) return;
+  async function approveTask(task: Task | null = selectedTask) {
+    if (!task) return;
     setBusy(true);
+    setSelectedTaskId(task.id);
     try {
       const res = await api<{ task: Task }>(
-        `/v1/tasks/${encodeURIComponent(selectedTask.id)}/approve`,
+        `/v1/tasks/${encodeURIComponent(task.id)}/approve`,
         { method: "POST", body: JSON.stringify({ approvedBy: "webview" }) },
       );
-      setChat((c) => [
-        ...c,
-        { id: uid(), role: "system", text: `Approved — now ${res.task.state}` },
-      ]);
+      setTasks((t) => [res.task, ...t.filter((x) => x.id !== res.task.id)]);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Approve failed");
@@ -708,15 +820,20 @@ export function App() {
     }
   }
 
-  async function rejectTask() {
-    if (!selectedTask) return;
+  async function rejectTask(task: Task | null = selectedTask) {
+    if (!task) return;
     setBusy(true);
+    setSelectedTaskId(task.id);
     try {
-      await api(`/v1/tasks/${encodeURIComponent(selectedTask.id)}/reject`, {
+      await api(`/v1/tasks/${encodeURIComponent(task.id)}/reject`, {
         method: "POST",
         body: JSON.stringify({ rejectedBy: "webview" }),
       });
-      setChat((c) => [...c, { id: uid(), role: "system", text: "Plan rejected" }]);
+      setChat((c) =>
+        c.map((m) =>
+          m.taskId === task.id ? { ...m, text: `${m.text}\n\nPlan rejected.` } : m,
+        ),
+      );
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Reject failed");
@@ -725,19 +842,38 @@ export function App() {
     }
   }
 
-  async function cancelTask() {
-    if (!selectedTask) return;
+  async function cancelTask(task: Task | null = selectedTask) {
+    if (!task) return;
     setBusy(true);
+    setSelectedTaskId(task.id);
     try {
-      await api(`/v1/tasks/${encodeURIComponent(selectedTask.id)}/cancel`, {
+      await api(`/v1/tasks/${encodeURIComponent(task.id)}/cancel`, {
         method: "POST",
         body: JSON.stringify({ cancelledBy: "webview" }),
       });
+      setChat((c) =>
+        c.map((m) =>
+          m.taskId === task.id ? { ...m, text: `${m.text}\n\nCancelled.` } : m,
+        ),
+      );
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cancel failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function deleteTask(id: string) {
+    try {
+      await api(`/v1/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (selectedTaskId === id) {
+        setSelectedTaskId(null);
+        setChat([welcomeMsg()]);
+      }
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
     }
   }
 
@@ -806,10 +942,6 @@ export function App() {
           r.actionId?.includes(activityFilter),
       )
     : activity;
-  const progressPct =
-    progress && progress.totalEstimatedWork > 0
-      ? Math.min(100, Math.round((progress.completedWork / progress.totalEstimatedWork) * 100))
-      : 0;
   const modelLabel = activeProvider ? activeProvider.model : "Select model";
   const providerLabel = activeProvider
     ? activeProvider.name
@@ -843,15 +975,30 @@ export function App() {
             <div className="sidebar-empty">No threads yet</div>
           ) : (
             tasks.map((t) => (
-              <button
+              <div
                 key={t.id}
-                type="button"
                 className={t.id === selectedTaskId ? "thread-item active" : "thread-item"}
-                onClick={() => setSelectedTaskId(t.id)}
               >
-                <span className="thread-title">{t.request || t.id}</span>
-                <span className="thread-meta">{t.state}</span>
-              </button>
+                <button
+                  type="button"
+                  className="thread-select"
+                  onClick={() => setSelectedTaskId(t.id)}
+                >
+                  <span className="thread-title">{t.request || t.id}</span>
+                  <span className="thread-meta">{t.state}</span>
+                </button>
+                <button
+                  type="button"
+                  className="thread-delete"
+                  title="Delete thread"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteTask(t.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -906,79 +1053,139 @@ export function App() {
 
           <div className="transcript" aria-live="polite">
             <div className="transcript-inner">
-              {chat.map((m) => (
-                <div key={m.id} className={`turn ${m.role}`}>
-                  <div className="turn-role">
-                    {m.role === "user" ? "You" : m.role === "assistant" ? "IntelaCraft" : "System"}
-                  </div>
-                  <div className="turn-body">{m.text}</div>
-                </div>
-              ))}
+              {chat.map((m) => {
+                const task = m.taskId ? tasks.find((t) => t.id === m.taskId) : undefined;
+                const liveProgress = m.taskId ? progressByTask[m.taskId] : undefined;
+                const toolRuns = m.toolRuns?.length
+                  ? m.toolRuns
+                  : liveProgress
+                    ? [liveProgress]
+                    : [];
+                const showPlan = task && taskNeedsPlanCard(task);
+                return (
+                  <div key={m.id} className={`turn ${m.role}`}>
+                    <div className="turn-stack">
+                      <div className="turn-role">
+                        {m.role === "user"
+                          ? "You"
+                          : m.role === "assistant"
+                            ? "IntelaCraft"
+                            : "System"}
+                      </div>
+                      <div className="turn-bubble">
+                        <div className="turn-body">{m.text}</div>
+                      </div>
 
-              {selectedTask && taskNeedsPlanCard(selectedTask) && (
-                <div className="inline-plan">
-                  <div className="inline-plan-head">
-                    <strong>Plan</strong>
-                    <span className="meta">{selectedTask.state}</span>
-                  </div>
-                  <p>{selectedTask.plan?.summary ?? selectedTask.error ?? "—"}</p>
-                  {(selectedTask.plan?.inspection ?? []).map((step, i) => (
-                    <div key={`insp-${i}`} className="action-card">
-                      <strong>{step.toolName}</strong>
-                      <div className="meta">inspect · {step.summary ?? ""}</div>
-                    </div>
-                  ))}
-                  {(selectedTask.proposedActions ?? []).map((a) => (
-                    <div key={a.actionId} className={`action-card ${a.risk === "strong" ? "strong" : ""}`}>
-                      <strong>{a.toolName}</strong>
-                      <div className="meta">risk {a.risk}</div>
-                      <pre>{JSON.stringify(a.arguments, null, 2)}</pre>
-                    </div>
-                  ))}
-                  {(selectedTask.plan?.verification ?? []).map((step, i) => (
-                    <div key={`ver-${i}`} className="action-card">
-                      <strong>{step.toolName}</strong>
-                      <div className="meta">verify · {step.summary ?? ""}</div>
-                    </div>
-                  ))}
-                  <div className="row">
-                    <button
-                      className="primary"
-                      type="button"
-                      disabled={
-                        busy ||
-                        !["awaiting_approval", "planned"].includes(selectedTask.state) ||
-                        !(selectedTask.proposedActions?.length)
-                      }
-                      onClick={() => void approveTask()}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy || !["awaiting_approval", "planned"].includes(selectedTask.state)}
-                      onClick={() => void rejectTask()}
-                    >
-                      Reject
-                    </button>
-                    <button type="button" disabled={busy} onClick={() => void cancelTask()}>
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
+                      {showPlan && task && (
+                        <div className="inline-plan">
+                          <div className="inline-plan-head">
+                            <strong>Plan</strong>
+                            <span className="meta">{task.state}</span>
+                          </div>
+                          {(task.plan?.inspection ?? []).map((step, i) => (
+                            <div key={`insp-${i}`} className="action-card">
+                              <strong>{step.toolName}</strong>
+                              <div className="meta">inspect · {step.summary ?? ""}</div>
+                            </div>
+                          ))}
+                          {(task.proposedActions ?? [])
+                            .filter((a) => a.risk !== "read")
+                            .map((a) => (
+                              <div
+                                key={a.actionId}
+                                className={`action-card ${a.risk === "strong" ? "strong" : ""}`}
+                              >
+                                <strong>{a.toolName}</strong>
+                                <div className="meta">risk {a.risk}</div>
+                                <pre>{JSON.stringify(a.arguments, null, 2)}</pre>
+                              </div>
+                            ))}
+                          {(task.plan?.verification ?? []).map((step, i) => (
+                            <div key={`ver-${i}`} className="action-card">
+                              <strong>{step.toolName}</strong>
+                              <div className="meta">verify · {step.summary ?? ""}</div>
+                            </div>
+                          ))}
+                          {task.state === "running" &&
+                            (task.proposedActions?.every((a) => a.risk === "read") ?? false) && (
+                              <div className="meta">Running read-only inspect — no approval needed.</div>
+                            )}
+                          <div className="row">
+                            {taskNeedsApproval(task) && (
+                              <button
+                                className="primary"
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void approveTask(task)}
+                              >
+                                Approve
+                              </button>
+                            )}
+                            {taskNeedsApproval(task) && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void rejectTask(task)}
+                              >
+                                Reject
+                              </button>
+                            )}
+                            {["awaiting_approval", "running", "planned", "partial"].includes(
+                              task.state,
+                            ) && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void cancelTask(task)}
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
-              {progress && (
-                <div className="inline-progress">
-                  <div className="meta">
-                    {progress.state} · {progress.completedWork}/{progress.totalEstimatedWork}
+                      {toolRuns.map((run) => {
+                        const pct =
+                          run.totalEstimatedWork > 0
+                            ? Math.min(
+                                100,
+                                Math.round((run.completedWork / run.totalEstimatedWork) * 100),
+                              )
+                            : 0;
+                        const done =
+                          run.state === "completed" ||
+                          run.state === "failed" ||
+                          run.state === "partially_completed";
+                        return (
+                          <div key={run.actionId} className="inline-progress">
+                            <div className="meta">
+                              {run.state} · {run.completedWork}/{run.totalEstimatedWork}
+                            </div>
+                            {!done && (
+                              <div
+                                className="progress-bar"
+                                aria-valuenow={pct}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                              >
+                                <span style={{ width: `${pct}%` }} />
+                              </div>
+                            )}
+                            <div>
+                              {run.error
+                                ? `Failed: ${run.error}`
+                                : done
+                                  ? formatInspectResult(run.message || run.state, run.result)
+                                  : run.message}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="progress-bar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>
-                    <span style={{ width: `${progressPct}%` }} />
-                  </div>
-                  <div>{progress.message}</div>
-                </div>
-              )}
+                );
+              })}
               <div ref={chatEndRef} />
             </div>
           </div>

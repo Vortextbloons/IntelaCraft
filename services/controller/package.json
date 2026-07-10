@@ -8,7 +8,7 @@
     "typecheck": "node ../../node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit",
     "start": "node dist/index.js",
     "dev": "npm run build && node dist/index.js",
-    "test": "npm run build && node --test dist/app.test.js dist/e2e.test.js"
+    "test": "npm run build && node --test dist/app.test.js dist/e2e.test.js dist/agent.test.js"
   },
   "dependencies": {
     "@intelacraft/shared-protocol": "*"
