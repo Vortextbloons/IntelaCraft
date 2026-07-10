@@ -1,0 +1,24 @@
+{
+  "name": "intelacraft",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs",
+    "health": "node scripts/health.mjs",
+    "inspect": "node scripts/inspect.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "build": "npm run build -w @intelacraft/shared-protocol && npm run build -w @intelacraft/controller && npm run build -w @intelacraft/bedrock-addon",
+    "test": "npm run test -w @intelacraft/shared-protocol && npm run test -w @intelacraft/controller",
+    "typecheck": "npm run typecheck -w @intelacraft/shared-protocol && npm run typecheck -w @intelacraft/controller && npm run typecheck -w @intelacraft/bedrock-addon"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}

@@ -1,19 +1,27 @@
 const { resolve } = require("path");
-const { readFileSync } = require("fs");
 const esbuild = require("esbuild");
 
 const ROOT = resolve(__dirname, "..");
+const REPO_ROOT = resolve(ROOT, "../..");
 
 esbuild.buildSync({
-  stdin: {
-    contents: readFileSync(resolve(ROOT, "src/main.ts"), "utf8"),
-    loader: "ts",
-    resolveDir: resolve(ROOT, "src"),
-    sourcefile: "src/main.ts",
-  },
+  entryPoints: [resolve(ROOT, "src/main.ts")],
   bundle: true,
   format: "esm",
   target: "es2020",
   outfile: resolve(ROOT, "behavior_pack/scripts/main.js"),
-  external: ["@minecraft/server", "@minecraft/server-ui"],
+  external: [
+    "@minecraft/server",
+    "@minecraft/server-ui",
+    "@minecraft/server-net",
+    "@minecraft/server-admin",
+  ],
+  alias: {
+    "@intelacraft/shared-protocol": resolve(
+      REPO_ROOT,
+      "packages/shared-protocol/src/index.ts",
+    ),
+  },
 });
+
+console.log("Built behavior_pack/scripts/main.js");

@@ -77,9 +77,9 @@ Only the currently implemented Bedrock add-on is scaffolded. Other component dir
 
 The following must be resolved before their related implementation phase is finalized:
 
-- Controller-to-behavior-pack transport and authentication mechanism supported by the target BDS environment.
-- Supported BDS and `@minecraft/server` version matrix.
-- Initial numeric thresholds for block, region, entity, command, rate, and rollback limits.
+- ~~Controller-to-behavior-pack transport and authentication mechanism supported by the target BDS environment.~~ → See [decisions.md](decisions.md) (Phase 1).
+- ~~Supported BDS and `@minecraft/server` version matrix.~~ → See [decisions.md](decisions.md) (Phase 1).
+- Initial numeric thresholds for block, region, entity, command, rate, and rollback limits (partial: region inspect max 32³ in Phase 1).
 - Secure credential-storage mechanism for desktop and hosted deployments.
 - Webview host technology and packaging model.
 - Persistence database and default audit retention period.

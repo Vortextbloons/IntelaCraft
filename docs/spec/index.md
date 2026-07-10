@@ -11,6 +11,7 @@ This directory contains the IntelaCraft specification split into logical groups 
 | [protocol.md](protocol.md) | 6-8 | Shared Protocol, Approval/Permission Model, Task Lifecycle |
 | [operations.md](operations.md) | 9-11 | Building Jobs, Model Providers, Security & Reliability |
 | [delivery.md](delivery.md) | 12-17 | Observability, Acceptance Criteria, Delivery Phases, Repository Structure, Open Decisions, Success Definition |
+| [decisions.md](decisions.md) | — | Resolved Phase 1 transport, auth, and version choices |
 
 ## Full Specification
 

@@ -1,12 +1,4 @@
 {
-  "dependencies": {
-    "@minecraft/server": "2.9.0-beta.1.26.33-stable",
-    "@minecraft/server-ui": "2.2.0-beta.1.26.33-stable"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.1",
-    "typescript": "^7.0.2"
-  },
   "name": "@intelacraft/bedrock-addon",
   "private": true,
   "scripts": {
@@ -14,6 +6,17 @@
     "bundle": "node scripts/bundle.js",
     "deploy:dev": "node scripts/deploy.js dev",
     "deploy:prod": "node scripts/deploy.js prod",
-    "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit"
+    "typecheck": "node ../../node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@intelacraft/shared-protocol": "*",
+    "@minecraft/server": "2.9.0-beta.1.26.33-stable",
+    "@minecraft/server-admin": "1.0.0-beta.1.26.33-stable",
+    "@minecraft/server-net": "1.0.0-beta.1.26.33-stable",
+    "@minecraft/server-ui": "2.2.0-beta.1.26.33-stable"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "typescript": "^5.8.2"
   }
 }

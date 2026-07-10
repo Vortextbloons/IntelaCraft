@@ -3,3 +3,7 @@ opencode.json
 *.log
 temp_release/
 .env
+dist/
+services/controller/data/
+*.tsbuildinfo
+.codex

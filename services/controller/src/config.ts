@@ -1,0 +1,28 @@
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+
+export interface ControllerConfig {
+  port: number;
+  bdsToken: string;
+  auditPath: string;
+  heartbeatStaleMs: number;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControllerConfig {
+  const bdsToken = env.INTELACRAFT_BDS_TOKEN?.trim();
+  if (!bdsToken) {
+    throw new Error("INTELACRAFT_BDS_TOKEN is required");
+  }
+  const port = Number(env.PORT ?? "8787");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("PORT must be an integer 1-65535");
+  }
+  const auditPath = resolve(env.INTELACRAFT_AUDIT_PATH ?? "./data/audit.jsonl");
+  mkdirSync(resolve(auditPath, ".."), { recursive: true });
+  return {
+    port,
+    bdsToken,
+    auditPath,
+    heartbeatStaleMs: Number(env.INTELACRAFT_HEARTBEAT_STALE_MS ?? "15000"),
+  };
+}
