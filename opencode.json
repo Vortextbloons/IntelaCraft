@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "Bedrock-JSON-UI": {
+      "type": "local",
+      "command": ["npx", "-y", "@opencode-mcp/bedrock-json-ui"],
+      "enabled": true
+    },
+    "Script-API-Helper": {
+      "type": "local",
+      "command": ["npx", "-y", "@opencode-mcp/script-api-helper"],
+      "enabled": true
+    }
+  }
+}

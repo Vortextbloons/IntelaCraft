@@ -1,0 +1,50 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "IntelaCraft",
+    "description": "",
+    "uuid": "f6606124-59dd-4de1-aa92-a43a4f8fc46c",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      60
+    ]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "bf0b9d75-d200-4702-86f2-7a6b3b777448",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "type": "script",
+      "uuid": "11f742cc-8e1e-4201-8c1d-eac198d99fbd",
+      "version": [
+        1,
+        0,
+        0
+      ],
+      "language": "javascript",
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.9.0-beta"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0-beta"
+    }
+  ]
+}

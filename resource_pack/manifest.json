@@ -1,0 +1,35 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "IntelaCraft RP",
+    "description": "",
+    "uuid": "9eb10a28-5085-4b04-8e76-70302a1ff48e",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      60
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "b977f792-7d91-4b86-94ff-7ad1aebe33fd",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "uuid": "f6606124-59dd-4de1-aa92-a43a4f8fc46c",
+      "version": "1.0.0"
+    }
+  ]
+}
