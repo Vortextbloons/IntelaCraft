@@ -3,10 +3,11 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "lib": [
-      "ES2020"
+      "ES2020",
+      "DOM"
     ],
     "module": "ES2020",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2020",

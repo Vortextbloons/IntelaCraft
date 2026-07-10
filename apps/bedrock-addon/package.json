@@ -4,16 +4,16 @@
     "@minecraft/server-ui": "2.2.0-beta.1.26.33-stable"
   },
   "devDependencies": {
-    "esbuild": "^0.25.9",
-    "typescript": "^5.9.2"
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
   },
-  "name": "intelacraft",
+  "name": "@intelacraft/bedrock-addon",
   "private": true,
   "scripts": {
-    "build": "node -e \"const e=require('esbuild');e.buildSync({entryPoints:['src/main.ts'],bundle:true,format:'esm',target:'es2020',outfile:'behavior_pack/scripts/main.js',external:['@minecraft/server','@minecraft/server-ui']})",
+    "build": "node scripts/build.js",
     "bundle": "node scripts/bundle.js",
     "deploy:dev": "node scripts/deploy.js dev",
     "deploy:prod": "node scripts/deploy.js prod",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit"
   }
 }

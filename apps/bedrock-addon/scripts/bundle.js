@@ -5,7 +5,8 @@ const { resolve, join } = require("path");
 const readline = require("readline");
 
 const ROOT = resolve(__dirname, "..");
-const BP_SRC = join(ROOT, "IntelaCraft_bp");
+const BP_SRC = join(ROOT, "behavior_pack");
+const RP_SRC = join(ROOT, "resource_pack");
 const DEV_SUFFIX = "-dev";
 
 function prompt(question) {
@@ -46,7 +47,7 @@ async function main() {
   const isDev = /^y(es)?$/i.test(answer);
 
   const manifestPaths = [join(BP_SRC, "manifest.json")];
-  manifestPaths.push(join(ROOT, "IntelaCraft_rp", "manifest.json"));
+  manifestPaths.push(join(RP_SRC, "manifest.json"));
 
   const patched = [];
   for (const manifestPath of manifestPaths) {
