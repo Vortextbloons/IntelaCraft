@@ -4,6 +4,8 @@ IntelaCraft is an AI-assisted control system for Minecraft Bedrock Dedicated Ser
 
 See the [product and technical specification](docs/SPEC.md) and [Phase 1 decisions](docs/spec/decisions.md).
 
+Phase 3 adds isolated Pi planning sessions, OpenAI-compatible provider discovery/testing, optional advisory Bedrock MCP access, structured plans, policy-validated proposed actions, and read-only verification plans. See [Phase 3 decisions](docs/spec/phase-3-decisions.md).
+
 ## Quick start
 
 From the repo root:

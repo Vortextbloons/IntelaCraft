@@ -16,12 +16,14 @@ import type { ControllerConfig } from "./config.js";
 import { readJson, requireAuth, sendJson } from "./http.js";
 import type { EventStore, SessionStore } from "./store.js";
 import { approvalRequired, classify, enforceMode, payloadHash } from "./policy.js";
+import type { AgentRuntime } from "./agent.js";
 
 export interface AppContext {
   config: ControllerConfig;
   sessions: SessionStore;
   events: EventStore;
   audit: AuditLog;
+  agent?:AgentRuntime;
 }
 
 export function createApp(ctx: AppContext) {
@@ -82,6 +84,15 @@ async function handleRequest(
     ctx.audit.append({type:"emergency_disable",sessionId,disabled:body.disabled!==false,actor:body.actor??"controller"});
     sendJson(res,200,{ok:true,sessionId,emergencyDisabled:body.disabled!==false}); return;
   }
+  if(ctx.agent&&method==="GET"&&path==="/v1/providers"){sendJson(res,200,{providers:ctx.agent.listProviders()});return;}
+  if(ctx.agent&&method==="POST"&&path==="/v1/providers"){const b=await readJson(req) as any;sendJson(res,201,{provider:ctx.agent.saveProvider(b)});return;}
+  const providerTest=/^\/v1\/providers\/([^/]+)\/(test|models)$/.exec(path);if(ctx.agent&&method==="POST"&&providerTest){const id=decodeURIComponent(providerTest[1]);sendJson(res,200,providerTest[2]==="test"?await ctx.agent.test(id):{models:await ctx.agent.models(id)});return;}
+  if(ctx.agent&&method==="GET"&&path==="/v1/mcp/status"){sendJson(res,200,ctx.agent.mcp.status());return;}
+  if(ctx.agent&&method==="POST"&&path==="/v1/pi/sessions"){const b=await readJson(req) as any;sendJson(res,201,{session:await ctx.agent.createSession(String(b.providerId??"default"))});return;}
+  if(ctx.agent&&method==="GET"&&path==="/v1/pi/sessions"){sendJson(res,200,{sessions:ctx.agent.listSessions()});return;}
+  if(ctx.agent&&method==="POST"&&path==="/v1/tasks"){const b=await readJson(req) as any;const bdsSessionId=String(b.bdsSessionId??ctx.sessions.listSessions()[0]?.sessionId??"");if(!bdsSessionId){sendJson(res,400,{error:{code:"NO_SESSION",message:"No BDS session"}});return;}sendJson(res,201,{task:await ctx.agent.createTask({...b,bdsSessionId})});return;}
+  if(ctx.agent&&method==="GET"&&path==="/v1/tasks"){sendJson(res,200,{tasks:ctx.agent.listTasks()});return;}
+  const taskMatch=/^\/v1\/tasks\/([^/]+)$/.exec(path);if(ctx.agent&&method==="GET"&&taskMatch){const task=ctx.agent.getTask(decodeURIComponent(taskMatch[1]));if(!task){sendJson(res,404,{error:{code:"NOT_FOUND",message:"Task not found"}});return;}sendJson(res,200,{task});return;}
 
   sendJson(res, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
 }
@@ -110,6 +121,7 @@ function handleHealth(ctx: AppContext, res: ServerResponse): void {
     protocolVersion: PROTOCOL_VERSION,
     bdsConnected: sessions.some((s) => s.connected),
     sessions,
+    agent: ctx.agent ? { pi: true, sessions: ctx.agent.listSessions().length, providers: ctx.agent.listProviders().length, mcp: ctx.agent.mcp.status() } : { pi: false },
   });
 }
 

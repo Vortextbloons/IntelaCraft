@@ -20,6 +20,7 @@ import { secrets, variables } from "@minecraft/server-admin";
 var CONTROLLER_URL_VAR = "intelacraft:controller_url";
 var BDS_TOKEN_SECRET = "intelacraft:bds_token";
 var SERVER_ID_VAR = "intelacraft:server_id";
+var PROTECTED_REGIONS_VAR = "intelacraft:protected_regions";
 function loadConfig() {
   const missing = [];
   const controllerUrlRaw = variables.get(CONTROLLER_URL_VAR);
@@ -29,12 +30,23 @@ function loadConfig() {
   if (!authToken) missing.push(BDS_TOKEN_SECRET);
   const serverIdRaw = variables.get(SERVER_ID_VAR);
   const serverId = typeof serverIdRaw === "string" && serverIdRaw.trim().length > 0 ? serverIdRaw.trim() : "bds-default";
+  const protectedRaw = variables.get(PROTECTED_REGIONS_VAR);
+  let protectedRegions = [];
+  if (typeof protectedRaw === "string" && protectedRaw.trim()) {
+    try {
+      const parsed = JSON.parse(protectedRaw);
+      if (Array.isArray(parsed)) protectedRegions = parsed;
+    } catch {
+      missing.push(`${PROTECTED_REGIONS_VAR} (invalid JSON)`);
+    }
+  }
   return {
     controllerUrl,
     authToken,
     serverId,
     configured: missing.length === 0,
-    missing
+    missing,
+    protectedRegions
   };
 }
 
@@ -744,7 +756,7 @@ function executeControl(action) {
   emergencyDisabled = action.arguments.disabled === true;
   return { state: "completed", completedWork: 1, totalEstimatedWork: 1, message: `Emergency disable ${emergencyDisabled ? "enabled" : "cleared"}` };
 }
-function startFill(action, emit) {
+function startFill(action, emit, protectedRegions = []) {
   const args = action.arguments;
   const total = regionVolume(args.region);
   if (emergencyDisabled) {
@@ -753,6 +765,11 @@ function startFill(action, emit) {
   }
   if (total > MAX_BUILD_VOLUME) {
     emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Build too large", error: { code: "REGION_TOO_LARGE", message: "Build exceeds independent add-on limit" } });
+    return;
+  }
+  const overlaps = (a, b) => a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y && a.min.z <= b.max.z && a.max.z >= b.min.z;
+  if (protectedRegions.some((p) => p.dimension === args.dimension && overlaps(p.region, args.region))) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Protected region", error: { code: "PROTECTED_REGION", message: "Build intersects an add-on protected region" } });
     return;
   }
   const dimension = world3.getDimension(args.dimension);
@@ -946,7 +963,7 @@ var ControllerSession = class {
     if (action.toolName === "world.fill_blocks") {
       startFill(action, (event) => {
         void this.emitEvent({ actionId: action.actionId, ...event });
-      });
+      }, this.config.protectedRegions);
       return;
     }
     if (action.toolName.startsWith("control.")) {

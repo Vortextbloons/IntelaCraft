@@ -58,12 +58,10 @@ export function ensureEnv() {
 }
 
 export function runNpm(args, opts = {}) {
-  const isWin = process.platform === "win32";
-  const cmd = isWin ? "npm.cmd" : "npm";
-  const result = spawnSync(cmd, args, {
+  const result = spawnSync("npm", args, {
     cwd: REPO_ROOT,
     stdio: "inherit",
-    shell: false,
+    shell: true,
     ...opts,
   });
   if (result.status !== 0) {

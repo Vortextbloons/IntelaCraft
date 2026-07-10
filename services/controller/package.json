@@ -12,9 +12,10 @@
   },
   "dependencies": {
     "@intelacraft/shared-protocol": "*"
+    ,"@intelacraft/pi-extension":"*","@intelacraft/mcp-connection":"*"
   },
   "devDependencies": {
-    "@types/node": "^22.13.10",
-    "typescript": "^5.8.2"
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
   }
 }

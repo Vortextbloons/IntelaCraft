@@ -29,6 +29,7 @@ const ctx = {
     heartbeatStaleMs: 15000,
     protectedRegions: [],
     builderRegions: [],
+    piStoragePath:join(dir,"pi"),
   },
   sessions: new SessionStore(),
   events: new EventStore(),

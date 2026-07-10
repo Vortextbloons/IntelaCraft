@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { loadControllerEnv } from "./env.js";
 import { EventStore, SessionStore } from "./store.js";
+import { AgentRuntime } from "./agent.js";
 
 function main(): void {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -14,7 +15,8 @@ function main(): void {
   const sessions = new SessionStore();
   const events = new EventStore();
   const audit = new AuditLog(config.auditPath);
-  const server = createApp({ config, sessions, events, audit });
+  const agent=new AgentRuntime(config);
+  const server = createApp({ config, sessions, events, audit,agent });
 
   server.listen(config.port, "127.0.0.1", () => {
     const base = `http://127.0.0.1:${config.port}`;

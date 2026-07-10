@@ -14,11 +14,11 @@
     "health": "node scripts/health.mjs",
     "inspect": "node scripts/inspect.mjs",
     "deploy": "node scripts/deploy.mjs",
-    "build": "npm run build -w @intelacraft/shared-protocol && npm run build -w @intelacraft/controller && npm run build -w @intelacraft/bedrock-addon",
-    "test": "npm run test -w @intelacraft/shared-protocol && npm run test -w @intelacraft/controller",
-    "typecheck": "npm run typecheck -w @intelacraft/shared-protocol && npm run typecheck -w @intelacraft/controller && npm run typecheck -w @intelacraft/bedrock-addon"
+    "build": "npm run build -w @intelacraft/shared-protocol && npm run build -w @intelacraft/pi-extension && npm run build -w @intelacraft/mcp-connection && npm run build -w @intelacraft/controller && npm run build -w @intelacraft/bedrock-addon",
+    "test": "npm run test -w @intelacraft/shared-protocol && npm run test -w @intelacraft/pi-extension && npm run test -w @intelacraft/controller",
+    "typecheck": "npm run typecheck -w @intelacraft/shared-protocol && npm run typecheck -w @intelacraft/pi-extension && npm run typecheck -w @intelacraft/mcp-connection && npm run typecheck -w @intelacraft/controller && npm run typecheck -w @intelacraft/bedrock-addon"
   },
   "devDependencies": {
-    "typescript": "^5.8.2"
+    "typescript": "^7.0.2"
   }
 }
