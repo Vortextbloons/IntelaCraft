@@ -1,0 +1,5 @@
+node_modules/
+opencode.json
+*.log
+temp_release/
+.env
