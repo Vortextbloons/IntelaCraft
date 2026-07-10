@@ -118,7 +118,13 @@ export type ChatMsg = {
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
 
 export function taskNeedsPlanCard(task: Task): boolean {
-  return ["inspecting", "awaiting_approval", "running", "partial", "planned", "verifying", "planning"].includes(
+  const hasSteps =
+    (task.plan?.inspection?.length ?? 0) > 0 ||
+    (task.plan?.actions?.length ?? 0) > 0 ||
+    (task.plan?.verification?.length ?? 0) > 0 ||
+    (task.proposedActions?.some((a) => a.risk !== "read") ?? false);
+  if (!hasSteps) return false;
+  return ["inspecting", "awaiting_approval", "running", "partial", "planned", "verifying"].includes(
     task.state,
   );
 }

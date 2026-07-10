@@ -95,9 +95,7 @@ var READ_TOOLS = [
   "inspect.players",
   "inspect.block",
   "inspect.region",
-  "inspect.time",
-  "inspect.weather",
-  "inspect.game_rules",
+  "inspect.world_state",
   "inspect.entities",
   "inspect.scoreboard",
   "inspect.tags"
@@ -402,12 +400,8 @@ function validateToolArguments(toolName, args) {
       return asArgs(validateInspectBlock(args));
     case "inspect.region":
       return asArgs(validateInspectRegion(args));
-    case "inspect.time":
-      return asArgs(validateInspectTime(args));
-    case "inspect.weather":
-      return asArgs(validateInspectWeather(args));
-    case "inspect.game_rules":
-      return asArgs(validateInspectGameRules(args));
+    case "inspect.world_state":
+      return asArgs(validateInspectWorldState(args));
     case "inspect.entities":
       return asArgs(validateInspectEntities(args));
     case "inspect.scoreboard":
@@ -475,30 +469,22 @@ function validateInspectRegion(args) {
     countsOnly: args.countsOnly === void 0 ? true : Boolean(args.countsOnly)
   });
 }
-function validateInspectTime(args) {
+function validateInspectWorldState(args) {
   if (args.dimension !== void 0 && !isDimensionId(args.dimension)) {
     return fail("INVALID_ARGS", "dimension is invalid");
   }
-  return ok({
-    dimension: isDimensionId(args.dimension) ? args.dimension : void 0
-  });
-}
-function validateInspectWeather(args) {
-  if (args.dimension !== void 0 && !isDimensionId(args.dimension)) {
-    return fail("INVALID_ARGS", "dimension is invalid");
-  }
-  return ok({
-    dimension: isDimensionId(args.dimension) ? args.dimension : void 0
-  });
-}
-function validateInspectGameRules(args) {
-  if (args.names !== void 0) {
-    if (!Array.isArray(args.names) || !args.names.every((n) => typeof n === "string")) {
-      return fail("INVALID_ARGS", "names must be a string array");
+  if (args.rules !== void 0) {
+    if (!Array.isArray(args.rules) || !args.rules.every((n) => typeof n === "string")) {
+      return fail("INVALID_ARGS", "rules must be a string array");
     }
-    return ok({ names: args.names });
+    return ok({
+      dimension: isDimensionId(args.dimension) ? args.dimension : void 0,
+      rules: args.rules
+    });
   }
-  return ok({});
+  return ok({
+    dimension: isDimensionId(args.dimension) ? args.dimension : void 0
+  });
 }
 function validateInspectEntities(args) {
   if (!isDimensionId(args.dimension)) {
@@ -630,12 +616,8 @@ function executeInspectTool(action) {
         return inspectBlock(action.arguments);
       case "inspect.region":
         return inspectRegion(action.arguments);
-      case "inspect.time":
-        return inspectTime(action.arguments);
-      case "inspect.weather":
-        return inspectWeather(action.arguments);
-      case "inspect.game_rules":
-        return inspectGameRules(action.arguments);
+      case "inspect.world_state":
+        return inspectWorldState(action.arguments);
       case "inspect.entities":
         return inspectEntities(action.arguments);
       case "inspect.scoreboard":
@@ -771,49 +753,34 @@ function inspectRegion(args) {
     message: `Inspected ${read}/${volume} blocks`
   };
 }
-function inspectTime(args) {
-  const dimensionId = args.dimension ?? "minecraft:overworld";
-  return {
-    ok: true,
-    result: {
-      dimension: dimensionId,
-      timeOfDay: world2.getTimeOfDay(),
-      absoluteTime: world2.getAbsoluteTime(),
-      day: world2.getDay()
-    },
-    completedWork: 1,
-    totalEstimatedWork: 1,
-    message: "Time inspected"
-  };
-}
-function inspectWeather(args) {
+function inspectWorldState(args) {
   const dimensionId = args.dimension ?? "minecraft:overworld";
   const dimension = getDimension(dimensionId);
-  return {
-    ok: true,
-    result: {
-      dimension: dimensionId,
-      weather: dimension.getWeather()
-    },
-    completedWork: 1,
-    totalEstimatedWork: 1,
-    message: "Weather inspected"
-  };
-}
-function inspectGameRules(args) {
   const rules = world2.gameRules;
-  const names = args.names && args.names.length > 0 ? args.names : [...DEFAULT_GAME_RULE_KEYS];
-  const values = {};
+  const ruleNames = args.rules && args.rules.length > 0 ? args.rules : [...DEFAULT_GAME_RULE_KEYS];
+  const ruleValues = {};
   const ruleBag = rules;
-  for (const name of names) {
-    values[name] = ruleBag[name] ?? null;
+  for (const name of ruleNames) {
+    ruleValues[name] = ruleBag[name] ?? null;
   }
   return {
     ok: true,
-    result: { rules: values },
-    completedWork: names.length,
-    totalEstimatedWork: names.length,
-    message: `Read ${names.length} game rule(s)`
+    result: {
+      time: {
+        dimension: dimensionId,
+        timeOfDay: world2.getTimeOfDay(),
+        absoluteTime: world2.getAbsoluteTime(),
+        day: world2.getDay()
+      },
+      weather: {
+        dimension: dimensionId,
+        weather: dimension.getWeather()
+      },
+      rules: ruleValues
+    },
+    completedWork: ruleNames.length,
+    totalEstimatedWork: ruleNames.length,
+    message: `World state: time, weather, ${ruleNames.length} rule(s)`
   };
 }
 function inspectEntities(args) {

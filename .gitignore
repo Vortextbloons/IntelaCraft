@@ -7,3 +7,6 @@ dist/
 services/controller/data/
 *.tsbuildinfo
 .codex
+AGENTS.md
+spec/
+docs/All.md

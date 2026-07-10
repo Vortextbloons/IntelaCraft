@@ -144,4 +144,107 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     const polled = sessions.dequeue(sessionId);
     assert.equal(polled?.toolName, "inspect.players");
   });
+
+  it("attributes results by action id and ignores duplicate terminal events", async () => {
+    const agent = new AgentRuntime(config());
+    const sessions = new SessionStore();
+    const activity = new ActivityStore(join(dir, "audit-agent3.jsonl"), 30);
+    const audit = new AuditLog(join(dir, "audit-agent3.jsonl"), activity);
+    const sessionId = newId("session");
+    openSession(sessions, sessionId);
+
+    const row: any = {
+      id: newId("task"),
+      piSessionId: "pi-missing-is-ok",
+      request: "check players and weather",
+      state: "planning",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      bdsSessionId: sessionId,
+      actor: "pi-agent",
+      permissionMode: "confirm_every_change",
+    };
+    (agent as any).tasks.set(row.id, row);
+    (agent as any).applyPlanToTask(
+      row,
+      {
+        summary: "Checking players and weather.",
+        inspection: [
+          { toolName: "inspect.players", arguments: {}, summary: "players" },
+          { toolName: "inspect.world_state", arguments: {}, summary: "world state" },
+        ],
+        actions: [],
+        verification: [],
+        notes: [],
+      },
+      { bdsSessionId: sessionId },
+    );
+    (agent as any).enqueuePendingReads(row, sessions, audit);
+    const first = sessions.dequeue(sessionId);
+    const second = sessions.dequeue(sessionId);
+    assert.ok(first && second);
+    assert.equal(second.toolName, "inspect.world_state");
+
+    await agent.onOperationEvent(second.actionId, "completed", audit, {
+      message: "clear",
+      result: { weather: "clear" },
+      sessions,
+    });
+    await agent.onOperationEvent(second.actionId, "completed", audit, {
+      message: "duplicate",
+      result: { weather: "rain" },
+      sessions,
+    });
+
+    const history = (agent as any).chatHistory.get(row.piSessionId);
+    assert.equal(history.length, 1);
+    assert.match(history[0].content, /\[tool result inspect\.world_state\]/);
+    assert.doesNotMatch(history[0].content, /duplicate/);
+  });
+
+  it("returns a correlated Bedrock observation to an in-turn Pi inspection", async () => {
+    const agent = new AgentRuntime(config());
+    const sessions = new SessionStore();
+    const activity = new ActivityStore(join(dir, "audit-agent4.jsonl"), 30);
+    const audit = new AuditLog(join(dir, "audit-agent4.jsonl"), activity);
+    const sessionId = newId("session");
+    openSession(sessions, sessionId);
+    const row: any = {
+      id: newId("task"),
+      piSessionId: "pi",
+      request: "what is the weather?",
+      state: "planning",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      bdsSessionId: sessionId,
+      actor: "pi-agent",
+      permissionMode: "confirm_every_change",
+      enqueuedActionIds: [],
+      inspectActionIds: [],
+      completedActionIds: [],
+    };
+    (agent as any).tasks.set(row.id, row);
+
+    const observationPromise = (agent as any).executePiInspection(
+      row,
+      "inspect.world_state",
+      {},
+      sessions,
+      audit,
+    );
+    const action = sessions.dequeue(sessionId);
+    assert.ok(action);
+    assert.equal(action.toolName, "inspect.world_state");
+    assert.equal(action.risk, "read");
+
+    await agent.onOperationEvent(action.actionId, "completed", audit, {
+      message: "Weather inspected",
+      result: { weather: "clear" },
+      sessions,
+    });
+    assert.deepEqual(await observationPromise, {
+      message: "Weather inspected",
+      result: { weather: "clear" },
+    });
+  });
 });

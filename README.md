@@ -2,7 +2,7 @@
 
 IntelaCraft is an AI-assisted control system for Minecraft Bedrock Dedicated Server. Phases 1–4 are implemented: trusted execution, safe mutations, agent/model integration, and a polished localhost webview with activity history, pragmatic admin tools, and hardening docs/tests.
 
-See the [product and technical specification](docs/SPEC.md), [Phase 4 decisions](docs/spec/phase-4-decisions.md), [operations runbook](docs/ops/runbook.md), and [security review](docs/ops/security-review.md).
+See the [product and technical specification](spec/SPEC.md), [Phase 4 decisions](spec/start-spec/phase-4-decisions.md), [operations runbook](docs/ops/runbook.md), and [security review](docs/ops/security-review.md).
 
 ## Quick start
 
@@ -82,8 +82,10 @@ services/controller/      HTTP controller + audit + activity API
 packages/shared-protocol/ Shared message types / validators
 packages/pi-extension/    Isolated Pi planning
 packages/mcp-connection/  Optional advisory MCP client
-docs/SPEC.md
-docs/ops/                 Runbook + security review
+packages/prompts/         Versioned agent prompts
+spec/SPEC.md              Full product and technical specification
+spec/start-spec/          Split spec files (architecture, protocol, decisions)
+docs/                     Documentation (architecture, guides, reference, ops)
 ```
 
 ## API surface (Phase 4)
@@ -112,3 +114,56 @@ docs/ops/                 Runbook + security review
 | POST | `/v1/tasks/:id/approve` | bearer | Approve + enqueue proposed actions |
 | POST | `/v1/tasks/:id/reject` | bearer | Reject plan |
 | POST | `/v1/tasks/:id/cancel` | bearer | Cancel in-flight task |
+| POST | `/v1/tasks/:id/replan` | bearer | Edit and replan |
+| DELETE | `/v1/tasks/:id` | bearer | Delete task |
+
+## Documentation
+
+### Architecture
+| Document | Description |
+|----------|-------------|
+| [System Architecture](docs/architecture/overview.md) | Components, trust boundaries, deployment topology |
+| [Data Flow](docs/architecture/data-flow.md) | Message flow, protocols, sequence diagrams |
+
+### Components
+| Document | Description |
+|----------|-------------|
+| [Bedrock Addon](docs/components/bedrock-addon/README.md) | Behavior pack overview, safety mechanisms |
+| [Session Lifecycle](docs/components/bedrock-addon/session.md) | Handshake, poll loop, heartbeat, reconnection |
+| [Inspection Tools](docs/components/bedrock-addon/inspection-tools.md) | All 10 read-only world query tools |
+| [Mutation Tools](docs/components/bedrock-addon/mutation-tools.md) | Fill blocks, control, admin commands |
+| [Build & Deploy](docs/components/bedrock-addon/build-deploy.md) | esbuild, dev/prod deployment, BDS config |
+| [Webview](docs/components/webview/README.md) | React control panel overview |
+| [Webview Components](docs/components/webview/components.md) | All 7 React components |
+| [Webview Data Flow](docs/components/webview/data-flow.md) | REST polling, SSE, persistence |
+| [Controller](docs/components/controller/README.md) | HTTP server overview |
+| [Controller Stores](docs/components/controller/stores.md) | Session, event, settings, activity stores |
+| [Controller Policy](docs/components/controller/policy.md) | Risk classification, approval, permissions |
+| [Agent Runtime](docs/components/controller/agent-runtime.md) | Task lifecycle, planning, inspection-replan |
+| [Packages](docs/components/packages/README.md) | Package ecosystem overview |
+| [Shared Protocol](docs/components/packages/shared-protocol.md) | Wire protocol types, validation, helpers |
+| [Pi Extension](docs/components/packages/pi-extension.md) | AI planning agent runtime |
+| [Prompts](docs/components/packages/prompts.md) | Prompt utilities |
+| [MCP Connection](docs/components/packages/mcp-connection.md) | Advisory MCP client |
+
+### Reference
+| Document | Description |
+|----------|-------------|
+| [API Reference](docs/reference/api.md) | Complete HTTP API documentation |
+| [Configuration](docs/reference/configuration.md) | Environment variables reference |
+| [Protocol](docs/reference/protocol.md) | Shared protocol message types and validation |
+
+### Guides
+| Document | Description |
+|----------|-------------|
+| [Development Guide](docs/guides/development.md) | Developer setup and conventions |
+| [Testing Guide](docs/guides/testing.md) | Testing approach and writing tests |
+| [Deployment Guide](docs/guides/deployment.md) | Production deployment instructions |
+| [Provider Setup](docs/guides/provider-setup.md) | Configuring AI providers |
+
+### Operations
+| Document | Description |
+|----------|-------------|
+| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+| [Runbook](docs/ops/runbook.md) | Operations runbook |
+| [Security Review](docs/ops/security-review.md) | Security analysis and trust model |

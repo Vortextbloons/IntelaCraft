@@ -18,6 +18,7 @@ import {
   publicProfile,
   redactSecrets,
   refreshPiSessionProvider,
+  setPiInspectionExecutor,
   testProvider,
   type AgentPlan,
   type ChatTurn,
@@ -25,6 +26,7 @@ import {
   type PlanStreamEvent,
   type ProviderProfile,
   type ThinkingLevel,
+  type InspectionToolName,
 } from "@intelacraft/pi-extension";
 import { AdvisoryMcpClient } from "@intelacraft/mcp-connection";
 import type { ControllerConfig } from "./config.js";
@@ -68,6 +70,8 @@ export interface AgentTask {
   mutationActionIds?: string[];
   /** Action IDs that belong to verification wave. */
   verifyActionIds?: string[];
+  /** Exact tool attribution for every materialized action, keyed by action ID. */
+  actionToolNames?: Record<string, string>;
   error?: string;
   bdsSessionId?: string;
   actor?: string;
@@ -93,6 +97,16 @@ export class AgentRuntime {
   private tasks = new Map<string, AgentTask>();
   /** Multi-turn chat memory keyed by Pi session id. */
   private chatHistory = new Map<string, ChatTurn[]>();
+  /** Serialize operation events per task so observations cannot race replanning. */
+  private operationEventQueues = new Map<string, Promise<void>>();
+  private inspectionWaiters = new Map<
+    string,
+    {
+      resolve: (value: { message: string; result?: unknown }) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   private thinkingLevel: ThinkingLevel = "off";
   readonly mcp: AdvisoryMcpClient;
 
@@ -260,6 +274,96 @@ export class AgentRuntime {
     return this.createTaskInternal(input, onEvent);
   }
 
+  /** Continue an existing task conversation — sends a follow-up to the same Pi session. */
+  async continueTask(
+    taskId: string,
+    input: {
+      request: string;
+      worldContext?: unknown;
+      useMcp?: boolean;
+      sessions?: SessionStore;
+      audit?: AuditLog;
+      history?: ChatTurn[];
+    },
+    onEvent?: (event: PlanStreamEvent) => void,
+  ) {
+    const task = this.tasks.get(taskId);
+    if (!task) throw Object.assign(new Error("Task not found"), { code: "NOT_FOUND", status: 404 });
+    if (task.state === "planning") {
+      throw Object.assign(new Error("Task is already planning — wait for it to finish"), {
+        code: "INVALID_STATE",
+        status: 409,
+      });
+    }
+    const s = this.pi.get(task.piSessionId);
+    if (!s) throw new Error("Pi session missing for task");
+    task.state = "planning";
+    task.error = undefined;
+    task.proposedActions = [];
+    task.pendingReads = [];
+    task.pendingVerification = [];
+    task.enqueuedActionIds = [];
+    task.completedActionIds = [];
+    task.inspectActionIds = [];
+    task.mutationActionIds = [];
+    task.verifyActionIds = [];
+    task.awaitingInspectReplan = false;
+    task.updatedAt = new Date().toISOString();
+    input.audit?.append({ type: "task_lifecycle", taskId: task.id, state: task.state, phase: "continue" });
+    onEvent?.({ type: "status", text: "Planning response…" });
+    const planStarted = Date.now();
+    try {
+      const advice = input.useMcp === false ? null : await this.mcp.query(input.request);
+      const provider = this.needProvider(s.providerId);
+      await refreshPiSessionProvider(s, provider, this.thinkingLevel);
+      const world = this.buildWorldContext(input.sessions, input.worldContext);
+      const mcp = advice == null ? undefined : redactSecrets(advice);
+      const history = this.resolveHistory(s.id, input.history);
+      const adminCommandIds = Object.keys(this.config.adminCommands);
+      const plan = await this.planWithValidationRetry(
+        s.id,
+        input.request,
+        world,
+        mcp,
+        {
+          thinkingLevel: this.thinkingLevel,
+          adminCommandIds,
+          history,
+          onEvent,
+        },
+        task,
+        {
+          bdsSessionId: task.bdsSessionId!,
+          actor: task.actor,
+          permissionMode: task.permissionMode,
+        },
+      );
+      task.request = `${task.request}\n\nFollow-up: ${input.request}`;
+      this.applyPlanToTask(task, plan, {
+        bdsSessionId: task.bdsSessionId!,
+        actor: task.actor,
+        permissionMode: task.permissionMode,
+      });
+      this.appendHistory(s.id, { role: "user", content: input.request });
+      this.appendHistory(s.id, {
+        role: "assistant",
+        content: this.planHistoryText(plan),
+      });
+      if (input.sessions && input.audit) {
+        this.enqueuePendingReads(task, input.sessions, input.audit);
+      }
+    } catch (e) {
+      task.state = "failed";
+      task.error = e instanceof Error ? e.message : "Continue failed";
+    }
+    task.metrics = {
+      ...(task.metrics ?? {}),
+      planLatencyMs: Date.now() - planStarted,
+    };
+    task.updatedAt = new Date().toISOString();
+    return this.publicTask(task);
+  }
+
   private buildWorldContext(sessions?: SessionStore, clientWorld?: unknown): unknown {
     const live = sessions?.listSessions()?.[0];
     const health = live?.lastHealth;
@@ -310,6 +414,8 @@ export class AgentRuntime {
     };
     this.tasks.set(task.id, task);
     task.state = "planning";
+    // Structured tool-call responses may contain no visible text deltas.
+    onEvent?.({ type: "status", text: "Planning response…" });
     const planStarted = Date.now();
     try {
       const advice = input.useMcp === false ? null : await this.mcp.query(input.request);
@@ -369,37 +475,94 @@ export class AgentRuntime {
       validationError?: string;
     },
     task: AgentTask,
-    input: { bdsSessionId: string; actor?: string; permissionMode?: PermissionMode },
+    input: {
+      bdsSessionId: string;
+      actor?: string;
+      permissionMode?: PermissionMode;
+      sessions?: SessionStore;
+      audit?: AuditLog;
+    },
   ): Promise<AgentPlan> {
+    if (input.sessions && input.audit) {
+      setPiInspectionExecutor(sessionId, (toolName, arguments_) =>
+        this.executePiInspection(task, toolName, arguments_, input.sessions!, input.audit!),
+      );
+    }
     let lastError: string | undefined = opts.validationError;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const plan = await planWithPiSession(sessionId, request, world, mcp, {
-        ...opts,
-        validationError: lastError,
-      });
-      try {
-        this.validatePlanTools(plan);
-        // Dry-run materialize to catch arg errors before applying.
-        for (const step of plan.inspection) this.materializeAction(step, input, true);
-        for (const step of plan.actions) this.materializeAction(step, input, false);
-        for (const step of plan.verification) this.materializeAction(step, input, true);
-        return plan;
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : "Invalid plan";
-        task.metrics = {
-          ...(task.metrics ?? {}),
-          validationRetries: (task.metrics?.validationRetries ?? 0) + 1,
-        };
-        if (attempt === 1) throw e;
-        opts.onEvent?.({
-          type: "tool",
-          name: "validate_plan",
-          phase: "start",
-          detail: lastError,
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const plan = await planWithPiSession(sessionId, request, world, mcp, {
+          ...opts,
+          validationError: lastError,
         });
+        try {
+          this.validatePlanTools(plan);
+          // Dry-run materialize to catch arg errors before applying.
+          for (const step of plan.inspection) this.materializeAction(step, input, true);
+          for (const step of plan.actions) this.materializeAction(step, input, false);
+          for (const step of plan.verification) this.materializeAction(step, input, true);
+          return plan;
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : "Invalid plan";
+          task.metrics = {
+            ...(task.metrics ?? {}),
+            validationRetries: (task.metrics?.validationRetries ?? 0) + 1,
+          };
+          if (attempt === 1) throw e;
+          opts.onEvent?.({
+            type: "tool",
+            name: "validate_plan",
+            phase: "start",
+            detail: lastError,
+          });
+        }
       }
+    } finally {
+      setPiInspectionExecutor(sessionId);
     }
     throw new Error(lastError ?? "Planning failed");
+  }
+
+  private async executePiInspection(
+    task: AgentTask,
+    toolName: InspectionToolName,
+    arguments_: Record<string, unknown>,
+    sessions: SessionStore,
+    audit: AuditLog,
+  ): Promise<{ message: string; result?: unknown }> {
+    const action = this.materializeAction(
+      { toolName, arguments: arguments_ },
+      {
+        bdsSessionId: task.bdsSessionId!,
+        actor: task.actor,
+        permissionMode: task.permissionMode,
+      },
+      true,
+    );
+    const queued = sessions.enqueue(action.sessionId, action);
+    if (!queued.ok) throw new Error(queued.message);
+    task.enqueuedActionIds = [...(task.enqueuedActionIds ?? []), action.actionId];
+    task.inspectActionIds = [...(task.inspectActionIds ?? []), action.actionId];
+    task.actionToolNames = { ...(task.actionToolNames ?? {}), [action.actionId]: action.toolName };
+    task.state = "inspecting";
+    audit.append({
+      type: "action_enqueued",
+      taskId: task.id,
+      sessionId: action.sessionId,
+      actionId: action.actionId,
+      toolName: action.toolName,
+      actor: action.actor,
+      risk: action.risk,
+      arguments: action.arguments,
+      noApprovalReason: "agent_inspection",
+    });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.inspectionWaiters.delete(action.actionId);
+        reject(new Error(`${toolName} timed out waiting for the Bedrock server`));
+      }, 30_000);
+      this.inspectionWaiters.set(action.actionId, { resolve, reject, timer });
+    });
   }
 
   private validatePlanTools(plan: AgentPlan) {
@@ -501,6 +664,9 @@ export class AgentRuntime {
     task.inspectActionIds = [];
     task.mutationActionIds = [];
     task.verifyActionIds = [];
+    task.actionToolNames = Object.fromEntries(
+      [...reads, ...proposed, ...verification].map((action) => [action.actionId, action.toolName]),
+    );
 
     const chatOnly =
       plan.inspection.length === 0 &&
@@ -661,6 +827,8 @@ export class AgentRuntime {
           bdsSessionId: task.bdsSessionId!,
           actor: task.actor,
           permissionMode: task.permissionMode,
+          sessions,
+          audit,
         },
       );
       // Keep original request on the task; apply refined plan.
@@ -733,6 +901,8 @@ export class AgentRuntime {
           bdsSessionId: task.bdsSessionId!,
           actor: task.actor,
           permissionMode: task.permissionMode,
+          sessions: input.sessions,
+          audit: input.audit,
         },
       );
       task.request = request;
@@ -912,7 +1082,7 @@ export class AgentRuntime {
     return this.publicTask(task);
   }
 
-  onOperationEvent(
+  async onOperationEvent(
     actionId: string,
     state: string,
     audit: AuditLog,
@@ -922,10 +1092,54 @@ export class AgentRuntime {
       sessions?: SessionStore;
       toolName?: string;
     },
-  ) {
+  ): Promise<void> {
     for (const task of this.tasks.values()) {
       if (!task.enqueuedActionIds?.includes(actionId)) continue;
-      if (task.state === "cancelled" || task.state === "rejected") return;
+      const previous = this.operationEventQueues.get(task.id) ?? Promise.resolve();
+      const current = previous
+        .catch(() => undefined)
+        .then(() => this.processOperationEvent(task, actionId, state, audit, detail));
+      this.operationEventQueues.set(task.id, current);
+      try {
+        await current;
+      } finally {
+        if (this.operationEventQueues.get(task.id) === current) {
+          this.operationEventQueues.delete(task.id);
+        }
+      }
+      return;
+    }
+  }
+
+  private async processOperationEvent(
+    task: AgentTask,
+    actionId: string,
+    state: string,
+    audit: AuditLog,
+    detail?: {
+      message?: string;
+      result?: unknown;
+      sessions?: SessionStore;
+      toolName?: string;
+    },
+  ): Promise<void> {
+    if (task.state === "cancelled" || task.state === "rejected") return;
+
+    const inspectionWaiter = this.inspectionWaiters.get(actionId);
+    const terminalInspection =
+      state === "completed" ||
+      state === "partially_completed" ||
+      state === "failed" ||
+      state === "cancelled";
+    if (inspectionWaiter && terminalInspection) {
+      clearTimeout(inspectionWaiter.timer);
+      this.inspectionWaiters.delete(actionId);
+      if (state === "completed" || state === "partially_completed") {
+        inspectionWaiter.resolve({ message: detail?.message ?? state, result: detail?.result });
+      } else {
+        inspectionWaiter.reject(new Error(detail?.message ?? `Inspection ${state}`));
+      }
+    }
 
       const terminal =
         state === "completed" ||
@@ -941,14 +1155,16 @@ export class AgentRuntime {
 
       if (terminal) {
         const completed = new Set(task.completedActionIds ?? []);
+        // BDS may retry delivery. A terminal action must affect history/state exactly once.
+        if (completed.has(actionId)) return;
         completed.add(actionId);
         task.completedActionIds = [...completed];
 
         if (detail?.message || detail?.result !== undefined) {
           const tool =
             detail.toolName ??
+            task.actionToolNames?.[actionId] ??
             task.proposedActions?.find((a) => a.actionId === actionId)?.toolName ??
-            task.plan?.inspection?.find(() => true)?.toolName ??
             "tool";
           const resultText =
             detail.result !== undefined
@@ -958,7 +1174,7 @@ export class AgentRuntime {
             role: "assistant",
             content: `[tool result ${tool}] ${resultText}`.slice(0, 4000),
           });
-          void injectPiToolResult(task.piSessionId, tool, detail.message ?? "ok", detail.result);
+          await injectPiToolResult(task.piSessionId, tool, detail.message ?? "ok", detail.result);
         }
 
         if (state === "failed") {
@@ -975,7 +1191,7 @@ export class AgentRuntime {
             ids.length > 0 && ids.every((id) => completed.has(id));
 
           if (task.awaitingInspectReplan && done(inspectIds) && detail?.sessions) {
-            void this.replanAfterInspection(task.id, detail.sessions, audit);
+            await this.replanAfterInspection(task.id, detail.sessions, audit);
           } else if (task.state === "inspecting" && done(inspectIds) && !task.awaitingInspectReplan) {
             task.state = "completed";
           } else if (
@@ -1019,12 +1235,18 @@ export class AgentRuntime {
         operationState: state,
       });
       return;
-    }
   }
 
   getTask(id: string) {
     const t = this.tasks.get(id);
     return t ? this.publicTask(t) : undefined;
+  }
+
+  /** Chat turns stored for this task's Pi session (for UI restore). */
+  getTaskTranscript(id: string): ChatTurn[] {
+    const t = this.tasks.get(id);
+    if (!t) return [];
+    return [...(this.chatHistory.get(t.piSessionId) ?? [])];
   }
 
   deleteTask(id: string) {
@@ -1046,6 +1268,7 @@ export class AgentRuntime {
     const clone = structuredClone(t);
     delete clone.pendingReads;
     delete clone.pendingVerification;
+    delete clone.actionToolNames;
     return clone;
   }
 }

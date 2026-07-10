@@ -21,36 +21,40 @@ export function ToolCallCard({
     state === "failed" ||
     state === "partially_completed" ||
     state === "end";
-  const error = part?.error ?? run?.error;
+  const rawError = part?.error ?? run?.error;
+  const errorText = rawError ?? (state === "failed" ? "Failed" : undefined);
   const resultText =
     part?.resultText ??
     (run && done
       ? run.error
         ? `Failed: ${run.error}`
         : formatInspectResult(run.message || state, run.result)
-      : run?.message);
+      : undefined);
   const argsSummary = part?.argsSummary;
+  const showResult = Boolean(errorText || (resultText && done));
 
   return (
-    <div className={`tool-card phase-${phase ?? "plan"} state-${state}`}>
+    <div className={`tool-card compact phase-${phase ?? "plan"} state-${state}`}>
       <div className="tool-card-head">
-        <span className="tool-phase">{phase ?? "tool"}</span>
+        <span className={`tool-dot ${done ? (errorText ? "bad" : "ok") : "run"}`} aria-hidden />
         <strong className="tool-name">{name}</strong>
-        <span className="meta">{state}</span>
+        <span className="meta tool-state">{errorText ? "failed" : state}</span>
         {total > 0 && (
           <span className="meta">
             {completed}/{total}
           </span>
         )}
       </div>
-      {argsSummary && <div className="tool-args meta">{argsSummary}</div>}
+      {argsSummary && !argsSummary.startsWith("call_") && (
+        <div className="tool-args meta">{argsSummary}</div>
+      )}
       {!done && total > 0 && (
         <div className="progress-bar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
           <span style={{ width: `${pct}%` }} />
         </div>
       )}
-      {(resultText || error) && (
-        <pre className="tool-result">{error ? `Failed: ${error}` : resultText}</pre>
+      {showResult && (
+        <pre className="tool-result">{errorText ? `Failed: ${errorText}` : resultText}</pre>
       )}
     </div>
   );

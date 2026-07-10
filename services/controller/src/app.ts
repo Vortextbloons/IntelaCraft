@@ -258,7 +258,13 @@ async function handleRequest(
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      // Prevent proxies and dev servers from collecting model deltas until the
+      // response completes.  SSE only feels live when each frame is forwarded.
+      "X-Accel-Buffering": "no",
+      "Content-Encoding": "identity",
     });
+    res.socket?.setNoDelay(true);
+    res.flushHeaders();
     const writeEvent = (event: string, data: unknown) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
@@ -275,6 +281,7 @@ async function handleRequest(
         (event) => {
           if (event.type === "delta") writeEvent("delta", { text: event.text });
           else if (event.type === "reasoning_delta") writeEvent("reasoning_delta", { text: event.text });
+          else if (event.type === "status") writeEvent("status", { text: event.text });
           else if (event.type === "tool") writeEvent("tool", event);
         },
       );
@@ -347,14 +354,67 @@ async function handleRequest(
       return;
     }
   }
+  const taskStreamMatch = /^\/v1\/tasks\/([^/]+)\/stream$/.exec(path);
+  if (ctx.agent && method === "POST" && taskStreamMatch) {
+    const taskId = decodeURIComponent(taskStreamMatch[1]);
+    const b = (await readJson(req)) as any;
+    const permissionMode =
+      (b.permissionMode as PermissionMode | undefined) ?? ctx.settings.get().permissionMode;
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+      "Content-Encoding": "identity",
+    });
+    res.socket?.setNoDelay(true);
+    res.flushHeaders();
+    const writeEvent = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    writeEvent("ready", { ok: true });
+    try {
+      const task = await ctx.agent.continueTask(
+        taskId,
+        {
+          ...b,
+          sessions: ctx.sessions,
+          audit: ctx.audit,
+        },
+        (event) => {
+          if (event.type === "delta") writeEvent("delta", { text: event.text });
+          else if (event.type === "reasoning_delta") writeEvent("reasoning_delta", { text: event.text });
+          else if (event.type === "status") writeEvent("status", { text: event.text });
+          else if (event.type === "tool") writeEvent("tool", event);
+        },
+      );
+      ctx.audit.append({
+        type: "task_lifecycle",
+        taskId: task.id,
+        state: task.state,
+        request: b.request,
+      });
+      writeEvent("task", { task });
+    } catch (e) {
+      writeEvent("error", {
+        message: e instanceof Error ? e.message : "Continue failed",
+      });
+    }
+    res.end();
+    return;
+  }
   const taskMatch = /^\/v1\/tasks\/([^/]+)$/.exec(path);
   if (ctx.agent && method === "GET" && taskMatch) {
-    const task = ctx.agent.getTask(decodeURIComponent(taskMatch[1]));
+    const id = decodeURIComponent(taskMatch[1]);
+    const task = ctx.agent.getTask(id);
     if (!task) {
       sendJson(res, 404, { error: { code: "NOT_FOUND", message: "Task not found" } });
       return;
     }
-    sendJson(res, 200, { task });
+    sendJson(res, 200, {
+      task,
+      transcript: ctx.agent.getTaskTranscript(id),
+    });
     return;
   }
   if (ctx.agent && method === "DELETE" && taskMatch) {
@@ -511,7 +571,7 @@ async function handleEvents(
     result: parsed.value.result,
     error: parsed.value.error,
   });
-  ctx.agent?.onOperationEvent(parsed.value.actionId, parsed.value.state, ctx.audit, {
+  await ctx.agent?.onOperationEvent(parsed.value.actionId, parsed.value.state, ctx.audit, {
     message: parsed.value.message,
     result: parsed.value.result,
     sessions: ctx.sessions,
@@ -750,11 +810,15 @@ function handleEventStream(
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+      "Content-Encoding": "identity",
+    });
+    res.socket?.setNoDelay(true);
+    res.flushHeaders();
   res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
   const unsub = ctx.events.subscribe((record) => {
     res.write(`event: operation\ndata: ${JSON.stringify(record)}\n\n`);

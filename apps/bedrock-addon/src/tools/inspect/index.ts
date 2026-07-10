@@ -6,14 +6,12 @@ import {
   type DimensionId,
   type InspectBlockArgs,
   type InspectEntitiesArgs,
-  type InspectGameRulesArgs,
   type InspectPlayersArgs,
   type InspectRegionArgs,
   type InspectScoreboardArgs,
   type InspectServerStatusArgs,
   type InspectTagsArgs,
-  type InspectTimeArgs,
-  type InspectWeatherArgs,
+  type InspectWorldStateArgs,
   type ReadToolName,
 } from "@intelacraft/shared-protocol";
 
@@ -61,12 +59,8 @@ export function executeInspectTool(action: ActionRequestMessage): ToolResult {
         return inspectBlock(action.arguments as unknown as InspectBlockArgs);
       case "inspect.region":
         return inspectRegion(action.arguments as unknown as InspectRegionArgs);
-      case "inspect.time":
-        return inspectTime(action.arguments as unknown as InspectTimeArgs);
-      case "inspect.weather":
-        return inspectWeather(action.arguments as unknown as InspectWeatherArgs);
-      case "inspect.game_rules":
-        return inspectGameRules(action.arguments as unknown as InspectGameRulesArgs);
+      case "inspect.world_state":
+        return inspectWorldState(action.arguments as unknown as InspectWorldStateArgs);
       case "inspect.entities":
         return inspectEntities(action.arguments as unknown as InspectEntitiesArgs);
       case "inspect.scoreboard":
@@ -207,52 +201,35 @@ function inspectRegion(args: InspectRegionArgs): ToolResult {
   };
 }
 
-function inspectTime(args: InspectTimeArgs): ToolResult {
-  const dimensionId = args.dimension ?? "minecraft:overworld";
-  return {
-    ok: true,
-    result: {
-      dimension: dimensionId,
-      timeOfDay: world.getTimeOfDay(),
-      absoluteTime: world.getAbsoluteTime(),
-      day: world.getDay(),
-    },
-    completedWork: 1,
-    totalEstimatedWork: 1,
-    message: "Time inspected",
-  };
-}
-
-function inspectWeather(args: InspectWeatherArgs): ToolResult {
+function inspectWorldState(args: InspectWorldStateArgs): ToolResult {
   const dimensionId = args.dimension ?? "minecraft:overworld";
   const dimension = getDimension(dimensionId);
-  return {
-    ok: true,
-    result: {
-      dimension: dimensionId,
-      weather: dimension.getWeather(),
-    },
-    completedWork: 1,
-    totalEstimatedWork: 1,
-    message: "Weather inspected",
-  };
-}
-
-function inspectGameRules(args: InspectGameRulesArgs): ToolResult {
   const rules = world.gameRules;
-  const names =
-    args.names && args.names.length > 0 ? args.names : [...DEFAULT_GAME_RULE_KEYS];
-  const values: Record<string, unknown> = {};
+  const ruleNames =
+    args.rules && args.rules.length > 0 ? args.rules : [...DEFAULT_GAME_RULE_KEYS];
+  const ruleValues: Record<string, unknown> = {};
   const ruleBag = rules as unknown as Record<string, unknown>;
-  for (const name of names) {
-    values[name] = ruleBag[name] ?? null;
+  for (const name of ruleNames) {
+    ruleValues[name] = ruleBag[name] ?? null;
   }
   return {
     ok: true,
-    result: { rules: values },
-    completedWork: names.length,
-    totalEstimatedWork: names.length,
-    message: `Read ${names.length} game rule(s)`,
+    result: {
+      time: {
+        dimension: dimensionId,
+        timeOfDay: world.getTimeOfDay(),
+        absoluteTime: world.getAbsoluteTime(),
+        day: world.getDay(),
+      },
+      weather: {
+        dimension: dimensionId,
+        weather: dimension.getWeather(),
+      },
+      rules: ruleValues,
+    },
+    completedWork: ruleNames.length,
+    totalEstimatedWork: ruleNames.length,
+    message: `World state: time, weather, ${ruleNames.length} rule(s)`,
   };
 }
 

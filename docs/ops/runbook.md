@@ -51,3 +51,62 @@ Mirror the same map in BDS variable `intelacraft:admin_commands`. Only `commandI
 3. Inspect `/v1/activity` and the audit file for correlated `taskId` / `actionId` / `operationId`.
 4. Restore from BDS backup if world state is wrong.
 5. Rotate `INTELACRAFT_BDS_TOKEN` and BDS secret if compromise is suspected.
+
+## CLI Commands Reference
+
+| Command | Purpose |
+|---------|---------|
+| `npm run setup` | Install dependencies, build all packages, create `.env` if missing |
+| `npm run build` | Build all packages in dependency order |
+| `npm run dev` | Start controller (serves webview + API) |
+| `npm run health` | Check controller / BDS connection status |
+| `npm run inspect -- <tool>` | Queue a read-only tool for inspection |
+| `npm run deploy` | Deploy behavior and resource packs to BDS |
+| `npm run configure-bds` | Write BDS configuration files |
+| `npm test` | Run protocol, pi-extension, and controller tests |
+| `npm run typecheck` | Typecheck all workspaces |
+| `npm run load-smoke` | Run load test against the controller |
+
+## PowerShell Launcher
+
+`dev.ps1` wraps the npm commands above for convenience. Run from the repository root:
+
+```powershell
+.\dev.ps1 setup          # Install + build + create .env
+.\dev.ps1                # Default: start dev server
+.\dev.ps1 health         # Health check
+.\dev.ps1 inspect <tool> # Queue a read tool
+.\dev.ps1 deploy         # Deploy packs to BDS
+.\dev.ps1 test           # Run test suite
+.\dev.ps1 build          # Rebuild all packages
+```
+
+## Monitoring
+
+### Health check endpoint
+
+`GET /v1/health` returns controller status and BDS connectivity. Use `npm run health` for a CLI equivalent.
+
+### Heartbeat monitoring
+
+The controller emits SSE heartbeats. Loss of heartbeats indicates the controller has stopped or the connection dropped.
+
+### Activity log queries
+
+`GET /v1/activity` returns recent operations. Filter by `taskId`, `actionId`, or `operationId` to trace a specific action through the system.
+
+### Audit log inspection
+
+The audit file (`INTELACRAFT_AUDIT_PATH`, default `./data/audit.jsonl`) records every mutation with risk classification, actor, and approval hash. Inspect with `jq` or any JSONL reader for forensic analysis.
+
+## Backup and Recovery
+
+| Item | Default path | Notes |
+|------|-------------|-------|
+| Audit log | `./data/audit.jsonl` | JSONL, append-only; copy before `DELETE /v1/activity` |
+| Activity store | `./data/activity.jsonl` | JSONL, current session activity |
+| Provider profiles | `./data/providers.json` | API key references (keys are environment variables) |
+| Pi session data | `./data/pi/` | Planning agent working state |
+| BDS configuration | `apps/bedrock-addon/.env` | Environment variables and deploy settings |
+
+Always take a BDS world backup before large or destructive builds. IntelaCraft rollback capture is bounded and not a substitute for full backups.

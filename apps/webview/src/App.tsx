@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import {
-  ApiError,
-  api,
-  clearPiSessionId,
-  clearToken,
-  getPiSessionId,
-  getToken,
-  setPiSessionId,
-  setToken,
-} from "./api";
+import { ApiError, api, clearPiSessionId, clearToken, getPiSessionId, getToken, setPiSessionId, setToken } from "./api";
 import { ConnectionStrip } from "./components/ConnectionStrip";
 import { Transcript } from "./components/Transcript";
 import { WorldContextPanel } from "./components/WorldContextPanel";
+import {
+  deleteConversation,
+  getPersistedActiveChatId,
+  loadConversation,
+  saveConversation,
+  setPersistedActiveChatId,
+  transcriptFromTask,
+} from "./chatStore";
 import {
   isReadOnlyPlan,
   taskNeedsPlanCard,
@@ -123,9 +122,10 @@ export function App() {
   const [pickerPanel, setPickerPanel] = useState<"none" | "providers" | "models">("none");
   const [drawer, setDrawer] = useState<"none" | "safety" | "activity">("none");
   const [busy, setBusy] = useState(false);
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("off");
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("minimal");
   const [stickToBottom, setStickToBottom] = useState(true);
   const [showJump, setShowJump] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
@@ -145,6 +145,62 @@ export function App() {
   useEffect(() => {
     chatRef.current = chat;
   }, [chat]);
+
+  // Persist the open conversation whenever the transcript changes.
+  useEffect(() => {
+    if (!activeConversationId) return;
+    if (chat.some((m) => m.streaming)) return;
+    const meaningful = chat.filter((m) => m.id !== "welcome");
+    if (!meaningful.length) return;
+    saveConversation(activeConversationId, chat);
+  }, [chat, activeConversationId]);
+
+  const openConversation = useCallback(
+    async (taskId: string) => {
+      setSelectedTaskId(taskId);
+      setActiveConversationId(taskId);
+      setPersistedActiveChatId(taskId);
+      setError(null);
+      setStickToBottom(true);
+
+      const local = loadConversation(taskId);
+      if (local?.length) {
+        setChat(local);
+        return;
+      }
+
+      try {
+        const res = await api<{
+          task: Task;
+          transcript?: Array<{ role: "user" | "assistant"; content: string }>;
+        }>(`/v1/tasks/${encodeURIComponent(taskId)}`);
+        const msgs = transcriptFromTask({
+          ...res.task,
+          transcript: res.transcript,
+        });
+        setChat(msgs.length ? msgs : [welcomeMsg()]);
+        if (msgs.length) saveConversation(taskId, msgs);
+      } catch {
+        const t = tasksRef.current.find((x) => x.id === taskId);
+        if (t) {
+          const msgs = transcriptFromTask(t);
+          setChat(msgs);
+          saveConversation(taskId, msgs);
+        } else {
+          setChat([welcomeMsg()]);
+        }
+      }
+    },
+    [],
+  );
+
+  // After login / refresh, restore the last open thread.
+  useEffect(() => {
+    if (!authed) return;
+    const id = getPersistedActiveChatId();
+    if (!id) return;
+    void openConversation(id);
+  }, [authed, openConversation]);
 
   const activeProvider = useMemo(
     () => providers.find((p) => p.id === activeProviderId) ?? providers[0] ?? null,
@@ -292,8 +348,13 @@ export function App() {
   function startNewChat() {
     streamAbortRef.current?.abort();
     streamAbortRef.current = null;
+    if (activeConversationId) {
+      saveConversation(activeConversationId, chatRef.current);
+    }
     setChat([welcomeMsg()]);
     setSelectedTaskId(null);
+    setActiveConversationId(null);
+    setPersistedActiveChatId(null);
     setProgressByTask({});
     updatePiSessionId(null);
     setPrompt("");
@@ -578,9 +639,28 @@ export function App() {
 
   function upsertToolPart(parts: MessagePart[] | undefined, part: Extract<MessagePart, { type: "tool_call" }>) {
     const list = [...(parts ?? [])];
-    const idx = list.findIndex((p) => p.type === "tool_call" && p.id === part.id);
-    if (idx >= 0) list[idx] = { ...list[idx], ...part };
-    else list.push(part);
+    let idx = list.findIndex((p) => p.type === "tool_call" && p.id === part.id);
+    // Fall back: match the latest running card with the same tool name.
+    if (idx < 0 && part.state === "completed") {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const p = list[i];
+        if (p.type === "tool_call" && p.name === part.name && p.state === "running") {
+          idx = i;
+          break;
+        }
+      }
+    }
+    if (idx >= 0) {
+      const prev = list[idx] as Extract<MessagePart, { type: "tool_call" }>;
+      list[idx] = {
+        ...prev,
+        ...part,
+        id: prev.id,
+        argsSummary: part.argsSummary ?? prev.argsSummary,
+      };
+    } else {
+      list.push(part);
+    }
     return list;
   }
 
@@ -622,17 +702,28 @@ export function App() {
     const text = prompt.trim();
     setPrompt("");
     const assistantId = uid();
-    setChat((c) => [
-      ...c,
-      { id: uid(), role: "user", text },
-      {
-        id: assistantId,
-        role: "assistant",
-        text: "",
-        streaming: true,
-        parts: [{ type: "status", text: "Planning…" }],
-      },
-    ]);
+    setChat((c) => {
+      // Continuing reuses the same task id — detach it from older turns so the
+      // Plan card doesn't jump back above the new user message while replanning.
+      const prior =
+        activeConversationId != null
+          ? c.map((m) =>
+              m.taskId === activeConversationId ? { ...m, taskId: undefined } : m,
+            )
+          : c;
+      return [
+        ...prior,
+        { id: uid(), role: "user", text },
+        {
+          id: assistantId,
+          role: "assistant",
+          text: "",
+          streaming: true,
+          parts: [{ type: "status", text: "Planning…" }],
+        },
+      ];
+    });
+    setSelectedTaskId(null);
     let streamedText = "";
     let reasoningText = "";
     try {
@@ -650,7 +741,56 @@ export function App() {
         serverId: health.sessions?.[0]?.serverId,
         tick: health.sessions?.[0]?.health?.tick,
       };
-      const res = await fetch("/v1/tasks/stream", {
+      const historyPayload = chat
+        .filter(
+          (m) =>
+            (m.role === "user" || m.role === "assistant") &&
+            m.id !== assistantId &&
+            m.text.trim() &&
+            m.id !== "welcome",
+        )
+        .slice(-16)
+        .flatMap((m) => {
+          const content =
+            m.parts?.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("") ||
+            m.text;
+          const turns: Array<{ role: "user" | "assistant"; content: string }> = [
+            { role: m.role as "user" | "assistant", content },
+          ];
+          for (const run of m.toolRuns ?? []) {
+            if (run.state === "completed" || run.state === "failed") {
+              turns.push({
+                role: "assistant",
+                content: `[tool result] ${
+                  run.error
+                    ? `Failed: ${run.error}`
+                    : formatInspectResult(run.message || run.state, run.result)
+                }`,
+              });
+            }
+          }
+          return turns;
+        });
+      const isContinue = Boolean(activeConversationId);
+      const streamUrl = isContinue
+        ? `/v1/tasks/${encodeURIComponent(activeConversationId!)}/stream`
+        : "/v1/tasks/stream";
+      const streamBody = isContinue
+        ? JSON.stringify({
+            request: text,
+            useMcp: true,
+            worldContext,
+            history: historyPayload,
+          })
+        : JSON.stringify({
+            piSessionId: session,
+            request: text,
+            permissionMode,
+            useMcp: true,
+            worldContext,
+            history: historyPayload,
+          });
+      const res = await fetch(streamUrl, {
         method: "POST",
         signal: abort.signal,
         headers: {
@@ -658,43 +798,7 @@ export function App() {
           Authorization: `Bearer ${token}`,
           Accept: "text/event-stream",
         },
-        body: JSON.stringify({
-          piSessionId: session,
-          request: text,
-          permissionMode,
-          useMcp: true,
-          worldContext,
-          history: chat
-            .filter(
-              (m) =>
-                (m.role === "user" || m.role === "assistant") &&
-                m.id !== assistantId &&
-                m.text.trim() &&
-                m.id !== "welcome",
-            )
-            .slice(-16)
-            .flatMap((m) => {
-              const content =
-                m.parts?.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("") ||
-                m.text;
-              const turns: Array<{ role: "user" | "assistant"; content: string }> = [
-                { role: m.role as "user" | "assistant", content },
-              ];
-              for (const run of m.toolRuns ?? []) {
-                if (run.state === "completed" || run.state === "failed") {
-                  turns.push({
-                    role: "assistant",
-                    content: `[tool result] ${
-                      run.error
-                        ? `Failed: ${run.error}`
-                        : formatInspectResult(run.message || run.state, run.result)
-                    }`,
-                  });
-                }
-              }
-              return turns;
-            }),
-        }),
+        body: streamBody,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -751,17 +855,33 @@ export function App() {
                   parts: [{ type: "reasoning", text: reasoningText, streaming: true }, ...rest],
                 };
               });
+            } else if (eventName === "status" && typeof parsed.text === "string") {
+              updateAssistant(assistantId, (m) => ({
+                ...m,
+                parts: [
+                  ...(m.parts ?? []).filter((p) => p.type !== "status"),
+                  { type: "status", text: parsed.text },
+                ],
+              }));
             } else if (eventName === "tool") {
-              const id = String(parsed.detail ?? parsed.name ?? "tool");
+              const toolCallId =
+                typeof parsed.toolCallId === "string" && parsed.toolCallId
+                  ? parsed.toolCallId
+                  : undefined;
+              const name = String(parsed.name ?? "tool");
+              const id = toolCallId || name;
+              const failed = parsed.phase === "end" && Boolean(parsed.isError);
               updateAssistant(assistantId, (m) => ({
                 ...m,
                 parts: upsertToolPart(m.parts, {
                   type: "tool_call",
                   id,
-                  name: String(parsed.name ?? "tool"),
+                  name,
                   phase: "plan",
-                  state: parsed.phase === "end" ? "completed" : "running",
-                  argsSummary: parsed.detail,
+                  state: failed ? "failed" : "running",
+                  error: failed
+                    ? String(parsed.message ?? "Tool failed")
+                    : undefined,
                 }),
               }));
             } else if (eventName === "task" && parsed.task) {
@@ -812,16 +932,24 @@ export function App() {
         } else if (finalTask!.state === "awaiting_approval") {
           parts.push({ type: "status", text: "Waiting for approval" });
         }
-        return {
+        const next = {
           ...m,
           text: reply,
           taskId: finalTask!.id,
           streaming: false,
           parts,
         };
+        // Persist with the completed turn (chatRef may still be mid-stream).
+        saveConversation(
+          finalTask!.id,
+          chatRef.current.map((row) => (row.id === assistantId ? next : row)),
+        );
+        return next;
       });
       if (taskNeedsPlanCard(finalTask)) setSelectedTaskId(finalTask.id);
       else setSelectedTaskId(null);
+      setActiveConversationId(finalTask.id);
+      setPersistedActiveChatId(finalTask.id);
       await refresh();
     } catch (err) {
       if (abort.signal.aborted) {
@@ -942,9 +1070,14 @@ export function App() {
   async function deleteTask(id: string) {
     try {
       await api(`/v1/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+      deleteConversation(id);
       if (selectedTaskId === id) {
         setSelectedTaskId(null);
         setChat([welcomeMsg()]);
+      }
+      if (activeConversationId === id) {
+        setActiveConversationId(null);
+        setPersistedActiveChatId(null);
       }
       await refresh();
     } catch (e) {
@@ -1072,7 +1205,12 @@ export function App() {
                 <button
                   type="button"
                   className="thread-select"
-                  onClick={() => setSelectedTaskId(t.id)}
+                  onClick={() => {
+                    if (activeConversationId && activeConversationId !== t.id) {
+                      saveConversation(activeConversationId, chatRef.current);
+                    }
+                    void openConversation(t.id);
+                  }}
                 >
                   <span className="thread-title">{t.request || t.id}</span>
                   <span className="thread-meta">{t.state}</span>
@@ -1180,6 +1318,13 @@ export function App() {
                     e.currentTarget.form?.requestSubmit();
                   }
                 }}
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                data-gramm="false"
+                data-gramm_editor="false"
+                data-enable-grammarly="false"
+                data-lt-active="false"
                 placeholder={
                   activeProvider
                     ? "Message IntelaCraft…"

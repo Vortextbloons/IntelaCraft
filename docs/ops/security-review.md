@@ -27,6 +27,47 @@
 - Task approve endpoint re-hashes proposed actions and rejects mismatch/stale approvals.
 - Emergency disable rejects new mutations independently on controller and add-on.
 
+## Permission Modes Detail
+
+| Mode | Behavior |
+|------|----------|
+| `observe_only` | Blocks all mutations. Only inspect tools work. Safe for read-only exploration. |
+| `confirm_every_change` | Every mutation requires explicit user approval before execution. |
+| `allow_low_risk` | `read` and `normal` risk actions are auto-approved. `strong` risk actions still require approval. |
+| `builder_region` | Builds are restricted to configured builder regions. Out-of-region mutations require approval. |
+| `trusted_administrator` | All mutations are trusted and auto-approved. **Dangerous** — use only in fully controlled environments. |
+
+## Risk Classification Detail
+
+| Risk | Examples | Approval |
+|------|----------|----------|
+| `read` | Inspection tools (inspect, query) | Always safe, never blocked |
+| `normal` | Small fills, allowed admin commands | Auto-approved in `allow_low_risk` mode |
+| `strong` | Large fills (>4096 blocks), emergency disable, mutations near protected regions | Requires approval in all modes except `trusted_administrator` |
+| `prohibited` | Fills exceeding 32,768 blocks, overlapping protected regions, unknown admin commands | Never allowed regardless of mode |
+
+## Safety Mechanisms
+
+- **Protected regions** — Configurable regions where builds are blocked or restricted.
+- **Volume limits** — Single operations capped at 32,768 blocks.
+- **Batch yielding** — Large builds are chunked at 512 blocks per tick to avoid server freezes.
+- **Emergency disable** — Global kill switch that blocks all mutations until explicitly re-enabled. Classified as `strong` risk.
+- **Approval binding** — SHA-256 hash binds action ID, idempotency key, tool, arguments, actor, mode, risk, and expiry. Rejects mismatched or stale approvals.
+- **Idempotency tracking** — Each action has a unique idempotency key; duplicate execution is rejected.
+- **Action expiry** — Approvals are time-limited and expire if not executed within the validity window.
+- **Admin command allowlist** — Only pre-approved `commandId` values can execute via the admin tool.
+
+## Threat Model
+
+| Vector | Exposure | Mitigation |
+|--------|----------|------------|
+| Localhost-only | Controller binds to `127.0.0.1`; not network-exposed | No additional network controls in Phase 4 |
+| Shared bearer token | Full admin access on localhost | Token shared between BDS, CLI, and webview; no role separation |
+| AI agent | Semi-trusted; can inspect freely, needs approval for mutations | Risk classification + approval binding enforce human-in-the-loop |
+| MCP advisory | Untrusted; can suggest plans but cannot bypass tool restrictions | Plans validated before execution |
+| No rate limiting | Open to abuse if token is compromised | Not yet addressed (open decision) |
+| JSONL audit | Not tamper-evident; append-only file | Copy before purging; consider integrity hashing for production |
+
 ## Residual risks
 
 - Shared bearer token is equivalent to full admin access on localhost.

@@ -30,12 +30,10 @@ import type {
   HandshakeMessage,
   HeartbeatMessage,
   InspectBlockArgs,
-  InspectGameRulesArgs,
   InspectPlayersArgs,
   InspectRegionArgs,
   InspectServerStatusArgs,
-  InspectTimeArgs,
-  InspectWeatherArgs,
+  InspectWorldStateArgs,
   InspectEntitiesArgs,
   InspectScoreboardArgs,
   InspectTagsArgs,
@@ -436,12 +434,8 @@ export function validateToolArguments(
       return asArgs(validateInspectBlock(args));
     case "inspect.region":
       return asArgs(validateInspectRegion(args));
-    case "inspect.time":
-      return asArgs(validateInspectTime(args));
-    case "inspect.weather":
-      return asArgs(validateInspectWeather(args));
-    case "inspect.game_rules":
-      return asArgs(validateInspectGameRules(args));
+    case "inspect.world_state":
+      return asArgs(validateInspectWorldState(args));
     case "inspect.entities":
       return asArgs(validateInspectEntities(args));
     case "inspect.scoreboard":
@@ -521,36 +515,24 @@ function validateInspectRegion(args: Record<string, unknown>): ValidateResult<In
   });
 }
 
-function validateInspectTime(args: Record<string, unknown>): ValidateResult<InspectTimeArgs> {
+function validateInspectWorldState(
+  args: Record<string, unknown>,
+): ValidateResult<InspectWorldStateArgs> {
   if (args.dimension !== undefined && !isDimensionId(args.dimension)) {
     return fail("INVALID_ARGS", "dimension is invalid");
   }
-  return ok({
-    dimension: isDimensionId(args.dimension) ? args.dimension : undefined,
-  });
-}
-
-function validateInspectWeather(
-  args: Record<string, unknown>,
-): ValidateResult<InspectWeatherArgs> {
-  if (args.dimension !== undefined && !isDimensionId(args.dimension)) {
-    return fail("INVALID_ARGS", "dimension is invalid");
-  }
-  return ok({
-    dimension: isDimensionId(args.dimension) ? args.dimension : undefined,
-  });
-}
-
-function validateInspectGameRules(
-  args: Record<string, unknown>,
-): ValidateResult<InspectGameRulesArgs> {
-  if (args.names !== undefined) {
-    if (!Array.isArray(args.names) || !args.names.every((n) => typeof n === "string")) {
-      return fail("INVALID_ARGS", "names must be a string array");
+  if (args.rules !== undefined) {
+    if (!Array.isArray(args.rules) || !args.rules.every((n) => typeof n === "string")) {
+      return fail("INVALID_ARGS", "rules must be a string array");
     }
-    return ok({ names: args.names as string[] });
+    return ok({
+      dimension: isDimensionId(args.dimension) ? args.dimension : undefined,
+      rules: args.rules as string[],
+    });
   }
-  return ok({});
+  return ok({
+    dimension: isDimensionId(args.dimension) ? args.dimension : undefined,
+  });
 }
 
 function validateInspectEntities(

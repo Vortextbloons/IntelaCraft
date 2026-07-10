@@ -14,14 +14,17 @@ if (!existsSync(join(REPO_ROOT, "services", "controller", "dist", "index.js"))) 
   runNpm(["run", "build", "-w", "@intelacraft/controller"]);
 }
 
-console.log(`  URL     ${baseUrl}`);
-console.log(`  Port    ${port}`);
-console.log(`  Token   ${token.slice(0, 4)}${"*".repeat(Math.max(0, token.length - 4))}`);
+const vitePort = 5173;
+
+console.log(`  Controller  ${baseUrl}`);
+console.log(`  Webview     http://localhost:${vitePort}`);
+console.log(`  Port        ${port}`);
+console.log(`  Token       ${token.slice(0, 4)}${"*".repeat(Math.max(0, token.length - 4))}`);
 console.log("");
 console.log("  Ctrl+C to stop");
 console.log("");
 
-const child = spawn(
+const controller = spawn(
   process.execPath,
   [join(REPO_ROOT, "services", "controller", "dist", "index.js")],
   {
@@ -35,13 +38,42 @@ const child = spawn(
   },
 );
 
-child.on("exit", (code, signal) => {
-  if (signal) process.exit(1);
-  process.exit(code ?? 0);
+const vite = spawn(
+  process.execPath,
+  [join(REPO_ROOT, "node_modules", "vite", "bin", "vite.js")],
+  {
+    cwd: join(REPO_ROOT, "apps", "webview"),
+    stdio: "inherit",
+    env: {
+      ...process.env,
+    },
+  },
+);
+
+let exiting = false;
+
+function cleanup() {
+  if (exiting) return;
+  exiting = true;
+  controller.kill("SIGTERM");
+  vite.kill("SIGTERM");
+}
+
+controller.on("exit", (code, signal) => {
+  if (!exiting && !signal) {
+    cleanup();
+    process.exit(code ?? 0);
+  }
+});
+
+vite.on("exit", () => {
+  if (!exiting) {
+    cleanup();
+  }
 });
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
-    child.kill(sig);
+    cleanup();
   });
 }

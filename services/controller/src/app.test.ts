@@ -172,7 +172,7 @@ describe("controller handshake and poll", () => {
       requestId: newId("req"),
       actionId: newId("action"),
       idempotencyKey: "dup-key-1",
-      toolName: "inspect.time",
+      toolName: "inspect.world_state",
       arguments: {},
       actor: "tester",
     });

@@ -34,7 +34,7 @@ export function Transcript({
   return (
     <div className="transcript" aria-live="polite">
       <div className="transcript-inner">
-        {chat.map((m) => {
+        {chat.map((m, index) => {
           const task = m.taskId ? tasks.find((t) => t.id === m.taskId) : undefined;
           const liveProgress = m.taskId ? progressByTask[m.taskId] : undefined;
           const toolRuns = m.toolRuns?.length
@@ -42,7 +42,6 @@ export function Transcript({
             : liveProgress
               ? [liveProgress]
               : [];
-          const showPlan = task && taskNeedsPlanCard(task);
           const parts = m.parts ?? [];
           const reasoning = parts.find((p) => p.type === "reasoning");
           const toolParts = parts.filter((p) => p.type === "tool_call");
@@ -50,6 +49,18 @@ export function Transcript({
           const textParts = parts.filter((p) => p.type === "text");
           const bodyText =
             textParts.map((p) => (p.type === "text" ? p.text : "")).join("") || m.text;
+          // Only the newest turn for a task owns the Plan card (avoids jump-up on continue).
+          let latestIndexForTask = -1;
+          if (m.taskId) {
+            for (let i = chat.length - 1; i >= 0; i--) {
+              if (chat[i].taskId === m.taskId) {
+                latestIndexForTask = i;
+                break;
+              }
+            }
+          }
+          const isLatestForTask = !m.taskId || latestIndexForTask === index;
+          const showPlan = Boolean(task && taskNeedsPlanCard(task) && isLatestForTask);
 
           return (
             <div key={m.id} className={`turn ${m.role}${m.streaming ? " streaming" : ""}`}>
@@ -73,11 +84,10 @@ export function Transcript({
                 {(bodyText || m.streaming) && (
                   <div className="turn-bubble">
                     {m.role === "assistant" ? (
-                      <MarkdownText className="turn-body" text={bodyText || (m.streaming ? "▍" : "")} />
+                      <MarkdownText className="turn-body" text={bodyText} />
                     ) : (
                       <div className="turn-body">{bodyText}</div>
                     )}
-                    {m.streaming && <span className="stream-caret" aria-hidden />}
                   </div>
                 )}
 

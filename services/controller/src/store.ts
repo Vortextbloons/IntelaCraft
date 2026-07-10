@@ -145,7 +145,9 @@ export class EventStore {
 }
 
 export class SettingsStore {
-  private thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" = "off";
+  // Enable the smallest supported reasoning stream by default. Users can still
+  // turn it off, and providers without reasoning support simply omit deltas.
+  private thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" = "minimal";
 
   constructor(private permissionMode: PermissionMode) {}
 

@@ -141,17 +141,11 @@ export interface InspectPlayersArgs {
   nameFilter?: string;
 }
 
-export interface InspectTimeArgs {
+export interface InspectWorldStateArgs {
+  /** Dimension for time and weather queries (defaults to overworld). */
   dimension?: DimensionId;
-}
-
-export interface InspectWeatherArgs {
-  dimension?: DimensionId;
-}
-
-export interface InspectGameRulesArgs {
-  /** When omitted, return a curated allowlisted subset. */
-  names?: string[];
+  /** Optional subset of game rule names to fetch (defaults to common rules). */
+  rules?: string[];
 }
 
 export interface InspectServerStatusArgs {
