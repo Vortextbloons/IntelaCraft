@@ -11,6 +11,7 @@ export const DEFAULT_BATCH_SIZE = 512;
 export const MAX_ROLLBACK_BLOCKS = 8192;
 /** Maximum individually addressed blocks in one deterministic placement action. */
 export const MAX_PLACE_BLOCKS = 8192;
+export const MAX_CATALOG_IDS = 100_000;
 
 export const MESSAGE_TYPES = [
   "handshake",
@@ -21,9 +22,13 @@ export const MESSAGE_TYPES = [
   "operation_event",
   "heartbeat",
   "error",
+  "catalog_snapshot",
 ] as const;
 
 export type MessageType = (typeof MESSAGE_TYPES)[number];
+
+export const CATALOG_KINDS = ["block", "item", "entity"] as const;
+export type CatalogKind = (typeof CATALOG_KINDS)[number];
 
 export const RISK_CLASSES = ["read", "normal", "strong", "prohibited"] as const;
 export type RiskClass = (typeof RISK_CLASSES)[number];

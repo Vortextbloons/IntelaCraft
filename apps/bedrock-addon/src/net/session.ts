@@ -2,6 +2,7 @@ import { system, world } from "@minecraft/server";
 import {
   createHandshake,
   createHeartbeat,
+  createCatalogSnapshot,
   createOperationEvent,
   createPoll,
   createIdempotencyTracker,
@@ -11,12 +12,14 @@ import {
   validateHandshakeAck,
   validatePollResponse,
   type ActionRequestMessage,
+  type ContentCatalogSnapshot,
 } from "@intelacraft/shared-protocol";
 import { notifyOperators } from "../audit/notify.js";
 import type { AddonConfig } from "../config.js";
 import { executeInspectTool } from "../tools/inspect/index.js";
-import { executeAdminCommand, executeControl, isEmergencyDisabled, startFill, startPlaceBlocks } from "../tools/mutate.js";
+import { executeAdminCommand, executeControl, isEmergencyDisabled, refreshAvailableBlockTypes, startFill, startPlaceBlocks } from "../tools/mutate.js";
 import { ControllerClient, ControllerHttpError } from "./client.js";
+import { collectCatalog } from "../catalog/collect.js";
 
 // Bedrock can only initiate outbound HTTP requests, so controller actions are
 // delivered on a poll. Keep this short enough for responsive tool calls.
@@ -31,6 +34,10 @@ export class ControllerSession {
   private busy = false;
   private nextHeartbeatTick = 0;
   private nextHandshakeTick = 0;
+  private nextCatalogTick = 0;
+  private catalogSnapshot: ContentCatalogSnapshot | null = null;
+  private catalogPending = false;
+  private catalogBackoffTicks = 20;
   private readonly idempotency = createIdempotencyTracker();
 
   constructor(private readonly config: AddonConfig) {
@@ -66,6 +73,12 @@ export class ControllerSession {
         return;
       }
       this.sessionId = parsed.value.sessionId;
+      refreshAvailableBlockTypes();
+      this.catalogSnapshot = collectCatalog(this.config.serverId);
+      this.catalogPending = true;
+      this.nextCatalogTick = 0;
+      this.catalogBackoffTicks = 20;
+      await this.uploadCatalog();
       this.nextHandshakeTick = 0;
       notifyOperators(`Connected to controller (session ${this.sessionId})`);
     } catch (err) {
@@ -88,9 +101,25 @@ export class ControllerSession {
         await this.sendHeartbeat();
         this.nextHeartbeatTick = system.currentTick + HEARTBEAT_INTERVAL_TICKS;
       }
+      if (this.catalogPending && system.currentTick >= this.nextCatalogTick) await this.uploadCatalog();
       await this.pollOnce();
     } finally {
       this.busy = false;
+    }
+  }
+
+  private async uploadCatalog(): Promise<void> {
+    if (!this.sessionId || !this.catalogSnapshot) return;
+    try {
+      await this.client.postJson("/v1/bds/catalog", createCatalogSnapshot({ sessionId: this.sessionId, requestId: newId("req"), snapshot: this.catalogSnapshot }));
+      this.catalogPending = false;
+      this.catalogBackoffTicks = 20;
+    } catch (err) {
+      this.catalogPending = true;
+      this.nextCatalogTick = system.currentTick + this.catalogBackoffTicks;
+      this.catalogBackoffTicks = Math.min(this.catalogBackoffTicks * 2, 20 * 60);
+      // Catalog failure must not disconnect the established BDS session.
+      notifyOperators(`Catalog synchronization deferred: ${err instanceof Error ? err.message : "upload failed"}`);
     }
   }
 
@@ -129,6 +158,12 @@ export class ControllerSession {
       notifyOperators(`Bad poll response: ${parsed.error.message}`);
       return;
     }
+    if (parsed.value.catalogRefresh) {
+      this.catalogSnapshot = collectCatalog(this.config.serverId);
+      this.catalogPending = true;
+      this.nextCatalogTick = 0;
+      await this.uploadCatalog();
+    }
     if (!parsed.value.action) return;
     await this.handleAction(parsed.value.action);
   }
@@ -143,6 +178,8 @@ export class ControllerSession {
     }
     // Network failures also need a fresh handshake, but throttle retries while the controller is down.
     this.sessionId = null;
+    this.catalogPending = false;
+    this.catalogSnapshot = null;
     this.nextHandshakeTick = system.currentTick + RECONNECT_BACKOFF_TICKS;
   }
 

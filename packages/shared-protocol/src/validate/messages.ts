@@ -1,4 +1,5 @@
 import { isRecord, isNonEmptyString, isProtocolCompatible } from "../helpers.js";
+import { MAX_CATALOG_IDS } from "../constants.js";
 import type {
   ActionRequestMessage,
   ErrorMessage,
@@ -11,6 +12,7 @@ import type {
   PollResponseMessage,
   ProtocolErrorBody,
   ProtocolMessage,
+  CatalogSnapshotMessage,
 } from "../types.js";
 import {
   fail,
@@ -97,6 +99,17 @@ export function validatePoll(raw: unknown): ValidateResult<PollMessage> {
     return fail("INVALID_MESSAGE", "Expected poll");
   }
   return ok({ ...env.value, messageType: "poll" });
+}
+
+export function validateCatalogSnapshot(raw: unknown): ValidateResult<CatalogSnapshotMessage> {
+  const env = validateEnvelope(raw);
+  if (!env.ok) return env;
+  if (env.value.messageType !== "catalog_snapshot" || !isRecord(raw)) return fail("INVALID_MESSAGE", "Expected catalog_snapshot");
+  if (!isNonEmptyString(raw.serverId) || typeof raw.revision !== "number" || !Number.isInteger(raw.revision) || raw.revision < 1 || !isNonEmptyString(raw.generatedAt)) return fail("INVALID_CATALOG", "Invalid catalog metadata");
+  for (const key of ["blocks", "items", "entities"] as const) {
+    if (!Array.isArray(raw[key]) || raw[key].length > MAX_CATALOG_IDS || raw[key].some((id) => typeof id !== "string" || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(id))) return fail("INVALID_CATALOG", `${key} contains an invalid identifier or exceeds ${MAX_CATALOG_IDS} entries`);
+  }
+  return ok({ ...env.value, messageType: "catalog_snapshot", serverId: raw.serverId, revision: raw.revision, generatedAt: raw.generatedAt, blocks: raw.blocks as string[], items: raw.items as string[], entities: raw.entities as string[] });
 }
 
 export function validateActionRequest(raw: unknown): ValidateResult<ActionRequestMessage> {
@@ -186,11 +199,11 @@ export function validatePollResponse(raw: unknown): ValidateResult<PollResponseM
   }
   if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid poll_response");
   if (raw.action === null) {
-    return ok({ ...env.value, messageType: "poll_response", action: null });
+    return ok({ ...env.value, messageType: "poll_response", action: null, catalogRefresh: typeof raw.catalogRefresh === "boolean" ? raw.catalogRefresh : undefined });
   }
   const action = validateActionRequest(raw.action);
   if (!action.ok) return action;
-  return ok({ ...env.value, messageType: "poll_response", action: action.value });
+  return ok({ ...env.value, messageType: "poll_response", action: action.value, catalogRefresh: typeof raw.catalogRefresh === "boolean" ? raw.catalogRefresh : undefined });
 }
 
 export function validateOperationEvent(raw: unknown): ValidateResult<OperationEventMessage> {
@@ -306,6 +319,8 @@ export function validateProtocolMessage(raw: unknown): ValidateResult<ProtocolMe
       return validateHeartbeat(raw);
     case "error":
       return validateErrorMessage(raw);
+    case "catalog_snapshot":
+      return validateCatalogSnapshot(raw);
     default:
       return fail("INVALID_MESSAGE", "Unrecognized messageType");
   }

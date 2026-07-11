@@ -11,7 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@intelacraft/shared-protocol";
 import { buildSystemPrompt } from "../planner/prompts.js";
-import { createInspectionTools, createSubmitPlanTool } from "../planner/tools.js";
+import { createInspectionTools, createSubmitPlanTool, createCatalogTools } from "../planner/tools.js";
 import { clampThinkingLevel } from "../reasoning.js";
 import { sanitizeProviderId, writeModelsJson } from "./models-json.js";
 import { embedded, type EmbeddedPi } from "./store.js";
@@ -89,6 +89,7 @@ export async function initializePiSession(
     box.lastPlan = plan;
   });
   const inspectionTools = createInspectionTools(info.id);
+  const catalogTools = createCatalogTools(info.id);
 
   const loader = new DefaultResourceLoader({
     cwd: info.storagePath,
@@ -112,8 +113,8 @@ export async function initializePiSession(
     authStorage: auth,
     modelRegistry,
     noTools: "builtin",
-    tools: ["submit_plan", ...inspectionTools.map((tool) => tool.name)],
-    customTools: [submitPlan, ...inspectionTools],
+    tools: ["submit_plan", ...inspectionTools.map((tool) => tool.name), ...catalogTools.map((tool) => tool.name)],
+    customTools: [submitPlan, ...inspectionTools, ...catalogTools],
     resourceLoader: loader,
     sessionManager: SessionManager.create(info.storagePath),
     settingsManager,

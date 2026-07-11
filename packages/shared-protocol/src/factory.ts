@@ -12,6 +12,8 @@ import type {
   MessageEnvelope,
   OperationEventMessage,
   PollMessage,
+  CatalogSnapshotMessage,
+  ContentCatalogSnapshot,
 } from "./types.js";
 
 function nowIso(): string {
@@ -70,6 +72,10 @@ export function createHeartbeat(params: {
     serverId: params.serverId,
     health: params.health,
   };
+}
+
+export function createCatalogSnapshot(params: { sessionId: string; requestId: string; snapshot: ContentCatalogSnapshot }): CatalogSnapshotMessage {
+  return { ...createEnvelope("catalog_snapshot", params.sessionId, params.requestId), messageType: "catalog_snapshot", ...params.snapshot };
 }
 
 export function createActionRequest(params: {

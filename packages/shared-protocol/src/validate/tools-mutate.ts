@@ -18,8 +18,8 @@ export function validatePlaceBlocks(args: Record<string, unknown>): ValidateResu
     if (!entry || typeof entry !== "object") return fail("INVALID_ARGS", "each block must be an object");
     const position = parseVec3i((entry as Record<string, unknown>).position);
     const blockType = (entry as Record<string, unknown>).blockType;
-    if (!position || !isNonEmptyString(blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(blockType)) {
-      return fail("INVALID_ARGS", "each block needs integer position and namespaced blockType");
+    if (!position || !isNonEmptyString(blockType) || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(blockType)) {
+      return fail("INVALID_ARGS", "each block needs integer position and namespaced block id");
     }
     const key = `${position.x},${position.y},${position.z}`;
     if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
@@ -49,8 +49,8 @@ export function validateFillBlocks(args: Record<string, unknown>): ValidateResul
   if (volume > MAX_BUILD_VOLUME) {
     return fail("REGION_TOO_LARGE", `Build volume ${volume} exceeds max ${MAX_BUILD_VOLUME}`);
   }
-  if (!isNonEmptyString(args.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(args.blockType)) {
-    return fail("INVALID_ARGS", "blockType must be a namespaced Minecraft block id");
+  if (!isNonEmptyString(args.blockType) || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(args.blockType)) {
+    return fail("INVALID_ARGS", "blockType must be a namespaced block id");
   }
   const batchSize = args.batchSize === undefined ? DEFAULT_BATCH_SIZE : args.batchSize;
   if (!Number.isInteger(batchSize) || (batchSize as number) < 1 || (batchSize as number) > DEFAULT_BATCH_SIZE) {

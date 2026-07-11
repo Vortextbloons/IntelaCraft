@@ -53,6 +53,7 @@ import {
   loadTasks,
 } from "./task-store.js";
 import type { AiMode } from "@intelacraft/shared-protocol";
+import type { CatalogService } from "../catalog.js";
 import type {
   AgentContext,
   AgentTask,
@@ -74,6 +75,7 @@ export class AgentRuntime implements AgentContext {
   inspectionWaiters = new Map<string, import("./types.js").InspectionWaiter>();
   thinkingLevel: ThinkingLevel = "off";
   readonly mcp: AdvisoryMcpClient;
+  catalog?: CatalogService;
 
   constructor(readonly config: ControllerConfig) {
     this.mcp = new AdvisoryMcpClient(config.mcpUrl, config.mcpToken);

@@ -12,6 +12,10 @@ The protocol follows [Semantic Versioning](https://semver.org/):
 
 Compatibility rule: A major version mismatch between controller and behavior pack causes a handshake failure. Minor and patch differences are tolerated.
 
+## Live Content Catalog
+
+After a successful handshake, BDS posts a `catalog_snapshot` containing the live block, item, and entity identifiers. The controller keeps the snapshot in memory per BDS session and exposes local `catalog.search` and `catalog.resolve` operations to Pi; searches do not poll BDS or include the full catalog in model context. Catalog identifiers must use a namespaced form such as `minecraft:stone` or `my_pack:custom_block`. The add-on revalidates block identifiers immediately before mutation.
+
 ---
 
 ## Message Envelope
@@ -31,7 +35,7 @@ All protocol messages share a common envelope structure defined by `MessageEnvel
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | protocolVersion | string | yes | Protocol version (e.g. `"1.0.0"`) |
-| messageType | string | yes | One of the 8 message types |
+| messageType | string | yes | One of the 9 message types |
 | requestId | string | yes | Unique request identifier |
 | sessionId | string | yes | Session identifier |
 | timestamp | string | yes | ISO 8601 timestamp |

@@ -8,6 +8,9 @@ import {
   handleHandshake,
   handleHeartbeat,
   handlePoll,
+  handleCatalogSnapshot,
+  handleCatalogQuery,
+  handleCatalogRefresh,
 } from "./bds.js";
 import { handleEventStream, handleListEvents } from "./events.js";
 import { handleHealth } from "./health.js";
@@ -69,6 +72,10 @@ export async function handleRequest(
   if (method === "POST" && path === "/v1/bds/heartbeat") {
     return handleHeartbeat(ctx, req, res);
   }
+  if (method === "POST" && path === "/v1/bds/catalog") return handleCatalogSnapshot(ctx, req, res);
+  const catalogPath = /^\/v1\/catalog\/(search|resolve)$/.exec(path);
+  if (catalogPath && method === "POST") return handleCatalogQuery(ctx, req, res, catalogPath[1] as "search" | "resolve");
+  if (method === "POST" && path === "/v1/catalog/refresh") return handleCatalogRefresh(ctx, req, res);
   if (method === "POST" && path === "/v1/actions") {
     return handleEnqueueAction(ctx, req, res);
   }

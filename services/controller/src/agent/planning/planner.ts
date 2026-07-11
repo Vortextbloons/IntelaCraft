@@ -4,6 +4,7 @@ import {
   redactSecrets,
   refreshPiSessionProvider,
   setPiInspectionExecutor,
+  setPiCatalogExecutor,
   type AgentPlan,
   type ChatTurn,
   type PlanStreamEvent,
@@ -165,6 +166,18 @@ export async function planWithValidationRetry(
       ),
     );
   }
+  setPiCatalogExecutor(sessionId, async (operation, args) => {
+    const catalog = ctx.catalog;
+    const kind = args.kind as "block" | "item" | "entity";
+    if (!catalog || !catalog.status(input.bdsSessionId).available) {
+      const unavailable = operation === "search"
+        ? { catalogAvailable: false, kind, query: String(args.query ?? ""), matches: [], revision: 0 }
+        : { catalogAvailable: false, kind, id: String(args.id ?? ""), valid: false, suggestions: [] };
+      return { message: "The connected server has not synchronized its content catalog", result: { ...unavailable, message: "The connected server has not synchronized its content catalog." } };
+    }
+    if (operation === "search") return { message: "Catalog search complete", result: { catalogAvailable: true, ...catalog.search(input.bdsSessionId, kind, String(args.query ?? ""), typeof args.limit === "number" ? args.limit : 8) } };
+    return { message: "Catalog resolution complete", result: { catalogAvailable: true, ...catalog.resolve(input.bdsSessionId, kind, String(args.id ?? "")) } };
+  });
   let lastError: string | undefined = opts.validationError;
   // Pi may finish the prompt before its queued tool callback is dispatched.
   // Keep the bridge bound to this Pi session until a later planning turn

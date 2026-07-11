@@ -1,7 +1,7 @@
-// apps/bedrock-addon/src/main.ts
+// src/main.ts
 import { system as system3 } from "@minecraft/server";
 
-// apps/bedrock-addon/src/audit/notify.ts
+// src/audit/notify.ts
 import { PlayerPermissionLevel, world } from "@minecraft/server";
 function notifyOperators(message) {
   try {
@@ -15,7 +15,7 @@ function notifyOperators(message) {
   console.warn(`[IntelaCraft] ${message}`);
 }
 
-// apps/bedrock-addon/src/config.ts
+// src/config.ts
 import { secrets, variables } from "@minecraft/server-admin";
 var CONTROLLER_URL_VAR = "intelacraft:controller_url";
 var BDS_TOKEN_SECRET = "intelacraft:bds_token";
@@ -62,10 +62,10 @@ function loadConfig() {
   };
 }
 
-// apps/bedrock-addon/src/net/session.ts
+// src/net/session.ts
 import { system as system2, world as world7 } from "@minecraft/server";
 
-// packages/shared-protocol/src/constants.ts
+// ../../packages/shared-protocol/src/constants.ts
 var PROTOCOL_VERSION = "1.0.0";
 var PROTOCOL_MAJOR = 1;
 var MAX_REGION_VOLUME = 32 * 32 * 32;
@@ -81,7 +81,8 @@ var MESSAGE_TYPES = [
   "action_request",
   "operation_event",
   "heartbeat",
-  "error"
+  "error",
+  "catalog_snapshot"
 ];
 var RISK_CLASSES = ["read", "normal", "strong", "prohibited"];
 var PERMISSION_MODES = [
@@ -119,7 +120,7 @@ var DIMENSION_IDS = [
   "minecraft:the_end"
 ];
 
-// packages/shared-protocol/src/helpers.ts
+// ../../packages/shared-protocol/src/helpers.ts
 function parseProtocolVersion(version) {
   if (typeof version !== "string") return null;
   const parts = version.trim().split(".");
@@ -212,7 +213,7 @@ function createIdempotencyTracker(maxEntries = 2048) {
   };
 }
 
-// packages/shared-protocol/src/validate/common.ts
+// ../../packages/shared-protocol/src/validate/common.ts
 function fail(code, message, details) {
   return { ok: false, error: { code, message, details } };
 }
@@ -289,7 +290,7 @@ function validateEnvelope(raw) {
   });
 }
 
-// packages/shared-protocol/src/validate/tools-inspect.ts
+// ../../packages/shared-protocol/src/validate/tools-inspect.ts
 function validateHeightmap(args) {
   if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
   const region = parseRegion(args.region);
@@ -417,7 +418,7 @@ function validateInspectTags(args) {
   });
 }
 
-// packages/shared-protocol/src/validate/tools-mutate.ts
+// ../../packages/shared-protocol/src/validate/tools-mutate.ts
 function validatePlaceBlocks(args) {
   if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
   if (!Array.isArray(args.blocks) || args.blocks.length < 1 || args.blocks.length > MAX_PLACE_BLOCKS) {
@@ -429,8 +430,8 @@ function validatePlaceBlocks(args) {
     if (!entry || typeof entry !== "object") return fail("INVALID_ARGS", "each block must be an object");
     const position = parseVec3i(entry.position);
     const blockType = entry.blockType;
-    if (!position || !isNonEmptyString(blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(blockType)) {
-      return fail("INVALID_ARGS", "each block needs integer position and namespaced blockType");
+    if (!position || !isNonEmptyString(blockType) || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(blockType)) {
+      return fail("INVALID_ARGS", "each block needs integer position and namespaced block id");
     }
     const key = `${position.x},${position.y},${position.z}`;
     if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
@@ -456,8 +457,8 @@ function validateFillBlocks(args) {
   if (volume > MAX_BUILD_VOLUME) {
     return fail("REGION_TOO_LARGE", `Build volume ${volume} exceeds max ${MAX_BUILD_VOLUME}`);
   }
-  if (!isNonEmptyString(args.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(args.blockType)) {
-    return fail("INVALID_ARGS", "blockType must be a namespaced Minecraft block id");
+  if (!isNonEmptyString(args.blockType) || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(args.blockType)) {
+    return fail("INVALID_ARGS", "blockType must be a namespaced block id");
   }
   const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
   if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) {
@@ -484,7 +485,7 @@ function validateAdminRunCommand(args) {
   });
 }
 
-// packages/shared-protocol/src/validate/tools.ts
+// ../../packages/shared-protocol/src/validate/tools.ts
 function validateToolArguments(toolName, args) {
   switch (toolName) {
     case "inspect.server_status":
@@ -530,7 +531,7 @@ function validateToolArguments(toolName, args) {
   }
 }
 
-// packages/shared-protocol/src/validate/messages.ts
+// ../../packages/shared-protocol/src/validate/messages.ts
 function validateHandshakeAck(raw) {
   const env = validateEnvelope(raw);
   if (!env.ok) return env;
@@ -642,14 +643,14 @@ function validatePollResponse(raw) {
   }
   if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid poll_response");
   if (raw.action === null) {
-    return ok({ ...env.value, messageType: "poll_response", action: null });
+    return ok({ ...env.value, messageType: "poll_response", action: null, catalogRefresh: typeof raw.catalogRefresh === "boolean" ? raw.catalogRefresh : void 0 });
   }
   const action = validateActionRequest(raw.action);
   if (!action.ok) return action;
-  return ok({ ...env.value, messageType: "poll_response", action: action.value });
+  return ok({ ...env.value, messageType: "poll_response", action: action.value, catalogRefresh: typeof raw.catalogRefresh === "boolean" ? raw.catalogRefresh : void 0 });
 }
 
-// packages/shared-protocol/src/factory.ts
+// ../../packages/shared-protocol/src/factory.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
@@ -685,6 +686,9 @@ function createHeartbeat(params) {
     health: params.health
   };
 }
+function createCatalogSnapshot(params) {
+  return { ...createEnvelope("catalog_snapshot", params.sessionId, params.requestId), messageType: "catalog_snapshot", ...params.snapshot };
+}
 function createOperationEvent(params) {
   return {
     ...createEnvelope("operation_event", params.sessionId, params.requestId),
@@ -705,7 +709,7 @@ function newId(prefix = "id") {
   return `${prefix}_${Date.now().toString(36)}_${seq.toString(36)}`;
 }
 
-// apps/bedrock-addon/src/tools/inspect/meta.ts
+// src/tools/inspect/meta.ts
 import { world as world2 } from "@minecraft/server";
 function inspectScoreboard(args) {
   const scoreboard = world2.scoreboard;
@@ -780,7 +784,7 @@ function inspectTags(args) {
   };
 }
 
-// apps/bedrock-addon/src/tools/inspect/server.ts
+// src/tools/inspect/server.ts
 import { EquipmentSlot, PlayerPermissionLevel as PlayerPermissionLevel2, world as world3 } from "@minecraft/server";
 function inspectServerStatus(args) {
   const players = world3.getPlayers();
@@ -898,7 +902,7 @@ function inspectPlayer(args) {
   };
 }
 
-// apps/bedrock-addon/src/tools/inspect/helpers.ts
+// src/tools/inspect/helpers.ts
 import { world as world4 } from "@minecraft/server";
 function getDimension(id) {
   return world4.getDimension(id);
@@ -913,7 +917,7 @@ function surfaceAt(dimension, x, z, fromY, toY) {
   return null;
 }
 
-// apps/bedrock-addon/src/tools/inspect/terrain.ts
+// src/tools/inspect/terrain.ts
 function inspectHeightmap(args, includeSurface) {
   const d = getDimension(args.dimension);
   const samples = [];
@@ -1037,7 +1041,7 @@ function inspectSurface(args) {
   return inspectHeightmap(args, true);
 }
 
-// apps/bedrock-addon/src/tools/inspect/world.ts
+// src/tools/inspect/world.ts
 import { world as world5 } from "@minecraft/server";
 var DEFAULT_GAME_RULE_KEYS = [
   "doDayLightCycle",
@@ -1183,7 +1187,7 @@ function inspectEntities(args) {
   };
 }
 
-// apps/bedrock-addon/src/tools/inspect/index.ts
+// src/tools/inspect/index.ts
 function executeInspectTool(action) {
   const toolName = action.toolName;
   try {
@@ -1227,10 +1231,22 @@ function executeInspectTool(action) {
   }
 }
 
-// apps/bedrock-addon/src/tools/mutate.ts
-import { system, world as world6 } from "@minecraft/server";
+// src/tools/mutate.ts
+import { BlockTypes, system, world as world6 } from "@minecraft/server";
 var cancelled = /* @__PURE__ */ new Set();
 var emergencyDisabled = false;
+var availableBlockTypes;
+function refreshAvailableBlockTypes() {
+  try {
+    availableBlockTypes = new Set(BlockTypes.getAll().map((type) => type.id));
+  } catch {
+    availableBlockTypes = /* @__PURE__ */ new Set();
+  }
+}
+function validBlockType(id) {
+  if (!availableBlockTypes) refreshAvailableBlockTypes();
+  return availableBlockTypes?.has(id) === true;
+}
 function isEmergencyDisabled() {
   return emergencyDisabled;
 }
@@ -1314,6 +1330,10 @@ function executeAdminCommand(action, allowlist) {
 function startFill(action, emit, protectedRegions = []) {
   const args = action.arguments;
   const total = regionVolume(args.region);
+  if (!validBlockType(args.blockType)) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Unknown block type", error: { code: "UNKNOWN_BLOCK", message: `Block type '${args.blockType}' is not available` } });
+    return;
+  }
   if (emergencyDisabled) {
     emit({
       state: "failed",
@@ -1424,6 +1444,11 @@ function startFill(action, emit, protectedRegions = []) {
 }
 function startPlaceBlocks(action, emit, protectedRegions = []) {
   const args = action.arguments;
+  const invalid = args.blocks.find((block) => !validBlockType(block.blockType));
+  if (invalid) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: args.blocks.length, message: "Unknown block type", error: { code: "UNKNOWN_BLOCK", message: `Block type '${invalid.blockType}' is not available` } });
+    return;
+  }
   const total = args.blocks.length;
   if (emergencyDisabled) {
     emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Emergency disabled", error: { code: "EMERGENCY_DISABLED", message: "Mutations disabled" } });
@@ -1470,7 +1495,7 @@ function startPlaceBlocks(action, emit, protectedRegions = []) {
   system.runJob(job());
 }
 
-// apps/bedrock-addon/src/net/client.ts
+// src/net/client.ts
 import {
   HttpHeader,
   HttpRequest,
@@ -1518,7 +1543,15 @@ var ControllerClient = class {
   }
 };
 
-// apps/bedrock-addon/src/net/session.ts
+// src/catalog/collect.ts
+import { BlockTypes as BlockTypes2, EntityTypes, ItemTypes } from "@minecraft/server";
+var revision = 0;
+function collectCatalog(serverId) {
+  const ids = (types) => types.map((type) => type.id).filter(Boolean).sort();
+  return { revision: ++revision, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), serverId, blocks: ids(BlockTypes2.getAll()), items: ids(ItemTypes.getAll()), entities: ids(EntityTypes.getAll()) };
+}
+
+// src/net/session.ts
 var POLL_INTERVAL_TICKS = 10;
 var HEARTBEAT_INTERVAL_TICKS = 120;
 var RECONNECT_BACKOFF_TICKS = 100;
@@ -1530,6 +1563,10 @@ var ControllerSession = class {
     this.busy = false;
     this.nextHeartbeatTick = 0;
     this.nextHandshakeTick = 0;
+    this.nextCatalogTick = 0;
+    this.catalogSnapshot = null;
+    this.catalogPending = false;
+    this.catalogBackoffTicks = 20;
     this.idempotency = createIdempotencyTracker();
     this.client = new ControllerClient(config.controllerUrl, config.authToken);
   }
@@ -1559,6 +1596,12 @@ var ControllerSession = class {
         return;
       }
       this.sessionId = parsed.value.sessionId;
+      refreshAvailableBlockTypes();
+      this.catalogSnapshot = collectCatalog(this.config.serverId);
+      this.catalogPending = true;
+      this.nextCatalogTick = 0;
+      this.catalogBackoffTicks = 20;
+      await this.uploadCatalog();
       this.nextHandshakeTick = 0;
       notifyOperators(`Connected to controller (session ${this.sessionId})`);
     } catch (err) {
@@ -1580,9 +1623,23 @@ var ControllerSession = class {
         await this.sendHeartbeat();
         this.nextHeartbeatTick = system2.currentTick + HEARTBEAT_INTERVAL_TICKS;
       }
+      if (this.catalogPending && system2.currentTick >= this.nextCatalogTick) await this.uploadCatalog();
       await this.pollOnce();
     } finally {
       this.busy = false;
+    }
+  }
+  async uploadCatalog() {
+    if (!this.sessionId || !this.catalogSnapshot) return;
+    try {
+      await this.client.postJson("/v1/bds/catalog", createCatalogSnapshot({ sessionId: this.sessionId, requestId: newId("req"), snapshot: this.catalogSnapshot }));
+      this.catalogPending = false;
+      this.catalogBackoffTicks = 20;
+    } catch (err) {
+      this.catalogPending = true;
+      this.nextCatalogTick = system2.currentTick + this.catalogBackoffTicks;
+      this.catalogBackoffTicks = Math.min(this.catalogBackoffTicks * 2, 20 * 60);
+      notifyOperators(`Catalog synchronization deferred: ${err instanceof Error ? err.message : "upload failed"}`);
     }
   }
   async sendHeartbeat() {
@@ -1623,6 +1680,12 @@ var ControllerSession = class {
       notifyOperators(`Bad poll response: ${parsed.error.message}`);
       return;
     }
+    if (parsed.value.catalogRefresh) {
+      this.catalogSnapshot = collectCatalog(this.config.serverId);
+      this.catalogPending = true;
+      this.nextCatalogTick = 0;
+      await this.uploadCatalog();
+    }
     if (!parsed.value.action) return;
     await this.handleAction(parsed.value.action);
   }
@@ -1635,6 +1698,8 @@ var ControllerSession = class {
       return;
     }
     this.sessionId = null;
+    this.catalogPending = false;
+    this.catalogSnapshot = null;
     this.nextHandshakeTick = system2.currentTick + RECONNECT_BACKOFF_TICKS;
   }
   async handleAction(rawAction) {
@@ -1736,7 +1801,7 @@ var ControllerSession = class {
   }
 };
 
-// apps/bedrock-addon/src/main.ts
+// src/main.ts
 console.warn("[IntelaCraft] Script loading (Phase 2 safe mutations)");
 system3.run(() => {
   const config = loadConfig();

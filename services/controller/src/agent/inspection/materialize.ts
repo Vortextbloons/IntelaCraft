@@ -64,6 +64,18 @@ export function materializeAction(
   }
   const valid = validateToolArguments(tool, args);
   if (!valid.ok) throw new Error(`Invalid model tool ${step.toolName}: ${valid.error.message}`);
+  if (ctx.catalog && !ctx.catalog.status(input.bdsSessionId).available && (tool === "world.fill_blocks" || tool === "world.place_blocks")) {
+    throw new Error("Content catalog is not synchronized; block mutations are unavailable until catalog sync completes");
+  }
+  if (ctx.catalog && tool === "world.fill_blocks") {
+    const resolved = ctx.catalog.resolve(input.bdsSessionId, "block", String(valid.value.blockType));
+    if (!resolved.valid) throw new Error(`Unknown live block '${String(valid.value.blockType)}'${resolved.suggestions?.length ? `. Suggestions: ${resolved.suggestions.join(", ")}` : ""}`);
+  }
+  if (ctx.catalog && tool === "world.place_blocks") {
+    for (const block of valid.value.blocks as Array<{ blockType: string }>) {
+      if (!ctx.catalog.resolve(input.bdsSessionId, "block", block.blockType).valid) throw new Error(`Unknown live block '${block.blockType}'`);
+    }
+  }
   const draft = createActionRequest({
     sessionId: input.bdsSessionId,
     requestId: newId("req"),

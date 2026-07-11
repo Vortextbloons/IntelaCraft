@@ -1,4 +1,4 @@
-import { system, world } from "@minecraft/server";
+import { BlockTypes, system, world } from "@minecraft/server";
 import {
   MAX_BUILD_VOLUME,
   MAX_ROLLBACK_BLOCKS,
@@ -25,6 +25,20 @@ export type AdminCommandAllowlist = Record<
 
 const cancelled = new Set<string>();
 let emergencyDisabled = false;
+let availableBlockTypes: Set<string> | undefined;
+
+export function refreshAvailableBlockTypes(): void {
+  try {
+    availableBlockTypes = new Set(BlockTypes.getAll().map((type) => type.id));
+  } catch {
+    availableBlockTypes = new Set();
+  }
+}
+
+function validBlockType(id: string): boolean {
+  if (!availableBlockTypes) refreshAvailableBlockTypes();
+  return availableBlockTypes?.has(id) === true;
+}
 
 export function isEmergencyDisabled() {
   return emergencyDisabled;
@@ -122,6 +136,7 @@ export function startFill(
 ): void {
   const args = action.arguments as unknown as FillBlocksArgs;
   const total = regionVolume(args.region);
+  if (!validBlockType(args.blockType)) { emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Unknown block type", error: { code: "UNKNOWN_BLOCK", message: `Block type '${args.blockType}' is not available` } }); return; }
   if (emergencyDisabled) {
     emit({
       state: "failed",
@@ -244,6 +259,8 @@ export function startFill(
 
 export function startPlaceBlocks(action: ActionRequestMessage, emit: (e: MutationEvent) => void, protectedRegions: Array<{ dimension: string; region: FillBlocksArgs["region"] }> = []): void {
   const args = action.arguments as unknown as PlaceBlocksArgs;
+  const invalid = args.blocks.find((block) => !validBlockType(block.blockType));
+  if (invalid) { emit({ state: "failed", completedWork: 0, totalEstimatedWork: args.blocks.length, message: "Unknown block type", error: { code: "UNKNOWN_BLOCK", message: `Block type '${invalid.blockType}' is not available` } }); return; }
   const total = args.blocks.length;
   if (emergencyDisabled) { emit({ state:"failed", completedWork:0,totalEstimatedWork:total,message:"Emergency disabled",error:{code:"EMERGENCY_DISABLED",message:"Mutations disabled"} }); return; }
   const protectedHit = args.blocks.some(({ position }) => protectedRegions.some((p) => p.dimension === args.dimension && position.x >= p.region.min.x && position.x <= p.region.max.x && position.y >= p.region.min.y && position.y <= p.region.max.y && position.z >= p.region.min.z && position.z <= p.region.max.z));

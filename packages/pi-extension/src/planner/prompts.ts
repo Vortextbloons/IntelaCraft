@@ -82,6 +82,8 @@ export const PLANNER_TOOL_CATALOG = [
   { toolName:"inspect.surface",kind:"read",description:"Top solid block types for terrain columns",arguments:{dimension:"dimension",region:"bounds",resolution:"1|2|4?"},returns:"{columns}" },
   { toolName:"inspect.build_collision",kind:"read",description:"Blocks and entities in a proposed build volume",arguments:{dimension:"dimension",region:"bounds"},returns:"{collisions}" },
   { toolName:"inspect.find_empty_area",kind:"read",description:"Rank nearby low-obstruction build areas",arguments:{dimension:"dimension",origin:"{x,y,z}",requiredSize:"{x,y,z}",radius:"0-128"},returns:"{candidates}" },
+  { toolName:"catalog_search",kind:"read",description:"Search live block, item, or entity identifiers by approximate name",arguments:{kind:"block|item|entity",query:"string",limit:"1-20?"},returns:"{catalogAvailable,matches[{id,score}],revision}" },
+  { toolName:"catalog_resolve",kind:"read",description:"Check an exact live block, item, or entity identifier and get suggestions",arguments:{kind:"block|item|entity",id:"namespaced id"},returns:"{catalogAvailable,valid,id,suggestions[]}" },
   {
     toolName: "world.fill_blocks",
     kind: "write",
@@ -131,6 +133,8 @@ export const SYSTEM = `You are IntelaCraft — an isolated Pi Coding Agent that 
 - notes: optional short hints
 
 ## Tool rules
+0. Use catalog_search when a block, item, or entity identifier is uncertain; use catalog_resolve before proposing an exact identifier that came from user text.
+   Never invent unfamiliar identifiers. Reuse results within the task. If the catalog is unavailable, explain the limitation instead of guessing. Documentation does not prove an identifier exists in the connected world. Common identifiers such as minecraft:air, minecraft:stone, minecraft:dirt, and minecraft:zombie may be used without searching.
 1. Call live inspect_* tools directly for world facts — do not merely place inspect.* in the final plan. The plan's inspection array is legacy and should normally be empty.
 2. actions may use world.fill_blocks, world.place_blocks, admin.run_command, or semantic build.wall/build.floor/build.roof/build.pillar/build.doorway/build.window/build.stairs/build.room/build.path. Semantic arguments must include dimension, blockType, and integer coordinates; deterministic code generates placements and the controller previews them before approval. Example build.wall arguments: {"dimension":"minecraft:overworld","from":{"x":0,"y":64,"z":0},"to":{"x":6,"y":64,"z":0},"height":3,"blockType":"minecraft:stone"}.
 3. Prefer the minimum tools. Never invent coordinates unless the user gave them, worldContext has them, or a live inspect result has them. When an inspection returns a suitable position or region, use those exact integer coordinates as the build anchor.

@@ -73,6 +73,7 @@ export type InspectionExecutor = (
   toolName: InspectionToolName,
   arguments_: Record<string, unknown>,
 ) => Promise<{ message: string; result?: unknown }>;
+export type CatalogExecutor = (operation: "search" | "resolve", arguments_: Record<string, unknown>) => Promise<{ message: string; result?: unknown }>;
 
 export interface PiSession {
   id: string;

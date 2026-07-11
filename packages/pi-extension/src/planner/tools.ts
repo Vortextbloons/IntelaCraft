@@ -1,6 +1,6 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { inspectionExecutors } from "../session/store.js";
+import { inspectionExecutors, catalogExecutors } from "../session/store.js";
 import type { AgentPlan, InspectionToolName } from "../types.js";
 import { normalizePlan } from "./normalize.js";
 
@@ -19,15 +19,15 @@ const planStepSchema = Type.Object({
 
 const mutationStepSchema = Type.Union([
   ...[
-    ["build.wall", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
-    ["build.floor", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
-    ["build.roof", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }) })],
-    ["build.pillar", Type.Object({ dimension: dimensionSchema, position: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }) })],
-    ["build.doorway", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
-    ["build.window", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
-    ["build.stairs", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
-    ["build.room", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
-    ["build.path", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.wall", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.floor", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.roof", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }) })],
+    ["build.pillar", Type.Object({ dimension: dimensionSchema, position: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }) })],
+    ["build.doorway", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.window", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.stairs", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.room", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.path", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
   ].map(([toolName, argumentSchema]) => Type.Object({
     id: Type.Optional(Type.String({ minLength: 1 })),
     toolName: Type.Literal(toolName as string), arguments: argumentSchema, summary: Type.String({ minLength: 1 }),
@@ -129,7 +129,6 @@ export function createSubmitPlanTool(onPlan: (plan: AgentPlan) => void) {
     },
   });
 }
-
 export function createInspectionTool(
   sessionId: string,
   name: InspectionToolName,
@@ -170,7 +169,6 @@ export function createInspectionTool(
     },
   });
 }
-
 export function createInspectionTools(sessionId: string) {
   return [
     createInspectionTool(sessionId, "inspect.server_status", "Player count, names, and world basics.", Type.Object({ includeDimensions: Type.Optional(Type.Boolean()) })),
@@ -194,4 +192,26 @@ export function createInspectionTools(sessionId: string) {
     createInspectionTool(sessionId, "inspect.build_collision", "Check a proposed volume for collisions.", Type.Object({ dimension: dimensionSchema, region: regionSchema })),
     createInspectionTool(sessionId, "inspect.find_empty_area", "Find nearby low-obstruction build areas.", Type.Object({ dimension: dimensionSchema, origin: positionSchema, requiredSize: positionSchema, radius: Type.Integer({ minimum: 0, maximum: 128 }), maxSlope: Type.Optional(Type.Number({ minimum: 0 })) })),
   ];
+}
+
+export function createCatalogTools(sessionId: string) {
+  const run = (operation: "search" | "resolve", params: unknown) => {
+    const executor = catalogExecutors.get(sessionId);
+    if (!executor) {
+      const args = params as Record<string, unknown>;
+      return Promise.resolve({
+        message: "The connected server has not synchronized its content catalog.",
+        result: operation === "search"
+          ? { catalogAvailable: false, kind: args.kind, query: args.query, matches: [], revision: 0 }
+          : { catalogAvailable: false, kind: args.kind, id: args.id, valid: false, suggestions: [] },
+      });
+    }
+    return executor(operation, params as Record<string, unknown>);
+  };
+  const tool = (name: string, operation: "search" | "resolve", parameters: ReturnType<typeof Type.Object>) => defineTool({
+    name, label: operation === "search" ? "catalog.search" : "catalog.resolve", description: operation === "search" ? "Search live Bedrock content identifiers." : "Resolve an exact live Bedrock content identifier.", promptSnippet: name, parameters,
+    async execute(_id, params) { const result = await run(operation, params); return { content: [{ type: "text" as const, text: JSON.stringify(result.result ?? result.message).slice(0, 4000) }], details: result }; },
+  });
+  const kind = Type.Union([Type.Literal("block"), Type.Literal("item"), Type.Literal("entity")]);
+  return [tool("catalog_search", "search", Type.Object({ kind, query: Type.String({ minLength: 1 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) })), tool("catalog_resolve", "resolve", Type.Object({ kind, id: Type.String({ minLength: 3 }) }))];
 }

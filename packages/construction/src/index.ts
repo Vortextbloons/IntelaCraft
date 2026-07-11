@@ -42,7 +42,7 @@ export function buildRoof(args: BuildRoofArgs): GeneratedBuild {
 export function materialTotals(blocks: BlockPlacement[]): Record<string,number> { return blocks.reduce<Record<string,number>>((totals,b)=>{totals[b.blockType]=(totals[b.blockType]??0)+1;return totals;},{}); }
 
 export type SemanticToolName = "build.wall"|"build.floor"|"build.pillar"|"build.doorway"|"build.window"|"build.roof"|"build.stairs"|"build.room"|"build.path";
-const BLOCK_ID = /^minecraft:[a-z0-9_.-]+$/;
+const BLOCK_ID = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/;
 function isVec(value: unknown): value is Vec3i { return !!value && typeof value === "object" && Number.isInteger((value as Vec3i).x) && Number.isInteger((value as Vec3i).y) && Number.isInteger((value as Vec3i).z); }
 /** Strict shared semantic-tool validation, used before both preview and execution. */
 export function validateSemanticArguments(tool: SemanticToolName, args: Record<string, unknown>): string[] {

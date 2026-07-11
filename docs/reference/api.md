@@ -55,9 +55,82 @@ System health check. **No authentication required.**
 }
 ```
 
+The response also includes `catalog`, with aggregate counts and per-session availability:
+
+```json
+{
+  "available": true,
+  "counts": { "blocks": 1250, "items": 1480, "entities": 190 },
+  "sessions": [
+    { "sessionId": "session-abc", "available": true, "revision": 1,
+      "generatedAt": "2026-07-11T08:00:00.000Z",
+      "counts": { "blocks": 1250, "items": 1480, "entities": 190 } }
+  ]
+}
+```
+
 ---
 
 ## BDS Communication
+
+### POST /v1/bds/catalog
+
+Upload the live block, item, and entity identifiers after the BDS handshake. The request is an authenticated `catalog_snapshot` protocol message. The controller validates namespaced IDs, applies a maximum of 100,000 IDs per category, and replaces only the catalog for the supplied session.
+
+**Response** `200 OK`
+
+```json
+{ "ok": true, "revision": 1 }
+```
+
+### POST /v1/catalog/refresh
+
+Request an explicit catalog refresh for a connected BDS session. The add-on collects and uploads a new snapshot on its next poll.
+
+**Request**
+
+```json
+{ "sessionId": "session-abc" }
+```
+
+**Response** `202 Accepted`
+
+```json
+{ "ok": true, "sessionId": "session-abc" }
+```
+
+### POST /v1/catalog/search
+
+Search the locally synchronized catalog. `sessionId` is required when more than one BDS session exists.
+
+**Request**
+
+```json
+{ "sessionId": "session-abc", "kind": "block", "query": "dark oak stairs", "limit": 8 }
+```
+
+**Response** `200 OK`
+
+```json
+{ "kind": "block", "query": "dark oak stairs", "revision": 1,
+  "matches": [{ "id": "minecraft:dark_oak_stairs", "score": 1 }] }
+```
+
+### POST /v1/catalog/resolve
+
+Resolve an exact identifier against the selected live catalog.
+
+**Request**
+
+```json
+{ "sessionId": "session-abc", "kind": "block", "id": "minecraft:stone" }
+```
+
+**Response** `200 OK`
+
+```json
+{ "valid": true, "kind": "block", "id": "minecraft:stone" }
+```
 
 ### POST /v1/bds/handshake
 

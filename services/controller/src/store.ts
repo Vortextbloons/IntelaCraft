@@ -38,6 +38,7 @@ export class SessionStore {
     const existingSessionId = this.sessionsByServer.get(session.serverId);
     if (existingSessionId && existingSessionId !== session.sessionId) {
       this.sessions.delete(existingSessionId);
+      // Catalog ownership is maintained by the controller context and is replaced by the new handshake.
       this.queues.delete(existingSessionId);
       this.queueHeads.delete(existingSessionId);
     }
@@ -135,6 +136,20 @@ export class SessionStore {
 
   listSessions(): BdsSession[] {
     return [...this.sessions.values()];
+  }
+
+  expireStale(staleMs: number, now = Date.now()): string[] {
+    const expired: string[] = [];
+    for (const session of this.sessions.values()) {
+      const last = session.lastHeartbeatAt ? Date.parse(session.lastHeartbeatAt) : Date.parse(session.connectedAt);
+      if (Number.isFinite(last) && now - last > staleMs) {
+        expired.push(session.sessionId);
+        this.sessions.delete(session.sessionId);
+        if (this.sessionsByServer.get(session.serverId) === session.sessionId) this.sessionsByServer.delete(session.serverId);
+        this.queues.delete(session.sessionId); this.queueHeads.delete(session.sessionId); this.emergencyDisabled.delete(session.sessionId);
+      }
+    }
+    return expired;
   }
 }
 

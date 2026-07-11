@@ -7,6 +7,7 @@ import { createApp } from "./app.js";
 import { loadControllerEnv } from "./env.js";
 import { EventStore, SessionStore, SettingsStore } from "./store.js";
 import { AgentRuntime } from "./agent.js";
+import { CatalogService } from "./catalog.js";
 
 function main(): void {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -18,10 +19,12 @@ function main(): void {
   const activity = new ActivityStore(config.auditPath, config.auditRetentionDays);
   const audit = new AuditLog(config.auditPath, activity);
   const settings = new SettingsStore(config.defaultPermissionMode);
+  const catalog = new CatalogService();
   const agent = new AgentRuntime(config);
+  agent.catalog = catalog;
   agent.bindSettings(settings);
   agent.setThinkingLevel(settings.get().preferredThinkingLevel);
-  const server = createApp({ config, sessions, events, audit, activity, settings, agent });
+  const server = createApp({ config, sessions, events, audit, activity, settings, agent, catalog });
 
   server.listen(config.port, "127.0.0.1", () => {
     const base = `http://127.0.0.1:${config.port}`;

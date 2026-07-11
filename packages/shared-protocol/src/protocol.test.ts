@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   createActionRequest,
   createHandshake,
+  createCatalogSnapshot,
   createIdempotencyTracker,
   isProtocolCompatible,
   normalizeRegion,
@@ -13,6 +14,8 @@ import {
   validateActionRequest,
   validateEnvelope,
   validateHandshake,
+  validateCatalogSnapshot,
+  validateProtocolMessage,
   validateToolArguments,
 } from "./index.js";
 
@@ -92,6 +95,43 @@ describe("handshake", () => {
     if (!result.ok) {
       assert.equal(result.error.code, "PROTOCOL_INCOMPATIBLE");
     }
+  });
+});
+
+describe("catalog snapshot", () => {
+  it("validates a catalog snapshot and protocol dispatch", () => {
+    const message = createCatalogSnapshot({
+      sessionId: "s1",
+      requestId: "r1",
+      snapshot: {
+        revision: 1,
+        generatedAt: new Date().toISOString(),
+        serverId: "bds-1",
+        blocks: ["minecraft:stone", "my_pack:custom_block"],
+        items: ["minecraft:stick"],
+        entities: ["minecraft:zombie"],
+      },
+    });
+    assert.equal(validateCatalogSnapshot(message).ok, true);
+    assert.equal(validateProtocolMessage(message).ok, true);
+  });
+
+  it("rejects malformed and oversized identifiers", () => {
+    const message = createCatalogSnapshot({
+      sessionId: "s1",
+      requestId: "r1",
+      snapshot: {
+        revision: 1,
+        generatedAt: new Date().toISOString(),
+        serverId: "bds-1",
+        blocks: ["not-namespaced"],
+        items: [],
+        entities: [],
+      },
+    });
+    const result = validateCatalogSnapshot(message);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, "INVALID_CATALOG");
   });
 });
 

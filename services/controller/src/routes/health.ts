@@ -5,6 +5,7 @@ import type { AppContext } from "./types.js";
 
 export function handleHealth(ctx: AppContext, res: ServerResponse): void {
   const now = Date.now();
+  for (const sessionId of ctx.sessions.expireStale(ctx.config.heartbeatStaleMs, now)) ctx.catalog?.clear(sessionId);
   const sessions = ctx.sessions.listSessions().map((s) => {
     const ageMs = s.lastHeartbeatAt ? now - Date.parse(s.lastHeartbeatAt) : null;
     const connected =
@@ -21,11 +22,22 @@ export function handleHealth(ctx: AppContext, res: ServerResponse): void {
       emergencyDisabled: ctx.sessions.isEmergencyDisabled(s.sessionId),
     };
   });
+  const catalogStatuses = sessions.map((session) => ctx.catalog?.status(session.sessionId) ?? { available: false, counts: { blocks: 0, items: 0, entities: 0 } });
+  const catalog = {
+    available: sessions.length > 0 && catalogStatuses.every((status) => status.available),
+    counts: catalogStatuses.reduce((total, status) => ({
+      blocks: total.blocks + status.counts.blocks,
+      items: total.items + status.counts.items,
+      entities: total.entities + status.counts.entities,
+    }), { blocks: 0, items: 0, entities: 0 }),
+    sessions: catalogStatuses.map((status, index) => ({ sessionId: sessions[index].sessionId, ...status })),
+  };
   sendJson(res, 200, {
     ok: true,
     protocolVersion: PROTOCOL_VERSION,
     bdsConnected: sessions.some((s) => s.connected),
     sessions,
+    catalog,
     settings: ctx.settings.get(),
     agent: ctx.agent
       ? {

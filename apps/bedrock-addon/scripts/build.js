@@ -5,8 +5,8 @@ const ROOT = resolve(__dirname, "..");
 const REPO_ROOT = resolve(ROOT, "../..");
 
 esbuild.buildSync({
-  absWorkingDir: REPO_ROOT,
-  entryPoints: [resolve(ROOT, "src/main.ts")],
+  absWorkingDir: ROOT,
+  entryPoints: ["./src/main.ts"],
   bundle: true,
   format: "esm",
   target: "es2020",
@@ -17,12 +17,7 @@ esbuild.buildSync({
     "@minecraft/server-net",
     "@minecraft/server-admin",
   ],
-  alias: {
-    "@intelacraft/shared-protocol": resolve(
-      REPO_ROOT,
-      "packages/shared-protocol/src/index.ts",
-    ),
-  },
+  alias: { "@intelacraft/shared-protocol": resolve(REPO_ROOT, "packages/shared-protocol/src/index.ts") },
 });
 
 console.log("Built behavior_pack/scripts/main.js");

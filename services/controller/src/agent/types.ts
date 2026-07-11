@@ -14,6 +14,7 @@ import type { BuildPreview, WorldSnapshot } from "@intelacraft/construction";
 import type { ControllerConfig } from "../config.js";
 import type { SessionStore, SettingsStore } from "../store.js";
 import type { AuditLog } from "../audit.js";
+import type { CatalogService } from "../catalog.js";
 
 export type AgentTaskState =
   | "submitted"
@@ -96,6 +97,7 @@ export interface AgentContext {
   inspectionWaiters: Map<string, InspectionWaiter>;
   thinkingLevel: ThinkingLevel;
   mcp: AdvisoryMcpClient;
+  catalog?: CatalogService;
   verifyAfterMutations(taskId: string, sessions: SessionStore, audit: AuditLog): Promise<void>;
 }
 

@@ -1,8 +1,45 @@
+<div align="center">
+
+<img src="App-Logo.png" alt="IntelaCraft Logo" width="200" />
+
 # IntelaCraft
 
-An AI-assisted control system for Minecraft Bedrock Dedicated Server. You describe what you want in natural language, an AI agent inspects your world and proposes a plan, you approve or reject it, and a behavior pack executes the changes safely on your server.
+**AI-assisted control for Minecraft Bedrock Dedicated Server**
 
-## How it works
+Describe what you want in natural language. The AI inspects your world, proposes a plan, and executes changes safely — with your approval.
+
+[![Protocol](https://img.shields.io/badge/Protocol-v1.0.0-blue?style=for-the-badge&labelColor=000000)](docs/reference/protocol.md)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520-green?style=for-the-badge&labelColor=000000)](https://nodejs.org)
+[![Minecraft](https://img.shields.io/badge/Minecraft-BDS-orange?style=for-the-badge&labelColor=000000)](https://www.minecraft.net/en-us/download/server/bedrock)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&labelColor=000000)](LICENSE)
+
+</div>
+
+---
+
+- [x] **Natural language control** — Describe tasks in plain English, the AI figures out the Minecraft commands
+- [x] **Human-in-the-loop** — Every world change requires your explicit approval before execution
+- [x] **Ask / Agent modes** — Toggle between read-only Ask mode and full Agent mode with tools
+- [x] **Safety by default** — Protected regions, volume limits, emergency kill switch, full audit trail
+- [x] **Live world inspection** — Query players, blocks, entities, time, weather, scoreboards, and more
+- [x] **Real-time streaming** — Watch the AI think and execute in real-time through the web panel
+
+---
+
+## Quick Start
+
+**Prerequisites:** Node.js 20+, Minecraft BDS, and an AI provider API key (OpenAI, Groq, Ollama, or any OpenAI-compatible endpoint)
+
+```powershell
+npm run setup     # install deps, build, create .env
+npm run dev       # start controller at http://127.0.0.1:8787
+```
+
+Open the webview, enter your bearer token, connect an AI provider, and start talking to your server.
+
+---
+
+## How It Works
 
 ```
 You: "Build a 10x10 stone house at 0,64,0"
@@ -26,25 +63,7 @@ You: "Build a 10x10 stone house at 0,64,0"
    Results stream back in real-time
 ```
 
-## Key features
-
-- **Natural language control** — Describe tasks in plain English, the AI figures out the Minecraft commands
-- **Human-in-the-loop** — Every world change requires your explicit approval before execution
-- **Ask / Agent modes** — Toggle between read-only Ask mode (inspections and questions only) and Agent mode (tool-using, can propose changes)
-- **Safety by default** — Protected regions, volume limits, emergency kill switch, full audit trail
-- **Live world inspection** — The AI can query players, blocks, entities, time, weather, scoreboards, and more
-- **Real-time streaming** — Watch the AI think and execute in real-time through the web panel
-- **Multiple permission modes** — From observe-only to trusted administrator, you choose the safety level
-- **Provider flexible** — Works with OpenAI, Groq, Ollama, OpenRouter, or any OpenAI-compatible API
-
-## Quick start
-
-```powershell
-npm run setup     # install deps, build, create .env
-npm run dev       # start controller at http://127.0.0.1:8787
-```
-
-Open the webview, enter your bearer token, connect an AI provider, and start talking to your server.
+---
 
 ## Commands
 
@@ -52,39 +71,32 @@ Open the webview, enter your bearer token, connect an AI provider, and start tal
 |---------|-------------|
 | `npm run setup` | Install + build + create `.env` |
 | `npm run dev` | Start controller (serves webview + API) |
-| `npm run build` | Build all packages |
-| `npm run deploy` | Deploy packs to BDS |
-| `npm run health` | Check controller/BDS status |
-| `npm test` | Run tests |
+| `npm run build` | Build all packages in dependency order |
+| `npm run test` | Run workspace tests |
+| `npm run typecheck` | Type-check all workspaces |
+| `npm run health` | Check controller/BDS connectivity |
+| `npm run deploy` | Deploy behavior/resource packs to BDS |
+| `npm run configure-bds` | Write BDS config from `.env` |
+| `npm run inspect` | Inspect running system state |
+| `npm run combine-docs` | Regenerate `docs/ALL.md` |
+| `npm run agent-eval` | Run agent evaluation cases |
+| `npm run load-smoke` | Run load smoke tests |
+| `npm run start` | Alias for `dev` |
 
-## Safety model
+---
 
-| Mode | Behavior |
-|------|----------|
-| `observe_only` | Read-only — AI can inspect but never modify |
-| `confirm_every_change` | Every mutation needs your approval (default) |
-| `allow_low_risk` | Small changes auto-approved, large changes need approval |
-| `builder_region` | Builds restricted to configured regions |
-| `trusted_administrator` | All changes trusted (use with caution) |
+## Provider Support
 
-## Architecture
+IntelaCraft works with any OpenAI-compatible `/v1/chat/completions` endpoint.
 
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│   Webview   │────▶│  Controller  │◀────│  AI Agent (Pi)  │
-│  (React)    │     │  (Node.js)   │     │  (LLM + tools)  │
-└─────────────┘     └──────┬───────┘     └─────────────────┘
-                           │
-                    ┌──────▼───────┐
-                    │  BDS Addon   │
-                    │  (Minecraft) │
-                    └──────────────┘
-```
+| Provider | Base URL | Recommended Models | Notes |
+|----------|----------|-------------------|-------|
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o`, `gpt-4o-mini` | Full reasoning/thinking support |
+| **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant` | Free tier, fastest inference |
+| **Ollama** | `http://localhost:11434/v1` | `llama3.3`, `mistral`, `codellama` | No API key needed, fully local |
+| **OpenRouter** | `https://openrouter.ai/api/v1` | `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514` | Multi-provider aggregator |
 
-- **Webview** — React control panel served by the controller
-- **Controller** — HTTP server bridging everything, enforces policy
-- **AI Agent** — Plans actions using an LLM, inspects the live world
-- **BDS Addon** — Behavior pack that executes changes inside Minecraft
+---
 
 ## Documentation
 
@@ -95,8 +107,16 @@ Full documentation is in [`docs/INDEX.md`](docs/INDEX.md).
 | Architecture | [docs/architecture/](docs/architecture/overview.md) |
 | API Reference | [docs/reference/api.md](docs/reference/api.md) |
 | Configuration | [docs/reference/configuration.md](docs/reference/configuration.md) |
+| Protocol | [docs/reference/protocol.md](docs/reference/protocol.md) |
 | Development | [docs/guides/development.md](docs/guides/development.md) |
 | Deployment | [docs/guides/deployment.md](docs/guides/deployment.md) |
+| Provider Setup | [docs/guides/provider-setup.md](docs/guides/provider-setup.md) |
 | Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
 
 Or combine all docs into one file: `npm run combine-docs`
+
+---
+
+## License
+
+[MIT License](LICENSE) — Copyright (c) 2026 IntelaCraft Contributors

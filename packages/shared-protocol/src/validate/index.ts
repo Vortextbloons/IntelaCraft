@@ -18,6 +18,7 @@ export {
   validateOperationEvent,
   validateHeartbeat,
   validateErrorMessage,
+  validateCatalogSnapshot,
   validateProtocolMessage,
 } from "./messages.js";
 export { validateToolArguments } from "./tools.js";

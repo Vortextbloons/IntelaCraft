@@ -9,6 +9,7 @@ import {
   createActionRequest,
   createHandshake,
   createHeartbeat,
+  createCatalogSnapshot,
   createOperationEvent,
   createPoll,
   newId,
@@ -17,6 +18,7 @@ import { ActivityStore } from "./activity.js";
 import { AuditLog } from "./audit.js";
 import { createApp } from "./app.js";
 import { EventStore, SessionStore, SettingsStore } from "./store.js";
+import { CatalogService } from "./catalog.js";
 
 const token = "test-token";
 const dir = mkdtempSync(join(tmpdir(), "intelacraft-audit-"));
@@ -46,6 +48,7 @@ const ctx = {
   audit: new AuditLog(auditPath, activity),
   activity,
   settings: new SettingsStore("confirm_every_change"),
+  catalog: new CatalogService(),
 };
 
 const server = createApp(ctx);
@@ -99,6 +102,15 @@ describe("controller handshake and poll", () => {
     assert.equal(hs.json.ok, true);
     assert.equal(hs.json.acceptedProtocolVersion, PROTOCOL_VERSION);
     const sessionId = hs.json.sessionId as string;
+    const catalog = await api("/v1/bds/catalog", {
+      method: "POST",
+      body: JSON.stringify(createCatalogSnapshot({ sessionId, requestId: newId("req"), snapshot: { revision: 1, generatedAt: new Date().toISOString(), serverId: "bds-test", blocks: ["minecraft:stone", "my_pack:custom_block"], items: ["minecraft:stick"], entities: ["minecraft:zombie"] } })),
+    });
+    assert.equal(catalog.status, 200);
+
+    const search = await api("/v1/catalog/search", { method: "POST", body: JSON.stringify({ sessionId, kind: "block", query: "custom block" }) });
+    assert.equal(search.status, 200);
+    assert.equal(search.json.matches[0].id, "my_pack:custom_block");
 
     const enqueue = await api("/v1/actions", {
       method: "POST",
@@ -157,11 +169,13 @@ describe("controller handshake and poll", () => {
     const health = await api("/v1/health", { method: "GET", auth: false });
     assert.equal(health.status, 200);
     assert.equal(health.json.bdsConnected, true);
+    assert.equal(health.json.catalog.available, true);
 
     const audit = readFileSync(auditPath, "utf8");
     assert.match(audit, /handshake/);
     assert.match(audit, /action_enqueued/);
     assert.match(audit, /operation_event/);
+    assert.match(audit, /catalog_sync/);
   });
 
   it("rejects duplicate idempotency keys", async () => {

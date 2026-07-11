@@ -7,6 +7,7 @@ import {
   validateActionRequest,
   validateHandshake,
   validateHeartbeat,
+  validateCatalogSnapshot,
   validateOperationEvent,
   validatePoll,
   type ActionRequestMessage,
@@ -38,6 +39,8 @@ export async function handleHandshake(
 
   const sessionId = newId("session");
   const now = new Date().toISOString();
+  const previous = ctx.sessions.getSessionByServer(parsed.value.serverId);
+  if (previous) ctx.catalog?.clear(previous.sessionId);
   ctx.sessions.upsertSession({
     sessionId,
     serverId: parsed.value.serverId,
@@ -86,6 +89,7 @@ export async function handlePoll(
     ...createEnvelope("poll_response", parsed.value.sessionId, parsed.value.requestId),
     messageType: "poll_response",
     action,
+    catalogRefresh: ctx.catalog?.consumeRefresh(parsed.value.sessionId) ?? false,
   });
 }
 
@@ -146,6 +150,42 @@ export async function handleHeartbeat(
     return;
   }
   sendJson(res, 200, { ok: true });
+}
+
+export async function handleCatalogSnapshot(ctx: AppContext, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req); const parsed = validateCatalogSnapshot(body);
+  if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return; }
+  const session = ctx.sessions.getSession(parsed.value.sessionId);
+  if (!session || session.serverId !== parsed.value.serverId) { sendJson(res, 401, { error: { code: "NO_SESSION", message: "Unknown or expired session" } }); return; }
+  let replaced = false;
+  try { replaced = ctx.catalog?.replace(session.sessionId, parsed.value) ?? false; } catch (error) { sendJson(res, 413, { error: { code: "CATALOG_TOO_LARGE", message: error instanceof Error ? error.message : "Catalog too large" } }); return; }
+  ctx.audit.append({ type: "catalog_sync", sessionId: session.sessionId, serverId: session.serverId, revision: parsed.value.revision, counts: { blocks: parsed.value.blocks.length, items: parsed.value.items.length, entities: parsed.value.entities.length }, replaced });
+  sendJson(res, 200, { ok: true, revision: parsed.value.revision });
+}
+
+export async function handleCatalogQuery(ctx: AppContext, req: IncomingMessage, res: ServerResponse, operation: "search" | "resolve"): Promise<void> {
+  const body = await readJson(req) as Record<string, unknown>;
+  const sessionId = typeof body.sessionId === "string" ? body.sessionId : undefined;
+  const kind = body.kind; if (!sessionId || !["block", "item", "entity"].includes(String(kind))) { sendJson(res, 400, { error: { code: "INVALID_CATALOG_QUERY", message: "sessionId and kind are required" } }); return; }
+  if (!ctx.sessions.getSession(sessionId)) { sendJson(res, 401, { error: { code: "NO_SESSION", message: "Unknown or expired session" } }); return; }
+  if (operation === "search") {
+    if (typeof body.query !== "string") { sendJson(res, 400, { error: { code: "INVALID_CATALOG_QUERY", message: "query is required" } }); return; }
+    sendJson(res, 200, ctx.catalog?.search(sessionId, kind as any, body.query, typeof body.limit === "number" ? body.limit : 8) ?? { kind, query: body.query, matches: [], revision: 0 });
+  } else {
+    if (typeof body.id !== "string") { sendJson(res, 400, { error: { code: "INVALID_CATALOG_QUERY", message: "id is required" } }); return; }
+    sendJson(res, 200, ctx.catalog?.resolve(sessionId, kind as any, body.id) ?? { valid: false, kind, id: body.id, suggestions: [] });
+  }
+}
+
+export async function handleCatalogRefresh(ctx: AppContext, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req) as Record<string, unknown>;
+  const sessionId = typeof body.sessionId === "string" ? body.sessionId : undefined;
+  if (!sessionId || !ctx.sessions.getSession(sessionId)) {
+    sendJson(res, 400, { error: { code: "INVALID_CATALOG_REFRESH", message: "A valid sessionId is required" } });
+    return;
+  }
+  ctx.catalog?.requestRefresh(sessionId);
+  sendJson(res, 202, { ok: true, sessionId });
 }
 
 export async function handleEnqueueAction(

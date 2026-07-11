@@ -1,4 +1,4 @@
-export type { ThinkingLevel, DiscoveredModel, ReasoningCapabilities } from "./types.js";
+export type { ThinkingLevel, DiscoveredModel, ReasoningCapabilities, CatalogExecutor } from "./types.js";
 export { THINKING_LEVELS } from "./types.js";
 
 export type {
@@ -18,6 +18,7 @@ export { getReasoningCapabilities, clampThinkingLevel } from "./reasoning.js";
 export { discoverModels, testProvider } from "./provider-client.js";
 
 export { setPiInspectionExecutor } from "./session/store.js";
+export { setPiCatalogExecutor } from "./session/store.js";
 export {
   createPiSession,
   initializePiSession,

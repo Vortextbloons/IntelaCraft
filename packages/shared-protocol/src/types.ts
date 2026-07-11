@@ -6,6 +6,7 @@ import type {
   RiskClass,
   ThinkingLevel,
   ToolName,
+  CatalogKind,
 } from "./constants.js";
 
 export interface Vec3i {
@@ -48,6 +49,22 @@ export interface HandshakeAckMessage extends MessageEnvelope {
   error?: ProtocolErrorBody;
 }
 
+export interface ContentCatalogSnapshot {
+  revision: number;
+  generatedAt: string;
+  serverId: string;
+  blocks: string[];
+  items: string[];
+  entities: string[];
+}
+export interface CatalogSnapshotMessage extends MessageEnvelope, ContentCatalogSnapshot {
+  messageType: "catalog_snapshot";
+}
+export interface CatalogSearchRequest { kind: CatalogKind; query: string; limit?: number; }
+export interface CatalogSearchMatch { id: string; score: number; }
+export interface CatalogSearchResult { kind: CatalogKind; query: string; matches: CatalogSearchMatch[]; revision: number; }
+export interface CatalogResolveResult { valid: boolean; kind: CatalogKind; id: string; suggestions?: string[]; }
+
 export interface PollMessage extends MessageEnvelope {
   messageType: "poll";
 }
@@ -55,6 +72,7 @@ export interface PollMessage extends MessageEnvelope {
 export interface PollResponseMessage extends MessageEnvelope {
   messageType: "poll_response";
   action: ActionRequestMessage | null;
+  catalogRefresh?: boolean;
 }
 
 export interface ApprovalRecord {
@@ -135,7 +153,8 @@ export type ProtocolMessage =
   | ActionRequestMessage
   | OperationEventMessage
   | HeartbeatMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | CatalogSnapshotMessage;
 
 export interface InspectBlockArgs {
   dimension: DimensionId;
