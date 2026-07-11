@@ -64,6 +64,13 @@ export function classify(
     region?: RegionBounds;
     blockType?: string;
   };
+  if (action.toolName === "world.place_blocks") {
+    const blocks = (action.arguments as { dimension?: string; blocks?: Array<{ position: { x:number;y:number;z:number }; blockType:string }> }).blocks;
+    const dimension = (action.arguments as { dimension?: string }).dimension;
+    if (!blocks?.length || blocks.length > MAX_BUILD_VOLUME) return { risk: "prohibited", reason: "outside placement limits" };
+    if (config.protectedRegions.some((p) => p.dimension === dimension && blocks.some((b) => b.position.x >= p.region.min.x && b.position.x <= p.region.max.x && b.position.y >= p.region.min.y && b.position.y <= p.region.max.y && b.position.z >= p.region.min.z && b.position.z <= p.region.max.z))) return { risk:"prohibited", reason:"protected region" };
+    return { risk: blocks.length > STRONG_BUILD_VOLUME || blocks.some((b) => b.blockType === "minecraft:air") ? "strong" : "normal", reason:"bounded detailed build" };
+  }
   if (!args.region || regionVolume(args.region) > MAX_BUILD_VOLUME) {
     return { risk: "prohibited", reason: "outside build limits" };
   }
@@ -89,7 +96,7 @@ export function approvalRequired(
   if (risk === "read") return false;
   if (risk === "strong") return true;
   if (mode === "trusted_administrator") return false;
-  if (mode === "allow_low_risk" && action.toolName === "world.fill_blocks") {
+  if (mode === "allow_low_risk" && (action.toolName === "world.fill_blocks" || action.toolName === "world.place_blocks")) {
     const region = (action.arguments as { region?: RegionBounds }).region;
     if (region && regionVolume(region) <= 256) return false;
   }

@@ -14,11 +14,31 @@ Compatibility rule: A major version mismatch between controller and behavior pac
 
 ---
 
-## Message Types
+## Message Envelope
 
-All messages are JSON objects with a required `type` field identifying the message kind.
+All protocol messages share a common envelope structure defined by `MessageEnvelope`:
+
+```json
+{
+  "protocolVersion": "1.0.0",
+  "messageType": "handshake",
+  "requestId": "req-abc",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:00Z"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| protocolVersion | string | yes | Protocol version (e.g. `"1.0.0"`) |
+| messageType | string | yes | One of the 8 message types |
+| requestId | string | yes | Unique request identifier |
+| sessionId | string | yes | Session identifier |
+| timestamp | string | yes | ISO 8601 timestamp |
 
 ---
+
+## Message Types
 
 ### HandshakeMessage
 
@@ -28,24 +48,21 @@ Initiates the session. BDS sends this on startup or reconnect.
 
 ```json
 {
-  "type": "handshake",
-  "serverId": "my-server",
-  "version": "1.0.0",
   "protocolVersion": "1.0.0",
-  "bdsVersion": "1.21.0",
-  "mods": ["script-api-v2"],
-  "capabilities": ["fill_blocks", "cancel"]
+  "messageType": "handshake",
+  "requestId": "req-001",
+  "sessionId": "",
+  "timestamp": "2026-07-10T12:00:00Z",
+  "serverId": "my-bds",
+  "clientProtocolVersion": "1.0.0",
+  "capabilities": ["fill_blocks", "place_blocks", "cancel"]
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| type | string | yes | `"handshake"` |
 | serverId | string | yes | Unique server identifier |
-| version | string | yes | BDS add-on version |
-| protocolVersion | string | yes | Protocol version this client speaks |
-| bdsVersion | string | yes | Minecraft BDS version |
-| mods | string[] | no | Loaded mods/capabilities |
+| clientProtocolVersion | string | yes | Protocol version the client speaks |
 | capabilities | string[] | no | Tools this server supports |
 
 ---
@@ -54,29 +71,27 @@ Initiates the session. BDS sends this on startup or reconnect.
 
 **Direction:** Controller → BDS
 
-Acknowledges the handshake and returns session state.
+Acknowledges the handshake and establishes the session.
 
 ```json
 {
-  "type": "handshake_ack",
-  "sessionId": "session-uuid",
-  "actions": [],
-  "permissions": {
-    "mode": "confirm_every_change",
-    "protectedRegions": [],
-    "builderRegions": []
-  },
-  "protocolVersion": "1.0.0"
+  "protocolVersion": "1.0.0",
+  "messageType": "handshake_ack",
+  "requestId": "req-001",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:00Z",
+  "acceptedProtocolVersion": "1.0.0",
+  "serverId": "my-bds",
+  "ok": true
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| type | string | `"handshake_ack"` |
-| sessionId | string | Session identifier for this connection |
-| actions | Action[] | Any pending actions queued for execution |
-| permissions | object | Current permission configuration |
-| protocolVersion | string | Controller's protocol version |
+| acceptedProtocolVersion | string | Controller's protocol version |
+| serverId | string | Echoed server ID |
+| ok | boolean | Whether handshake succeeded |
+| error | object? | Error details when `ok` is false |
 
 ---
 
@@ -84,21 +99,19 @@ Acknowledges the handshake and returns session state.
 
 **Direction:** BDS → Controller
 
-Periodic poll for pending actions. BDS sends this at the configured poll interval.
+Periodic poll for pending actions. BDS sends this every 2 seconds (40 ticks).
 
 ```json
 {
-  "type": "poll",
-  "sessionId": "session-uuid",
-  "lastPollAt": "2026-07-10T12:00:00Z"
+  "protocolVersion": "1.0.0",
+  "messageType": "poll",
+  "requestId": "req-002",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:02Z"
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| type | string | yes | `"poll"` |
-| sessionId | string | yes | Active session ID |
-| lastPollAt | ISO 8601 | no | Timestamp of last successful poll |
+No additional fields beyond the envelope.
 
 ---
 
@@ -106,76 +119,89 @@ Periodic poll for pending actions. BDS sends this at the configured poll interva
 
 **Direction:** Controller → BDS
 
-Response to a poll with queued actions.
+Returns a single pending action (or null) for the addon to execute.
 
 ```json
 {
-  "type": "poll_response",
-  "actions": [
-    {
-      "id": "action-uuid",
-      "type": "fill_blocks",
-      "tool": "world.fill_blocks",
-      "args": {
-        "from": { "x": 0, "y": 64, "z": 0 },
-        "to": { "x": 10, "y": 70, "z": 10 },
-        "block": "stone"
-      },
-      "risk": "normal",
-      "approval": "approved",
-      "requestedAt": "2026-07-10T12:00:00Z",
-      "idempotencyKey": "key-123"
-    }
-  ],
-  "rejected": ["action-uuid-rejected"],
-  "emergencyDisabled": false
+  "protocolVersion": "1.0.0",
+  "messageType": "poll_response",
+  "requestId": "req-002",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:02Z",
+  "action": {
+    "protocolVersion": "1.0.0",
+    "messageType": "action_request",
+    "requestId": "req-003",
+    "sessionId": "session-abc",
+    "timestamp": "2026-07-10T12:00:01Z",
+    "actionId": "action-001",
+    "idempotencyKey": "idem-001",
+    "toolName": "world.fill_blocks",
+    "arguments": {
+      "dimension": "minecraft:overworld",
+      "region": { "min": { "x": 0, "y": 64, "z": 0 }, "max": { "x": 10, "y": 70, "z": 10 } },
+      "blockType": "minecraft:stone"
+    },
+    "actor": "controller",
+    "permissionMode": "confirm_every_change",
+    "risk": "normal",
+    "expiresAt": "2026-07-10T12:05:01Z"
+  }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| type | string | `"poll_response"` |
-| actions | Action[] | Actions approved for execution |
-| rejected | string[] | Action IDs that were rejected |
-| emergencyDisabled | boolean | Whether emergency disable is active |
+| action | ActionRequestMessage \| null | Single pending action, or null if queue is empty |
 
 ---
 
 ### ActionRequestMessage
 
-**Direction:** Controller → AI Agent (internal)
+**Direction:** Controller → BDS (via poll response)
 
-Internal message representing a proposed action awaiting approval or execution.
+Represents a single action awaiting execution. Contains the full context needed for the addon to execute or reject the action.
 
 ```json
 {
-  "type": "action_request",
-  "actionId": "action-uuid",
-  "tool": "world.fill_blocks",
-  "args": {
-    "from": { "x": 0, "y": 64, "z": 0 },
-    "to": { "x": 10, "y": 70, "z": 10 },
-    "block": "stone"
+  "protocolVersion": "1.0.0",
+  "messageType": "action_request",
+  "requestId": "req-003",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:01Z",
+  "actionId": "action-001",
+  "idempotencyKey": "idem-001",
+  "toolName": "world.fill_blocks",
+  "arguments": {
+    "dimension": "minecraft:overworld",
+    "region": { "min": { "x": 0, "y": 64, "z": 0 }, "max": { "x": 10, "y": 70, "z": 10 } },
+    "blockType": "minecraft:stone"
   },
+  "actor": "controller",
+  "permissionMode": "confirm_every_change",
   "risk": "normal",
-  "approval": "pending",
-  "idempotencyKey": "key-123",
-  "requestedAt": "2026-07-10T12:00:00Z",
-  "taskId": "task-uuid"
+  "approval": {
+    "approvalId": "apr-001",
+    "approvedAt": "2026-07-10T12:00:00Z",
+    "approvedBy": "webview",
+    "payloadHash": "a1b2c3d4..."
+  },
+  "expiresAt": "2026-07-10T12:05:01Z"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| type | string | `"action_request"` |
 | actionId | string | Unique action identifier |
-| tool | string | Tool name from the tool catalog |
-| args | object | Tool-specific arguments |
-| risk | string | Risk class (read/normal/strong/prohibited) |
-| approval | string | Approval state: pending/approved/rejected |
-| idempotencyKey | string | Deduplication key (optional) |
-| requestedAt | ISO 8601 | When the action was created |
-| taskId | string | Parent task ID (if applicable) |
+| idempotencyKey | string | Deduplication key |
+| toolName | ToolName | Tool to execute |
+| arguments | object | Tool-specific arguments |
+| actor | string | Who created the action |
+| permissionMode | PermissionMode | Active permission mode |
+| risk | RiskClass | Classified risk level |
+| approval | ApprovalRecord? | Approval with SHA-256 payload hash |
+| noApprovalReason | string? | Why approval was skipped |
+| expiresAt | string | ISO 8601 expiration time |
 
 ---
 
@@ -187,53 +213,30 @@ Reports progress or completion of an operation.
 
 ```json
 {
-  "type": "operation_event",
-  "actionId": "action-uuid",
-  "sessionId": "session-uuid",
-  "status": "progress",
-  "progress": {
-    "blocksPlaced": 64,
-    "totalBlocks": 128,
-    "percentComplete": 50
-  }
-}
-```
-
-```json
-{
-  "type": "operation_event",
-  "actionId": "action-uuid",
-  "sessionId": "session-uuid",
-  "status": "success",
-  "result": {
-    "blocksPlaced": 128,
-    "duration": 450
-  }
-}
-```
-
-```json
-{
-  "type": "operation_event",
-  "actionId": "action-uuid",
-  "sessionId": "session-uuid",
-  "status": "error",
-  "error": {
-    "code": "REGION_PROTECTED",
-    "message": "Target region overlaps a protected area"
-  }
+  "protocolVersion": "1.0.0",
+  "messageType": "operation_event",
+  "requestId": "req-004",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:03Z",
+  "operationId": "op-001",
+  "actionId": "action-001",
+  "state": "running",
+  "completedWork": 64,
+  "totalEstimatedWork": 128,
+  "message": "Placed 64 of 128 blocks"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| type | string | `"operation_event"` |
+| operationId | string | Operation identifier |
 | actionId | string | Action being reported on |
-| sessionId | string | Active session ID |
-| status | string | `progress`, `success`, or `error` |
-| progress | object | Progress details (when status=progress) |
-| result | object | Final result (when status=success) |
-| error | ErrorObject | Error details (when status=error) |
+| state | OperationState | `running`, `completed`, `partially_completed`, `failed`, `cancelled` |
+| completedWork | number | Work completed so far |
+| totalEstimatedWork | number | Total estimated work |
+| message | string | Human-readable progress message |
+| result | unknown? | Final result data (when completed) |
+| error | ProtocolErrorBody? | Error details (when failed) |
 
 ---
 
@@ -241,33 +244,32 @@ Reports progress or completion of an operation.
 
 **Direction:** BDS → Controller
 
-Periodic health report. BDS sends this at the configured heartbeat interval.
+Periodic health report. BDS sends this every 3rd poll (6 seconds).
 
 ```json
 {
-  "type": "heartbeat",
-  "sessionId": "session-uuid",
-  "timestamp": "2026-07-10T12:00:00Z",
-  "players": 3,
-  "tps": 20,
-  "memory": {
-    "usedMB": 1024,
-    "maxMB": 4096
-  },
-  "uptime": 3600
+  "protocolVersion": "1.0.0",
+  "messageType": "heartbeat",
+  "requestId": "req-005",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:06Z",
+  "serverId": "my-bds",
+  "health": {
+    "ok": true,
+    "playerCount": 3,
+    "tick": 142000,
+    "emergencyDisabled": false
+  }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| type | string | `"heartbeat"` |
-| sessionId | string | Active session ID |
-| timestamp | ISO 8601 | Current server time |
-| players | number | Connected player count |
-| tps | number | Ticks per second (target: 20) |
-| memory.usedMB | number | Current memory usage |
-| memory.maxMB | number | Maximum allocated memory |
-| uptime | number | Seconds since server start |
+| serverId | string | Server identifier |
+| health.ok | boolean | Overall health status |
+| health.playerCount | number | Connected player count |
+| health.tick | number? | Current server tick |
+| health.emergencyDisabled | boolean? | Whether emergency disable is active |
 
 ---
 
@@ -279,59 +281,79 @@ Generic error notification.
 
 ```json
 {
-  "type": "error",
-  "code": "VALIDATION_ERROR",
-  "message": "Invalid block type: diamond_blockk",
-  "source": "action-uuid",
-  "recoverable": true
+  "protocolVersion": "1.0.0",
+  "messageType": "error",
+  "requestId": "req-006",
+  "sessionId": "session-abc",
+  "timestamp": "2026-07-10T12:00:00Z",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid block type: diamond_blockk"
+  }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| type | string | `"error"` |
-| code | string | Error code constant |
-| message | string | Human-readable description |
-| source | string | Related entity ID (action, task, etc.) |
-| recoverable | boolean | Whether the operation can be retried |
+| error.code | string | Error code constant |
+| error.message | string | Human-readable description |
+| error.details | unknown? | Additional error context |
 
 ---
 
 ## Tool Catalog
 
-The agent has access to 14 tools split into two categories: inspection (read-only) and mutation (world-modifying).
+The agent has access to 18 tools split into two categories: inspection (read-only) and mutation (world-modifying).
 
-### Inspection Tools (10)
+### Inspection Tools (13)
 
 These tools are always safe, read-only operations with risk class `read`.
 
 #### inspect.server_status
 
-Returns server health, player count, TPS, and memory.
+Returns server health and player list.
 
 ```json
-{
-  "tool": "inspect.server_status",
-  "args": {}
-}
+{ "toolName": "inspect.server_status", "arguments": { "includeDimensions": true } }
 ```
 
-**Returns:** `{ players: number, tps: number, memory: object, uptime: number }`
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| includeDimensions | boolean | no | Include per-dimension info |
+
+**Returns:** `{ playerCount: number, players: PlayerInfo[], dimensions?: object }`
 
 ---
 
 #### inspect.players
 
-Lists all online players with their positions and states.
+Lists online players with optional name filter.
 
 ```json
-{
-  "tool": "inspect.players",
-  "args": {}
-}
+{ "toolName": "inspect.players", "arguments": { "nameFilter": "Steve" } }
 ```
 
-**Returns:** `{ players: [{ name: string, position: Vec3, dimension: string, gamemode: string }] }`
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| nameFilter | string | no | Case-insensitive name substring filter |
+
+**Returns:** `{ players: [{ name, position, dimension, gamemode }] }`
+
+---
+
+#### inspect.player
+
+Detailed info for a single online player.
+
+```json
+{ "toolName": "inspect.player", "arguments": { "name": "Steve" } }
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| name | string | yes | Exact gamertag of an online player |
+
+**Returns:** `{ name, position, dimension, gamemode, health, inventory, armor, effects }`
 
 ---
 
@@ -340,13 +362,15 @@ Lists all online players with their positions and states.
 Reads block data at a specific position.
 
 ```json
-{
-  "tool": "inspect.block",
-  "args": { "position": { "x": 0, "y": 64, "z": 0 } }
-}
+{ "toolName": "inspect.block", "arguments": { "dimension": "minecraft:overworld", "position": { "x": 0, "y": 64, "z": 0 } } }
 ```
 
-**Returns:** `{ block: string, data: number, entities: Entity[] }`
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | yes | Target dimension |
+| position | Vec3i | yes | Block coordinates |
+
+**Returns:** `{ dimension, position, typeId, isAir, isLiquid, isWaterlogged }`
 
 ---
 
@@ -355,88 +379,53 @@ Reads block data at a specific position.
 Scans blocks in a rectangular region.
 
 ```json
-{
-  "tool": "inspect.region",
-  "args": {
-    "from": { "x": 0, "y": 64, "z": 0 },
-    "to": { "x": 10, "y": 70, "z": 10 }
-  }
-}
+{ "toolName": "inspect.region", "arguments": { "dimension": "minecraft:overworld", "region": { "min": { "x": 0, "y": 64, "z": 0 }, "max": { "x": 10, "y": 70, "z": 10 } }, "countsOnly": true } }
 ```
 
-**Returns:** `{ blocks: [{ position: Vec3, block: string }], count: number }`
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | yes | Target dimension |
+| region | RegionBounds | yes | Bounding box (`min`/`max`) |
+| countsOnly | boolean | no | Return per-block type counts only (default: true) |
 
-**Validation:** Region volume must not exceed `MAX_REGION_VOLUME` (32768 blocks).
+**Returns:** `{ dimension, region, blockCounts: Record<string, number>, totalBlocks: number }`
+
+**Validation:** Region volume must not exceed `MAX_REGION_VOLUME` (32,768 blocks).
 
 ---
 
-#### inspect.time
+#### inspect.world_state
 
-Returns the current in-game time.
-
-```json
-{
-  "tool": "inspect.time",
-  "args": {}
-}
-```
-
-**Returns:** `{ time: number, daylight: boolean }`
-
----
-
-#### inspect.weather
-
-Returns the current weather state.
+Returns time, weather, and game rules for a dimension.
 
 ```json
-{
-  "tool": "inspect.weather",
-  "args": {}
-}
+{ "toolName": "inspect.world_state", "arguments": { "dimension": "minecraft:overworld", "rules": ["doDaylightCycle", "doWeatherCycle"] } }
 ```
 
-**Returns:** `{ weather: string, duration: number }`
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | no | Target dimension (default: overworld) |
+| rules | string[] | no | Specific rule names (default: common rules) |
 
----
-
-#### inspect.game_rules
-
-Returns all game rule values.
-
-```json
-{
-  "tool": "inspect.game_rules",
-  "args": {}
-}
-```
-
-**Returns:** `{ rules: { [key: string]: string | number | boolean } }`
+**Returns:** `{ dimension, timeOfDay, absoluteTime, day, weather, rules: Record<string, unknown> }`
 
 ---
 
 #### inspect.entities
 
-Lists entities in a region.
+Lists entities in a dimension with optional type filter.
 
 ```json
-{
-  "tool": "inspect.entities",
-  "args": {
-    "from": { "x": 0, "y": 64, "z": 0 },
-    "to": { "x": 10, "y": 70, "z": 10 },
-    "type": "minecraft:zombie"
-  }
-}
+{ "toolName": "inspect.entities", "arguments": { "dimension": "minecraft:overworld", "typeFilter": "zombie", "limit": 32 } }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| from | Vec3 | yes | Region start corner |
-| to | Vec3 | yes | Region end corner |
-| type | string | no | Filter by entity type |
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | yes | Target dimension |
+| typeFilter | string | no | Case-insensitive entity type filter |
+| limit | number | no | Soft cap (default 64, max 128) |
 
-**Returns:** `{ entities: [{ id: string, type: string, position: Vec3, nameTag: string }] }`
+**Returns:** `{ entities: [{ id, typeId, position, nameTag }], count: number }`
 
 ---
 
@@ -445,139 +434,284 @@ Lists entities in a region.
 Returns scoreboard objectives and entries.
 
 ```json
-{
-  "tool": "inspect.scoreboard",
-  "args": { "objective": "goals" }
-}
+{ "toolName": "inspect.scoreboard", "arguments": { "objective": "goals" } }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
 | objective | string | no | Specific objective (all if omitted) |
 
-**Returns:** `{ objectives: [{ name: string, criteria: string, entries: [{ player: string, score: number }] }] }`
+**Returns:** `{ objectives: [{ name, criteria, entries: [{ player, score }] }] }`
 
 ---
 
 #### inspect.tags
 
-Returns tags for a specific entity.
+Returns tags for a target entity or player.
 
 ```json
-{
-  "tool": "inspect.tags",
-  "args": { "entityId": "entity-uuid" }
-}
+{ "toolName": "inspect.tags", "arguments": { "target": "Steve", "player": true } }
 ```
 
-**Returns:** `{ tags: string[] }`
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| target | string | yes | Player name, player ID, entity ID, or nameTag |
+| player | boolean | no | Prefer player lookup (default: true) |
+
+**Returns:** `{ target, tags: string[] }`
 
 ---
 
-### Mutation Tools (4)
+#### inspect.heightmap
+
+Returns height values across a region.
+
+```json
+{ "toolName": "inspect.heightmap", "arguments": { "dimension": "minecraft:overworld", "region": { "min": { "x": 0, "y": 0, "z": 0 }, "max": { "x": 10, "y": 0, "z": 10 } }, "resolution": 2 } }
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | yes | Target dimension |
+| region | RegionBounds | yes | Region to scan |
+| resolution | 1 \| 2 \| 4 | no | Sample every Nth block (default: 1) |
+
+**Returns:** `{ dimension, region, resolution, heights: number[][] }`
+
+---
+
+#### inspect.surface
+
+Returns surface block types across a region.
+
+```json
+{ "toolName": "inspect.surface", "arguments": { "dimension": "minecraft:overworld", "region": { "min": { "x": 0, "y": 0, "z": 0 }, "max": { "x": 10, "y": 0, "z": 10 } } } }
+```
+
+**Returns:** `{ dimension, region, surface: Array<{ position, typeId }> }`
+
+---
+
+#### inspect.build_collision
+
+Checks whether a proposed build region collides with existing non-air blocks.
+
+```json
+{ "toolName": "inspect.build_collision", "arguments": { "dimension": "minecraft:overworld", "region": { "min": { "x": 0, "y": 64, "z": 0 }, "max": { "x": 10, "y": 70, "z": 10 } } } }
+```
+
+**Returns:** `{ dimension, region, collisionCount: number, collisions: Array<{ position, typeId }> }`
+
+---
+
+#### inspect.find_empty_area
+
+Finds an empty rectangular area near an origin.
+
+```json
+{ "toolName": "inspect.find_empty_area", "arguments": { "dimension": "minecraft:overworld", "origin": { "x": 0, "y": 64, "z": 0 }, "requiredSize": { "x": 10, "y": 6, "z": 10 }, "radius": 32 } }
+```
+
+**Returns:** `{ found: boolean, position?: Vec3i, bounds?: RegionBounds }`
+
+---
+
+### Mutation Tools (5)
 
 These tools modify the world or server state and have varying risk classes.
 
 #### world.fill_blocks
 
-Places or replaces blocks in a rectangular region. Risk: normal (≤512 blocks), strong (≤32768), prohibited (>32768).
+Places or replaces blocks in a rectangular region.
 
 ```json
 {
-  "tool": "world.fill_blocks",
-  "args": {
-    "from": { "x": 0, "y": 64, "z": 0 },
-    "to": { "x": 10, "y": 70, "z": 10 },
-    "block": "stone",
-    "replace": "air",
-    "batchSize": 256
+  "toolName": "world.fill_blocks",
+  "arguments": {
+    "dimension": "minecraft:overworld",
+    "region": { "min": { "x": 0, "y": 64, "z": 0 }, "max": { "x": 10, "y": 70, "z": 10 } },
+    "blockType": "minecraft:stone",
+    "batchSize": 512,
+    "captureRollback": true
   }
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| from | Vec3 | yes | Region start corner |
-| to | Vec3 | yes | Region end corner |
-| block | string | yes | Block type to place |
-| replace | string | no | Only replace this block type |
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | yes | Target dimension |
+| region | RegionBounds | yes | Bounding box (`min`/`max`) |
+| blockType | string | yes | Minecraft block identifier |
 | batchSize | number | no | Blocks per batch (default: 512) |
+| captureRollback | boolean | no | Capture blocks before overwriting (default: true) |
 
-**Validation:**
-- Region volume must not exceed `MAX_REGION_VOLUME` (32768 blocks)
-- Build volume must not exceed `MAX_BUILD_VOLUME` (32768 blocks)
-- Batch size must not exceed `DEFAULT_BATCH_SIZE` (512)
-- Region must not overlap protected regions
+**Risk classification:**
+- `normal` — volume ≤ 4,096 blocks
+- `strong` — volume ≤ 32,768 blocks
+- `prohibited` — volume > 32,768 blocks
+
+---
+
+#### world.place_blocks
+
+Places individual blocks at specific positions.
+
+```json
+{
+  "toolName": "world.place_blocks",
+  "arguments": {
+    "dimension": "minecraft:overworld",
+    "blocks": [
+      { "position": { "x": 0, "y": 64, "z": 0 }, "blockType": "minecraft:oak_door" },
+      { "position": { "x": 0, "y": 65, "z": 0 }, "blockType": "minecraft:oak_door" }
+    ],
+    "batchSize": 512,
+    "captureRollback": true
+  }
+}
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | yes | Target dimension |
+| blocks | BlockPlacement[] | yes | Array of position/blockType pairs |
+| batchSize | number | no | Blocks per batch (default: 512) |
+| captureRollback | boolean | no | Capture blocks before overwriting |
+
+**Limit:** Maximum 8,192 individually addressed blocks (`MAX_PLACE_BLOCKS`).
 
 ---
 
 #### control.cancel
 
-Cancels a running operation. Risk: normal.
+Cancels a running operation.
 
 ```json
 {
-  "tool": "control.cancel",
-  "args": {
-    "actionId": "action-uuid",
-    "reason": "User requested cancellation"
+  "toolName": "control.cancel",
+  "arguments": {
+    "actionId": "action-001"
   }
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
 | actionId | string | yes | Action to cancel |
-| reason | string | no | Cancellation reason |
 
 ---
 
 #### control.emergency_disable
 
-Immediately halts all pending and in-progress operations. Risk: strong.
+Immediately halts all pending and in-progress mutations.
 
 ```json
 {
-  "tool": "control.emergency_disable",
-  "args": {
-    "enabled": true,
-    "reason": "Unexpected world state detected"
+  "toolName": "control.emergency_disable",
+  "arguments": {
+    "disabled": true
   }
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| enabled | boolean | yes | Enable or disable emergency mode |
-| reason | string | no | Reason for toggling |
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| disabled | boolean | yes | `true` to enable emergency mode, `false` to disable |
 
-**Note:** Emergency disable is the only mutation tool that can interrupt another in-progress mutation.
+**Risk:** `strong`. This is the only mutation tool that can interrupt another in-progress mutation.
 
 ---
 
 #### admin.run_command
 
-Executes an allowlisted BDS command. Risk: depends on command.
+Executes an allowlisted BDS command by ID.
 
 ```json
 {
-  "tool": "admin.run_command",
-  "args": {
-    "command": "time set day",
-    "reason": "Reset daylight for build"
+  "toolName": "admin.run_command",
+  "arguments": {
+    "commandId": "time_day"
   }
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| command | string | yes | The BDS command to execute |
-| reason | string | no | Justification for the command |
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| commandId | string | yes | Allowlisted command ID (resolved by controller) |
+| command | string | no | Resolved command string (set by controller, revalidated by addon) |
 
 **Validation:**
-- Command must be in the `INTELACRAFT_ADMIN_COMMANDS` allowlist
-- Commands not in the allowlist are classified as `prohibited`
-- The command string is parsed to prevent injection
+- `commandId` must be in the `INTELACRAFT_ADMIN_COMMANDS` allowlist
+- The controller resolves the command string before enqueueing
+- The addon revalidates the command at execution time
+
+---
+
+## Enumerated Types
+
+### Tool Names
+
+```typescript
+READ_TOOLS = [
+  "inspect.server_status", "inspect.players", "inspect.player",
+  "inspect.block", "inspect.region", "inspect.world_state",
+  "inspect.entities", "inspect.scoreboard", "inspect.tags",
+  "inspect.heightmap", "inspect.surface", "inspect.build_collision",
+  "inspect.find_empty_area"
+]
+
+MUTATION_TOOLS = [
+  "world.fill_blocks", "world.place_blocks",
+  "control.cancel", "control.emergency_disable",
+  "admin.run_command"
+]
+```
+
+### Risk Classes
+
+```typescript
+RISK_CLASSES = ["read", "normal", "strong", "prohibited"]
+```
+
+### Permission Modes
+
+```typescript
+PERMISSION_MODES = [
+  "observe_only",          // Read-only — AI inspects but never modifies
+  "confirm_every_change",  // Every mutation needs approval (default)
+  "allow_low_risk",        // Normal-risk auto-approved, strong needs approval
+  "builder_region",        // Builds restricted to configured regions
+  "trusted_administrator"  // All changes trusted (use with caution)
+]
+```
+
+### Operation States
+
+```typescript
+OPERATION_STATES = [
+  "running",              // Operation in progress
+  "completed",            // Operation finished successfully
+  "partially_completed",  // Some work done, some failed
+  "failed",               // Operation failed
+  "cancelled"             // Operation was cancelled
+]
+```
+
+### Thinking Levels
+
+```typescript
+THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+```
+
+### Dimension IDs
+
+```typescript
+DIMENSION_IDS = [
+  "minecraft:overworld",
+  "minecraft:nether",
+  "minecraft:the_end"
+]
+```
 
 ---
 
@@ -587,54 +721,29 @@ These constants define operational limits enforced by both the controller and be
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `MAX_REGION_VOLUME` | 32,768 | Maximum blocks in a single region inspection query |
-| `MAX_BUILD_VOLUME` | 32,768 | Maximum blocks in a single build operation |
-| `DEFAULT_BATCH_SIZE` | 512 | Default blocks placed per batch in `fill_blocks` |
-| `MAX_ROLLBACK_BLOCKS` | 8,192 | Maximum blocks that can be rolled back in a single undo operation |
-
-### Derived Limits
-
-| Limit | Calculation | Description |
-|-------|-------------|-------------|
-| Max fill region | `MAX_BUILD_VOLUME` blocks | A fill operation cannot exceed this total volume |
-| Max batch size | `DEFAULT_BATCH_SIZE` blocks | Operations are chunked into batches of this size |
-| Rollback capacity | `MAX_ROLLBACK_BLOCKS` blocks | Operations larger than this cannot be automatically undone |
+| `PROTOCOL_VERSION` | `"1.0.0"` | Current protocol version |
+| `MAX_REGION_VOLUME` | 32,768 | Maximum blocks in a single region inspection query (32^3) |
+| `MAX_BUILD_VOLUME` | 32,768 | Maximum blocks in a single build operation (32^3) |
+| `STRONG_BUILD_VOLUME` | 4,096 | Threshold for `strong` risk classification |
+| `DEFAULT_BATCH_SIZE` | 512 | Default blocks placed per batch |
+| `MAX_ROLLBACK_BLOCKS` | 8,192 | Maximum blocks that can be rolled back |
+| `MAX_PLACE_BLOCKS` | 8,192 | Maximum individually addressed blocks in one placement |
 
 ---
 
-## Validation Rules
+## Approval Binding
 
-### Region Validation
+Mutations require a SHA-256 hash of the exact action payload that was displayed to the user.
 
-All region-based tools enforce:
+1. Controller computes `payloadHash = SHA-256(stableStringify(action))` when presenting the action
+2. User approves in the webview; the hash is sent back with the approval
+3. Controller verifies `approval.payloadHash === computedHash` before enqueueing
+4. Approval expires after 5 minutes
 
-1. **Volume limit:** `|x2-x1+1| * |y2-y1+1| * |z2-z1+1|` ≤ `MAX_REGION_VOLUME`
-2. **Coordinate bounds:** All coordinates must be within world limits
-3. **Protected regions:** Mutations must not overlap any protected region
-
-### Block Validation
-
-For `world.fill_blocks`:
-
-1. **Block type must be valid:** Must be a recognized Minecraft block identifier
-2. **Replace filter:** If specified, must be a valid block type
-3. **Batch size:** Must be between 1 and `DEFAULT_BATCH_SIZE`
-4. **Volume:** Total region volume must not exceed `MAX_BUILD_VOLUME`
-
-### Command Validation
-
-For `admin.run_command`:
-
-1. **Allowlist check:** Command must start with an entry in `INTELACRAFT_ADMIN_COMMANDS`
-2. **No injection:** Command is parsed to prevent argument injection
-3. **Length limit:** Command string must not exceed 256 characters
-
-### Entity Validation
-
-For `inspect.tags`:
-
-1. **Entity must exist:** The specified entity ID must reference a living entity
-2. **Proximity:** Entity must be within render distance
+This prevents:
+- Modified payloads (different args, risk, or tool)
+- Replay attacks (reusing an old approval)
+- Stale approvals (expired hash)
 
 ---
 
@@ -642,44 +751,10 @@ For `inspect.tags`:
 
 Action deduplication prevents the same operation from being executed multiple times.
 
-### How It Works
+1. Client includes an `idempotencyKey` when creating an action
+2. Controller checks if an action with the same key already exists
+3. If the previous action is pending or approved: returns the existing action ID
+4. If the previous action completed successfully: returns the existing action with its result
+5. If the previous action failed or was rejected: allows a new action with the same key
 
-1. **Client generates key:** When creating an action, the client optionally includes an `idempotencyKey` (any string, typically a UUID or hash)
-2. **Controller checks:** Before enqueueing, the controller checks if an action with the same key already exists
-3. **Deduplication rules:**
-   - If an action with the same key is **pending or approved**: returns the existing action ID (no duplicate created)
-   - If an action with the same key **completed successfully**: returns the existing action with its result
-   - If an action with the same key **failed or was rejected**: allows a new action with the same key
-
-### Example
-
-```json
-// First request
-POST /v1/actions
-{
-  "tool": "world.fill_blocks",
-  "args": { ... },
-  "idempotencyKey": "build-house-at-0-64-0"
-}
-
-// Response: 201 Created
-{ "actionId": "action-uuid-1", "status": "pending" }
-
-// Duplicate request (same key)
-POST /v1/actions
-{
-  "tool": "world.fill_blocks",
-  "args": { ... },
-  "idempotencyKey": "build-house-at-0-64-0"
-}
-
-// Response: 200 OK (returns existing)
-{ "actionId": "action-uuid-1", "status": "pending" }
-```
-
-### Key Best Practices
-
-- Use deterministic keys: hash of tool + args + task context
-- Always include idempotency keys for retried operations
-- Keys are stored for 24 hours, then purged
-- Duplicate keys with different args are treated as separate actions (key must match exactly)
+Keys are stored for 24 hours, then purged.

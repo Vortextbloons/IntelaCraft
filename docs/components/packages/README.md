@@ -1,15 +1,16 @@
 # Package Ecosystem
 
-IntelaCraft uses four npm workspace packages under the `@intelacraft` scope. All are private, ESM-only, and written in TypeScript.
+IntelaCraft uses five npm workspace packages under the `@intelacraft` scope. All are private, ESM-only, and written in TypeScript.
 
 ## Packages
 
-| Package | Purpose | Lines | External Deps |
-|---------|---------|-------|---------------|
-| `@intelacraft/shared-protocol` | Wire protocol types, validation, helpers | ~1,380 | 0 |
-| `@intelacraft/prompts` | Versioned prompt utilities | ~18 | 0 |
-| `@intelacraft/pi-extension` | AI planning agent runtime | ~944 | 3 |
-| `@intelacraft/mcp-connection` | Optional advisory MCP client | ~38 | 0 |
+| Package | Purpose | External Deps |
+|---------|---------|---------------|
+| `@intelacraft/shared-protocol` | Wire protocol types, validation, helpers | 0 |
+| `@intelacraft/prompts` | Versioned prompt utilities | 0 |
+| `@intelacraft/pi-extension` | AI planning agent runtime | 3 |
+| `@intelacraft/mcp-connection` | Optional advisory MCP client | 0 |
+| `@intelacraft/construction` | Semantic geometric build tools | 0 |
 
 ## Dependency Graph
 
@@ -27,6 +28,7 @@ IntelaCraft uses four npm workspace packages under the `@intelacraft` scope. All
                       |            +-----> typebox (external)
                       |
                       +-----> @intelacraft/mcp-connection
+                      +-----> @intelacraft/construction (semantic build tools)
 ```
 
 ## Build Order
@@ -35,11 +37,12 @@ Packages must be built in dependency order:
 
 1. `shared-protocol` (no internal deps)
 2. `prompts` (no internal deps)
-3. `pi-extension` (depends on `prompts`)
-4. `mcp-connection` (no internal deps)
-5. `controller` (depends on `shared-protocol`, `pi-extension`, `mcp-connection`)
-6. `bedrock-addon` (depends on `shared-protocol`)
-7. `webview` (no package deps on these four)
+3. `construction` (depends on `shared-protocol`)
+4. `pi-extension` (depends on `prompts`)
+5. `mcp-connection` (no internal deps)
+6. `controller` (depends on `shared-protocol`, `pi-extension`, `mcp-connection`)
+7. `bedrock-addon` (depends on `shared-protocol`)
+8. `webview` (no package deps on these five)
 
 `npm run build` at the root handles this automatically.
 
@@ -48,6 +51,7 @@ Packages must be built in dependency order:
 | Package | Documentation |
 |---------|---------------|
 | shared-protocol | [shared-protocol.md](shared-protocol.md) |
+| construction | [construction.md](construction.md) |
 | pi-extension | [pi-extension.md](pi-extension.md) |
 | prompts | [prompts.md](prompts.md) |
 | mcp-connection | [mcp-connection.md](mcp-connection.md) |

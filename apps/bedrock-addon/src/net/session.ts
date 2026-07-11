@@ -15,18 +15,22 @@ import {
 import { notifyOperators } from "../audit/notify.js";
 import type { AddonConfig } from "../config.js";
 import { executeInspectTool } from "../tools/inspect/index.js";
-import { executeAdminCommand, executeControl, isEmergencyDisabled, startFill } from "../tools/mutate.js";
-import { ControllerClient } from "./client.js";
+import { executeAdminCommand, executeControl, isEmergencyDisabled, startFill, startPlaceBlocks } from "../tools/mutate.js";
+import { ControllerClient, ControllerHttpError } from "./client.js";
 
-const POLL_INTERVAL_TICKS = 40; // 2 seconds
-const HEARTBEAT_EVERY_N_POLLS = 3;
+// Bedrock can only initiate outbound HTTP requests, so controller actions are
+// delivered on a poll. Keep this short enough for responsive tool calls.
+const POLL_INTERVAL_TICKS = 10; // 0.5 seconds
+const HEARTBEAT_INTERVAL_TICKS = 120; // 6 seconds
+const RECONNECT_BACKOFF_TICKS = 100; // 5 seconds after a failed handshake
 
 export class ControllerSession {
   private client: ControllerClient;
   private sessionId: string | null = null;
   private running = false;
   private busy = false;
-  private pollCount = 0;
+  private nextHeartbeatTick = 0;
+  private nextHandshakeTick = 0;
   private readonly idempotency = createIdempotencyTracker();
 
   constructor(private readonly config: AddonConfig) {
@@ -43,6 +47,7 @@ export class ControllerSession {
   }
 
   private async handshake(): Promise<void> {
+    if (system.currentTick < this.nextHandshakeTick) return;
     try {
       const req = createHandshake({
         sessionId: "pending",
@@ -61,11 +66,13 @@ export class ControllerSession {
         return;
       }
       this.sessionId = parsed.value.sessionId;
+      this.nextHandshakeTick = 0;
       notifyOperators(`Connected to controller (session ${this.sessionId})`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Handshake error";
       notifyOperators(`Handshake error: ${message}`);
       this.sessionId = null;
+      this.nextHandshakeTick = system.currentTick + RECONNECT_BACKOFF_TICKS;
     }
   }
 
@@ -77,9 +84,9 @@ export class ControllerSession {
         await this.handshake();
         return;
       }
-      this.pollCount += 1;
-      if (this.pollCount % HEARTBEAT_EVERY_N_POLLS === 0) {
+      if (system.currentTick >= this.nextHeartbeatTick) {
         await this.sendHeartbeat();
+        this.nextHeartbeatTick = system.currentTick + HEARTBEAT_INTERVAL_TICKS;
       }
       await this.pollOnce();
     } finally {
@@ -101,9 +108,10 @@ export class ControllerSession {
         emergencyDisabled: isEmergencyDisabled(),
       },
     });
-    const res = await this.client.postJson("/v1/bds/heartbeat", body);
-    if (res.status === 401) {
-      this.sessionId = null;
+    try {
+      await this.client.postJson("/v1/bds/heartbeat", body);
+    } catch (err) {
+      this.handleTransportFailure(err);
     }
   }
 
@@ -113,11 +121,9 @@ export class ControllerSession {
       sessionId: this.sessionId,
       requestId: newId("req"),
     });
-    const res = await this.client.postJson("/v1/bds/poll", poll);
-    if (res.status === 401) {
-      this.sessionId = null;
-      return;
-    }
+    let res: { status: number; body: unknown };
+    try { res = await this.client.postJson("/v1/bds/poll", poll); }
+    catch (err) { this.handleTransportFailure(err); return; }
     const parsed = validatePollResponse(res.body);
     if (!parsed.ok) {
       notifyOperators(`Bad poll response: ${parsed.error.message}`);
@@ -125,6 +131,19 @@ export class ControllerSession {
     }
     if (!parsed.value.action) return;
     await this.handleAction(parsed.value.action);
+  }
+
+  /** A controller restart invalidates in-memory session IDs. Drop the stale ID so tick() handshakes again. */
+  private handleTransportFailure(err: unknown): void {
+    if (err instanceof ControllerHttpError && (err.status === 401 || err.status === 404)) {
+      if (this.sessionId) notifyOperators("Controller session expired; reconnecting automatically");
+      this.sessionId = null;
+      this.nextHandshakeTick = 0;
+      return;
+    }
+    // Network failures also need a fresh handshake, but throttle retries while the controller is down.
+    this.sessionId = null;
+    this.nextHandshakeTick = system.currentTick + RECONNECT_BACKOFF_TICKS;
   }
 
   private async handleAction(rawAction: ActionRequestMessage): Promise<void> {
@@ -155,6 +174,7 @@ export class ControllerSession {
     }
 
     if(action.toolName==="world.fill_blocks") { startFill(action,(event)=>{void this.emitEvent({actionId:action.actionId,...event});},this.config.protectedRegions); return; }
+    if(action.toolName==="world.place_blocks") { startPlaceBlocks(action,(event)=>{void this.emitEvent({actionId:action.actionId,...event});},this.config.protectedRegions); return; }
     if(action.toolName.startsWith("control.")) { const event=executeControl(action); await this.emitEvent({actionId:action.actionId,...event}); return; }
     if(action.toolName==="admin.run_command") { const event=executeAdminCommand(action,this.config.adminCommands); await this.emitEvent({actionId:action.actionId,...event}); return; }
     const toolResult = executeInspectTool(action);

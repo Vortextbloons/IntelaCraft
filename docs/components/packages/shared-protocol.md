@@ -26,6 +26,7 @@ The foundational shared contract for the entire IntelaCraft system. Defines the 
 | `STRONG_BUILD_VOLUME` | `4,096` | Threshold for "strong" risk classification |
 | `DEFAULT_BATCH_SIZE` | `512` | Blocks per yield in fill operations |
 | `MAX_ROLLBACK_BLOCKS` | `8,192` | Maximum rollback snapshot entries |
+| `MAX_PLACE_BLOCKS` | `8,192` | Max individually addressed blocks in one placement |
 
 ## Enumerated Types
 
@@ -35,8 +36,9 @@ The foundational shared contract for the entire IntelaCraft system. Defines the 
 | `RISK_CLASSES` | `read`, `normal`, `strong`, `prohibited` |
 | `PERMISSION_MODES` | `observe_only`, `confirm_every_change`, `allow_low_risk`, `builder_region`, `trusted_administrator` |
 | `OPERATION_STATES` | `running`, `completed`, `partially_completed`, `failed`, `cancelled` |
-| `READ_TOOLS` | `inspect.server_status`, `inspect.players`, `inspect.block`, `inspect.region`, `inspect.time`, `inspect.weather`, `inspect.game_rules`, `inspect.entities`, `inspect.scoreboard`, `inspect.tags` |
-| `MUTATION_TOOLS` | `world.fill_blocks`, `control.cancel`, `control.emergency_disable`, `admin.run_command` |
+| `READ_TOOLS` | `inspect.server_status`, `inspect.players`, `inspect.player`, `inspect.block`, `inspect.region`, `inspect.world_state`, `inspect.entities`, `inspect.scoreboard`, `inspect.tags`, `inspect.heightmap`, `inspect.surface`, `inspect.build_collision`, `inspect.find_empty_area` |
+| `MUTATION_TOOLS` | `world.fill_blocks`, `world.place_blocks`, `control.cancel`, `control.emergency_disable`, `admin.run_command` |
+| `THINKING_LEVELS` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `DIMENSION_IDS` | `minecraft:overworld`, `minecraft:nether`, `minecraft:the_end` |
 
 ## Message Types

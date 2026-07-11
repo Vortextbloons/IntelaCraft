@@ -6,6 +6,13 @@ import {
 } from "@minecraft/server-net";
 import type { SecretString } from "@minecraft/server-admin";
 
+export class ControllerHttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "ControllerHttpError";
+  }
+}
+
 export class ControllerClient {
   constructor(
     private readonly baseUrl: string,
@@ -44,7 +51,7 @@ export class ControllerClient {
         err && typeof err.message === "string"
           ? err.message
           : `HTTP ${response.status}`;
-      throw new Error(message);
+      throw new ControllerHttpError(response.status, message);
     }
     return { status: response.status, body: parsed };
   }

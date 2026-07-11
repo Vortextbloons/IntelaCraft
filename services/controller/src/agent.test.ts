@@ -42,6 +42,13 @@ function openSession(sessions: SessionStore, sessionId: string) {
 }
 
 describe("AgentRuntime read-only inspect auto-run", () => {
+  it("preflights semantic builds before approval and materializes detailed placements", () => {
+    const agent = new AgentRuntime(config()); const sessions = new SessionStore(); const activity = new ActivityStore(join(dir, "audit-semantic.jsonl"), 30); const audit = new AuditLog(join(dir, "audit-semantic.jsonl"), activity); const sessionId = newId("session"); openSession(sessions, sessionId);
+    const row: any = { id:newId("task"),piSessionId:"pi",request:"build wall",state:"planning",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),bdsSessionId:sessionId,actor:"pi-agent",permissionMode:"confirm_every_change" }; (agent as any).tasks.set(row.id,row);
+    (agent as any).applyPlanToTask(row,{summary:"Build wall",inspection:[],actions:[{id:"wall",toolName:"build.wall",arguments:{dimension:"minecraft:overworld",from:{x:0,y:64,z:0},to:{x:2,y:64,z:0},height:2,blockType:"minecraft:stone"},summary:"Wall"}],verification:[],notes:[]},{bdsSessionId:sessionId});
+    assert.equal(row.state,"inspecting"); assert.equal(row.proposedActions.length,0); assert.equal(row.pendingReads.length,1); assert.equal(row.pendingReads[0].toolName,"inspect.build_collision"); assert.equal(row.preview.generatedBlocks,6);
+    (agent as any).enqueuePendingReads(row,sessions,audit); assert.equal(sessions.dequeue(sessionId)?.toolName,"inspect.build_collision");
+  });
   it("materializes inspect.players and enqueues without approval", () => {
     const agent = new AgentRuntime(config());
     const sessions = new SessionStore();

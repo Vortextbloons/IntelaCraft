@@ -19,19 +19,20 @@ The IntelaCraft webview is a single-page React application that serves as the us
 apps/webview/
 ├── src/
 │   ├── components/
-│   │   ├── App.tsx              (~1716 lines) Root component
+│   │   ├── App.tsx              (~1800 lines) Root component
 │   │   ├── Transcript.tsx       Chat message list
 │   │   ├── PlanCard.tsx         Task plan display & approval
 │   │   ├── ToolCallCard.tsx     Tool execution progress
 │   │   ├── ReasoningBlock.tsx   Collapsible AI thinking
 │   │   ├── MarkdownText.tsx     Safe markdown renderer
+│   │   ├── HighlightedJson.tsx  JSON syntax highlighting
 │   │   ├── ConnectionStrip.tsx  Connection status indicator
 │   │   └── WorldContextPanel.tsx Live world stats
-│   ├── utils/                   Shared utilities
+│   ├── utils/
+│   │   └── format.ts           Tool result formatting
 │   ├── api.ts                   Typed HTTP client
 │   ├── chatStore.ts             Conversation persistence
 │   ├── types.ts                 Shared type definitions
-│   ├── App.tsx                  Root component (see above)
 │   └── styles.css               Global styles & CSS custom properties
 ```
 
@@ -53,5 +54,5 @@ apps/webview/
 
 ## Sub-Documents
 
-- [components.md](./components.md) — Detailed documentation of all 7 React components
+- [components.md](./components.md) — Detailed documentation of all 8 React components
 - [data-flow.md](./data-flow.md) — Data flow, SSE streaming, REST polling, and persistence

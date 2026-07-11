@@ -6,6 +6,7 @@ import {
   type ActionRequestMessage,
   type AdminRunCommandArgs,
   type FillBlocksArgs,
+  type PlaceBlocksArgs,
 } from "@intelacraft/shared-protocol";
 
 export interface MutationEvent {
@@ -238,5 +239,24 @@ export function startFill(
       });
     }
   }
+  system.runJob(job());
+}
+
+export function startPlaceBlocks(action: ActionRequestMessage, emit: (e: MutationEvent) => void, protectedRegions: Array<{ dimension: string; region: FillBlocksArgs["region"] }> = []): void {
+  const args = action.arguments as unknown as PlaceBlocksArgs;
+  const total = args.blocks.length;
+  if (emergencyDisabled) { emit({ state:"failed", completedWork:0,totalEstimatedWork:total,message:"Emergency disabled",error:{code:"EMERGENCY_DISABLED",message:"Mutations disabled"} }); return; }
+  const protectedHit = args.blocks.some(({ position }) => protectedRegions.some((p) => p.dimension === args.dimension && position.x >= p.region.min.x && position.x <= p.region.max.x && position.y >= p.region.min.y && position.y <= p.region.max.y && position.z >= p.region.min.z && position.z <= p.region.max.z));
+  if (protectedHit) { emit({state:"failed",completedWork:0,totalEstimatedWork:total,message:"Protected region",error:{code:"PROTECTED_REGION",message:"Placement intersects an add-on protected region"}}); return; }
+  const dimension = world.getDimension(args.dimension); let placed=0, skipped=0, failed=0;
+  const rollback: Array<{ position: {x:number;y:number;z:number}; typeId:string }> = [];
+  function* job() { try { for (const { position, blockType } of args.blocks) {
+    if (cancelled.has(action.actionId) || emergencyDisabled) { cancelled.delete(action.actionId); emit({state:"cancelled",completedWork:placed,totalEstimatedWork:total,message:`Cancelled after ${placed}/${total} blocks`,result:{placed,skipped,failed,rollback:{capturedBlocks:rollback.length,coverage:rollback.length/total}}}); return; }
+    const block=dimension.getBlock(position); if (!block?.isValid) { failed++; continue; }
+    if (block.typeId === blockType) { skipped++; continue; }
+    if(args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({position,typeId:block.typeId});
+    block.setType(blockType); placed++;
+    if ((placed+skipped+failed) % (args.batchSize ?? 512) === 0) { emit({state:"running",completedWork:placed,totalEstimatedWork:total,message:`Placed ${placed}/${total} blocks`,result:{placed,skipped,failed}}); yield; }
+  } emit({state:failed ? "partially_completed":"completed",completedWork:placed,totalEstimatedWork:total,message:`Placed ${placed}, skipped ${skipped}, failed ${failed}`,result:{dimension:args.dimension,placed,skipped,failed,rollback:{available:rollback.length===placed,capturedBlocks:rollback.length,coverage:placed ? rollback.length/placed : 1}}}); } catch(e) { emit({state:placed?"partially_completed":"failed",completedWork:placed,totalEstimatedWork:total,message:e instanceof Error?e.message:"Placement failed",result:{placed,skipped,failed}}); } }
   system.runJob(job());
 }

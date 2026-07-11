@@ -194,15 +194,22 @@ The `thinkingLevel` parameter controls how much reasoning effort the AI applies 
 
 | Level | Behavior | When to Use |
 |-------|----------|-------------|
-| `low` | Quick, minimal reasoning | Simple tasks (fill area, set time) |
+| `off` | No reasoning tokens | Fastest, raw model output |
+| `minimal` | Bare minimum reasoning | Trivial tasks |
+| `low` | Quick reasoning | Simple tasks (fill area, set time) |
 | `medium` | Balanced reasoning | Most tasks (default) |
-| `high` | Deep reasoning, multiple passes | Complex tasks (build structures, multi-step plans) |
+| `high` | Deep reasoning | Complex tasks (build structures) |
+| `xhigh` | Extended reasoning | Very complex multi-step plans |
+| `max` | Maximum reasoning budget | Largest tasks with many constraints |
 
 **Model support:**
 
-- **OpenAI GPT-4o**: Full support (maps to reasoning effort)
-- **Claude Sonnet**: Full support
-- **Groq Llama**: Partial support (maps to max tokens)
+- **OpenAI o3/o4 models**: Full support (maps to reasoning effort)
+- **Claude Sonnet/Opus 4**: Full support via override mappings
+- **DeepSeek R1**: Supported
+- **Gemini 2.5 Pro/Flash**: Supported
+- **OpenAI GPT-4o**: Maps to reasoning effort parameter
+- **Groq Llama**: Reasoning levels are excluded (Groq doesn't support `reasoning_effort`)
 - **Ollama**: Limited (depends on model size)
 
 Set the default thinking level in webview settings or override per task:

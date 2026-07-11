@@ -156,6 +156,14 @@ describe("action request", () => {
     assert.equal(result.ok,true); if(result.ok){assert.deepEqual(result.value.region,{min:{x:0,y:64,z:0},max:{x:2,y:64,z:2}});assert.equal(result.value.batchSize,512);}
   });
 
+  it("validates detailed placements and rejects duplicate positions", () => {
+    const valid = validateToolArguments("world.place_blocks", { dimension:"minecraft:overworld", blocks:[{position:{x:1,y:64,z:1},blockType:"minecraft:stone"}], captureRollback:true });
+    assert.equal(valid.ok, true);
+    const duplicate = validateToolArguments("world.place_blocks", { dimension:"minecraft:overworld", blocks:[{position:{x:1,y:64,z:1},blockType:"minecraft:stone"},{position:{x:1,y:64,z:1},blockType:"minecraft:oak_planks"}] });
+    assert.equal(duplicate.ok, false);
+    if (!duplicate.ok) assert.equal(duplicate.error.code, "DUPLICATE_POSITION");
+  });
+
   it("validates inspect.entities / scoreboard / tags", () => {
     assert.equal(
       validateToolArguments("inspect.entities", {

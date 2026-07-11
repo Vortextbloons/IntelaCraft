@@ -123,7 +123,8 @@ export function App() {
   const [activityFilter, setActivityFilter] = useState("");
   const [progressByTask, setProgressByTask] = useState<Record<string, ToolRun>>({});
   const [permissionMode, setPermissionMode] = useState("confirm_every_change");
-  const [pickerPanel, setPickerPanel] = useState<"none" | "providers" | "models">("none");
+  const [pickerPanel, setPickerPanel] = useState<"none" | "providers" | "models" | "reasoning">("none");
+  const [modelFilter, setModelFilter] = useState("");
   const [drawer, setDrawer] = useState<"none" | "safety" | "activity">("none");
   const [busy, setBusy] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("minimal");
@@ -139,9 +140,16 @@ export function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const streamUpdateFrameRef = useRef<number | null>(null);
+  const pendingStreamUpdatesRef = useRef<Array<{
+    assistantId: string;
+    patch: Partial<ChatMsg> | ((message: ChatMsg) => ChatMsg);
+  }>>([]);
+  const scrollFrameRef = useRef<number | null>(null);
   const operationRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reasoningModelRef = useRef<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
   const tasksRef = useRef<Task[]>([]);
   const chatRef = useRef<ChatMsg[]>(chat);
 
@@ -408,20 +416,37 @@ export function App() {
       setShowJump(true);
       return;
     }
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Smooth scrolling for each streamed token queues overlapping animations.
+    // Follow the latest message at most once per paint instead.
+    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      chatEndRef.current?.scrollIntoView({ behavior: "auto" });
+      scrollFrameRef.current = null;
+    });
     setShowJump(false);
+    return () => {
+      if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    };
   }, [chat, selectedTask, progressByTask, stickToBottom]);
 
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
-      if (ev.key === "Escape" && busy) {
-        ev.preventDefault();
-        stopStreaming();
+      if (ev.key === "Escape") {
+        if (pickerPanel !== "none") {
+          ev.preventDefault();
+          setPickerPanel("none");
+          return;
+        }
+        if (busy) {
+          ev.preventDefault();
+          stopStreaming();
+        }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy]);
+  }, [busy, pickerPanel]);
 
   useEffect(() => {
     function onDocClick(ev: MouseEvent) {
@@ -435,6 +460,12 @@ export function App() {
     if (!activeProvider) return;
     setBrowseProviderId(activeProvider.id);
   }, [activeProvider?.id]);
+
+  useEffect(() => {
+    if (pickerPanel !== "models") return;
+    const id = window.setTimeout(() => modelSearchRef.current?.focus(), 30);
+    return () => window.clearTimeout(id);
+  }, [pickerPanel]);
 
   function updatePiSessionId(id: string | null) {
     setPiSessionIdState(id);
@@ -702,6 +733,7 @@ export function App() {
 
   async function openModelsPanel() {
     setPickerPanel((cur) => (cur === "models" ? "none" : "models"));
+    setModelFilter("");
     const connected = providers.filter((p) => p.apiKeyConfigured);
     const missing = connected.filter((p) => !catalogFor(p.id).length);
     if (missing.length) void refreshAllCatalogs();
@@ -756,6 +788,40 @@ export function App() {
     );
   }
 
+  // Providers can emit several deltas in a single frame. Applying every one
+  // forces a full transcript render and quickly makes the UI fall behind.
+  function flushStreamUpdates() {
+    if (streamUpdateFrameRef.current !== null) {
+      cancelAnimationFrame(streamUpdateFrameRef.current);
+      streamUpdateFrameRef.current = null;
+    }
+    const updates = pendingStreamUpdatesRef.current.splice(0);
+    if (!updates.length) return;
+    setChat((chat) => {
+      let next = chat;
+      for (const { assistantId, patch } of updates) {
+        next = next.map((message) =>
+          message.id !== assistantId
+            ? message
+            : typeof patch === "function"
+              ? patch(message)
+              : { ...message, ...patch },
+        );
+      }
+      return next;
+    });
+  }
+
+  function queueStreamUpdate(
+    assistantId: string,
+    patch: Partial<ChatMsg> | ((message: ChatMsg) => ChatMsg),
+  ) {
+    pendingStreamUpdatesRef.current.push({ assistantId, patch });
+    if (streamUpdateFrameRef.current === null) {
+      streamUpdateFrameRef.current = requestAnimationFrame(flushStreamUpdates);
+    }
+  }
+
   function upsertToolPart(parts: MessagePart[] | undefined, part: Extract<MessagePart, { type: "tool_call" }>) {
     const list = [...(parts ?? [])];
     let idx = list.findIndex((p) => p.type === "tool_call" && p.id === part.id);
@@ -784,6 +850,7 @@ export function App() {
   }
 
   function stopStreaming() {
+    flushStreamUpdates();
     streamAbortRef.current?.abort();
     streamAbortRef.current = null;
     setBusy(false);
@@ -956,25 +1023,46 @@ export function App() {
             }
             if (eventName === "delta" && typeof parsed.text === "string") {
               streamedText += parsed.text;
-              updateAssistant(assistantId, (m) => {
-                const withoutStatus = (m.parts ?? []).filter((p) => p.type !== "status" && p.type !== "text");
+              queueStreamUpdate(assistantId, (m) => {
+                const parts = [...(m.parts ?? [])].filter((p) => p.type !== "status");
+                const last = parts.at(-1);
+                // A text part is only extended until a tool is emitted. The next
+                // delta then becomes a new bubble directly below that tool card.
+                if (last?.type === "text") {
+                  parts[parts.length - 1] = { type: "text", text: last.text + parsed.text };
+                } else {
+                  parts.push({ type: "text", text: parsed.text });
+                }
                 return {
                   ...m,
                   text: streamedText,
                   streaming: true,
-                  parts: [...withoutStatus, { type: "text", text: streamedText }],
+                  parts,
                 };
               });
             } else if (eventName === "reasoning_delta" && typeof parsed.text === "string") {
               reasoningText += parsed.text;
-              updateAssistant(assistantId, (m) => {
-                const rest = (m.parts ?? []).filter((p) => p.type !== "reasoning");
+              queueStreamUpdate(assistantId, (m) => {
+                const parts = [...(m.parts ?? [])];
+                const last = parts.at(-1);
+                // Reasoning belongs at the point it was produced. Do not move a
+                // later thought above text or a tool call already in the timeline.
+                if (last?.type === "reasoning") {
+                  parts[parts.length - 1] = {
+                    type: "reasoning",
+                    text: reasoningText,
+                    streaming: true,
+                  };
+                } else {
+                  parts.push({ type: "reasoning", text: reasoningText, streaming: true });
+                }
                 return {
                   ...m,
-                  parts: [{ type: "reasoning", text: reasoningText, streaming: true }, ...rest],
+                  parts,
                 };
               });
             } else if (eventName === "status" && typeof parsed.text === "string") {
+              flushStreamUpdates();
               updateAssistant(assistantId, (m) => ({
                 ...m,
                 parts: [
@@ -983,13 +1071,15 @@ export function App() {
                 ],
               }));
             } else if (eventName === "tool") {
+              flushStreamUpdates();
               const toolCallId =
                 typeof parsed.toolCallId === "string" && parsed.toolCallId
                   ? parsed.toolCallId
                   : undefined;
               const name = String(parsed.name ?? "tool");
               const id = toolCallId || name;
-              const failed = parsed.phase === "end" && Boolean(parsed.isError);
+              const ended = parsed.phase === "end";
+              const failed = ended && Boolean(parsed.isError);
               updateAssistant(assistantId, (m) => ({
                 ...m,
                 parts: upsertToolPart(m.parts, {
@@ -997,9 +1087,13 @@ export function App() {
                   id,
                   name,
                   phase: "plan",
-                  state: failed ? "failed" : "running",
+                  state: failed ? "failed" : ended ? "completed" : "running",
+                  resultText:
+                    ended && !failed && typeof parsed.detail === "string"
+                      ? parsed.detail
+                      : undefined,
                   error: failed
-                    ? String(parsed.message ?? "Tool failed")
+                    ? String(parsed.detail ?? parsed.message ?? "Tool failed")
                     : undefined,
                 }),
               }));
@@ -1015,6 +1109,7 @@ export function App() {
       }
 
       if (!finalTask) throw new Error("Stream ended without a task");
+      flushStreamUpdates();
       if (finalTask.state === "planned" && isReadOnlyPlan(finalTask)) {
         try {
           const kicked = await api<{ task: Task }>(
@@ -1030,22 +1125,18 @@ export function App() {
       const reply = finalTask.error
         ? `Failed: ${finalTask.error}`
         : finalTask.plan?.summary || streamedText || `Done (${finalTask.state})`;
-      const inspectParts: MessagePart[] = (finalTask.plan?.inspection ?? []).map((step, i) => ({
-        type: "tool_call" as const,
-        id: `inspect-${i}`,
-        name: step.toolName,
-        phase: "inspect" as const,
-        state: "queued",
-        argsSummary: summarizeArgs(step.arguments),
-      }));
       updateAssistant(assistantId, (m) => {
-        const reasoning = (m.parts ?? []).find((p) => p.type === "reasoning");
-        const parts: MessagePart[] = [];
-        if (reasoning && reasoning.type === "reasoning") {
-          parts.push({ ...reasoning, streaming: false });
+        // Keep the streamed ordering. Rebuilding these cards from the plan used
+        // to throw away completed tool events and show stale queued tool calls.
+        const parts: MessagePart[] = (m.parts ?? [])
+          .filter((part) => part.type !== "status")
+          .map((part) =>
+            part.type === "reasoning" ? { ...part, streaming: false } : part,
+          );
+        const last = parts.at(-1);
+        if (last?.type !== "text" || last.text !== reply) {
+          parts.push({ type: "text", text: reply });
         }
-        parts.push({ type: "text", text: reply });
-        parts.push(...inspectParts);
         if (finalTask!.state === "inspecting") {
           parts.push({ type: "status", text: "Inspecting world…" });
         } else if (finalTask!.state === "awaiting_approval") {
@@ -1303,6 +1394,15 @@ export function App() {
       })),
   ];
   const connectedProviders = providers.filter((p) => p.apiKeyConfigured);
+  const modelQuery = modelFilter.trim().toLowerCase();
+  const filteredModelGroups = connectedProviders
+    .map((p) => {
+      const catalog = catalogFor(p.id).filter(
+        (m) => !modelQuery || m.toLowerCase().includes(modelQuery),
+      );
+      return { provider: p, catalog };
+    })
+    .filter((g) => !modelQuery || g.catalog.length > 0);
   const sessionConnected = Boolean(piSessionId) || (health?.agent?.sessions ?? 0) > 0;
 
   return (
@@ -1478,34 +1578,66 @@ export function App() {
                       ▾
                     </span>
                   </button>
-                  <label className="reasoning-selector" title="Reasoning effort for the selected model">
-                    <span>Reasoning</span>
-                    <select
-                      value={thinkingLevel}
-                      disabled={!modelCapabilities.supported || busy}
-                      onChange={(e) => void patchThinking(e.target.value as ThinkingLevel)}
+                  <div className="reasoning-picker">
+                    <button
+                      type="button"
+                      className="model-trigger reasoning-trigger"
+                      title="Reasoning effort for the selected model"
+                      aria-expanded={pickerPanel === "reasoning"}
+                      aria-haspopup="listbox"
                       aria-label="Reasoning effort"
+                      disabled={!modelCapabilities.supported || busy}
+                      onClick={() =>
+                        setPickerPanel((cur) => (cur === "reasoning" ? "none" : "reasoning"))
+                      }
                     >
-                      {modelCapabilities.levels.map((level) => (
-                        <option key={level} value={level}>
-                          {THINKING_LEVEL_LABELS[level] ?? level}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      <span className="model-trigger-label">
+                        {THINKING_LEVEL_LABELS[thinkingLevel] ?? thinkingLevel}
+                      </span>
+                      <span className="chev" aria-hidden>
+                        ▾
+                      </span>
+                    </button>
+
+                    {pickerPanel === "reasoning" && (
+                      <div className="reasoning-menu" role="listbox" aria-label="Reasoning effort">
+                        {modelCapabilities.levels.map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            role="option"
+                            aria-selected={thinkingLevel === level}
+                            className={
+                              thinkingLevel === level ? "reasoning-option active" : "reasoning-option"
+                            }
+                            disabled={busy}
+                            onClick={() => {
+                              void patchThinking(level);
+                              setPickerPanel("none");
+                            }}
+                          >
+                            {THINKING_LEVEL_LABELS[level] ?? level}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   {pickerPanel === "providers" && (
                     <div className="model-popover" role="dialog" aria-label="Connect providers">
-                      <div className="popover-section">
+                      <div className="popover-fixed">
                         <div className="popover-title">Connect providers</div>
                         <p className="meta">
                           Connect once with an API key. Models show up in the Models menu.
                         </p>
+                      </div>
+                      <div className="popover-scroll">
                         <ul className="provider-list">
                           {providerChoices.map((p) => {
                             const saved = savedProvider(p.id);
                             const connected = Boolean(saved?.apiKeyConfigured);
                             const selected = p.id === browseProviderId;
+                            const modelCount = catalogFor(p.id).length;
                             return (
                               <li key={p.id} className="provider-connect-block">
                                 <button
@@ -1514,10 +1646,15 @@ export function App() {
                                   onClick={() => void openProvider(p.id)}
                                   disabled={busy}
                                 >
-                                  <span className="provider-name">{p.name}</span>
+                                  <span className="provider-item-top">
+                                    <span className="provider-name">{p.name}</span>
+                                    <span className={connected ? "provider-status on" : "provider-status"}>
+                                      {connected ? "Connected" : "Setup"}
+                                    </span>
+                                  </span>
                                   <span className="meta">
                                     {connected
-                                      ? `Connected · ${catalogFor(p.id).length || "…"} models`
+                                      ? `${modelCount || "…"} models available`
                                       : p.hint}
                                   </span>
                                 </button>
@@ -1626,7 +1763,10 @@ export function App() {
                                     <button
                                       type="button"
                                       className="ghost"
-                                      onClick={() => setPickerPanel("models")}
+                                      onClick={() => {
+                                        setModelFilter("");
+                                        setPickerPanel("models");
+                                      }}
                                     >
                                       Open models →
                                     </button>
@@ -1642,7 +1782,7 @@ export function App() {
 
                   {pickerPanel === "models" && (
                     <div className="model-popover models-popover" role="dialog" aria-label="Select model">
-                      <div className="popover-section">
+                      <div className="popover-fixed">
                         <div className="popover-head">
                           <div className="popover-title">Models by provider</div>
                           <button
@@ -1654,7 +1794,19 @@ export function App() {
                             {modelsLoading ? "Loading…" : "Refresh all"}
                           </button>
                         </div>
-
+                        {connectedProviders.length > 0 && (
+                          <input
+                            ref={modelSearchRef}
+                            className="model-search"
+                            type="search"
+                            value={modelFilter}
+                            onChange={(e) => setModelFilter(e.target.value)}
+                            placeholder="Filter models…"
+                            aria-label="Filter models"
+                          />
+                        )}
+                      </div>
+                      <div className="popover-scroll">
                         {!connectedProviders.length ? (
                           <div className="empty-models">
                             <p className="meta">No providers connected yet.</p>
@@ -1666,39 +1818,46 @@ export function App() {
                               Connect a provider
                             </button>
                           </div>
+                        ) : filteredModelGroups.length === 0 ? (
+                          <div className="models-empty-filter">No models match “{modelFilter.trim()}”</div>
                         ) : (
-                          connectedProviders.map((p) => {
-                            const catalog = catalogFor(p.id);
+                          filteredModelGroups.map(({ provider: p, catalog }) => {
+                            const fullCount = catalogFor(p.id).length;
                             return (
                               <div key={p.id} className="model-group">
                                 <div className="model-group-head">
                                   <span className="model-group-title">{p.name}</span>
                                   <span className="meta">
-                                    {modelsLoading && !catalog.length
+                                    {modelsLoading && !fullCount
                                       ? "loading…"
-                                      : `${catalog.length} models`}
+                                      : modelQuery
+                                        ? `${catalog.length} / ${fullCount}`
+                                        : `${catalog.length} models`}
                                   </span>
                                 </div>
                                 {catalog.length === 0 ? (
                                   <p className="meta">No models yet — refresh this provider.</p>
                                 ) : (
                                   <ul className="model-list">
-                                    {catalog.map((m) => (
-                                      <li key={m}>
-                                        <button
-                                          type="button"
-                                          className={
-                                            activeProvider?.id === p.id && activeProvider.model === m
-                                              ? "model-item active"
-                                              : "model-item"
-                                          }
-                                          disabled={busy}
-                                          onClick={() => void selectModel(p.id, m)}
-                                        >
-                                          {m}
-                                        </button>
-                                      </li>
-                                    ))}
+                                    {catalog.map((m) => {
+                                      const active =
+                                        activeProvider?.id === p.id && activeProvider.model === m;
+                                      return (
+                                        <li key={m}>
+                                          <button
+                                            type="button"
+                                            className={active ? "model-item active" : "model-item"}
+                                            disabled={busy}
+                                            onClick={() => void selectModel(p.id, m)}
+                                          >
+                                            <span className="model-item-id">{m}</span>
+                                            <span className="model-item-check" aria-hidden>
+                                              ✓
+                                            </span>
+                                          </button>
+                                        </li>
+                                      );
+                                    })}
                                   </ul>
                                 )}
                               </div>

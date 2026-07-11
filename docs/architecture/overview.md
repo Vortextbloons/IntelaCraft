@@ -196,7 +196,7 @@ Isolated AI planning agent runtime built on `@earendil-works/pi-coding-agent`.
 - Live inspection executor bridge (controller injects this per session)
 - Tool result injection into Pi history (`injectPiToolResult`)
 - Multi-turn chat memory with 16-turn window
-- Thinking level support (off, minimal, low, medium, high)
+- Thinking level support (off, minimal, low, medium, high, xhigh, max)
 - Redaction of secrets from all outputs
 
 **Plan structure:**
@@ -217,15 +217,19 @@ interface AgentPlan {
 |------|------|-------------|
 | `inspect.server_status` | read | TPS, players, world basics |
 | `inspect.players` | read | List online players |
+| `inspect.player` | read | Detailed info for a single player |
 | `inspect.block` | read | Block at one position |
 | `inspect.region` | read | Sample blocks in a bounded region (max 32^3) |
-| `inspect.time` | read | World time and day |
-| `inspect.weather` | read | Current weather |
-| `inspect.game_rules` | read | Game rules snapshot |
-| `inspect.entities` | read | Entities near a point or in a region |
+| `inspect.world_state` | read | Time, weather, game rules |
+| `inspect.entities` | read | Entities in a dimension |
 | `inspect.scoreboard` | read | Scoreboard objectives |
 | `inspect.tags` | read | Tags on a target |
+| `inspect.heightmap` | read | Terrain heights across a region |
+| `inspect.surface` | read | Top solid block types |
+| `inspect.build_collision` | read | Blocks in a proposed build volume |
+| `inspect.find_empty_area` | read | Find empty build areas near origin |
 | `world.fill_blocks` | write | Fill a bounded region with a block type |
+| `world.place_blocks` | write | Place individual blocks at positions |
 | `admin.run_command` | write | Run an allowlisted admin command by ID |
 
 ### 6. `@intelacraft/mcp-connection` — packages/mcp-connection/
@@ -256,6 +260,17 @@ Versioned prompt utilities used by the Pi extension.
 - `wrapUntrusted(tag, value)` — wraps untrusted data in labeled XML tags
 - `adminAllowlistSection(commandIds)` — generates the admin command allowlist section for system prompts
 - `PROMPT_VERSION` constant for prompt versioning
+
+### 8. `@intelacraft/construction` — packages/construction/
+
+Semantic geometric build tools that translate high-level construction intents into deterministic block placements.
+
+**Responsibilities:**
+- `buildWall`, `buildFloor`, `buildPillar` — core geometry functions
+- `generateSemantic(tool, args)` — unified dispatch for 9 semantic tools (`build.wall`, `build.floor`, `build.pillar`, `build.room`, `build.stairs`, `build.roof`, `build.doorway`, `build.window`, `build.path`)
+- `previewPlacements(build, context)` — conflict/cost analysis without execution
+- `validateBuildPlan(plan, limits)` — structural and geometric plan validation
+- `materialTotals(blocks)` — material counting for resource estimates
 
 ## Trust Boundaries
 
@@ -338,6 +353,7 @@ intelacraft/                          # Root (npm workspace)
 │   ├── shared-protocol/              # @intelacraft/shared-protocol
 │   ├── pi-extension/                 # @intelacraft/pi-extension
 │   ├── mcp-connection/               # @intelacraft/mcp-connection
+│   ├── construction/                 # @intelacraft/construction
 │   └── prompts/                      # @intelacraft/prompts
 └── docs/
     └── architecture/
@@ -348,7 +364,7 @@ intelacraft/                          # Root (npm workspace)
 ### Build dependency order
 
 ```text
-shared-protocol → prompts → pi-extension → mcp-connection → controller → bedrock-addon → webview
+shared-protocol → prompts → construction → pi-extension → mcp-connection → controller → bedrock-addon → webview
 ```
 
 Each package depends only on packages earlier in this chain.

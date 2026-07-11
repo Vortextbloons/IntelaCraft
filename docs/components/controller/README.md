@@ -32,7 +32,7 @@ All endpoints use the `/v1/` prefix (not `/api/`). Bearer token authentication i
 ### Authentication
 
 ```
-Authorization: Bearer <INTELACRAFT_AUTH_TOKEN>
+Authorization: Bearer <INTELACRAFT_BDS_TOKEN>
 ```
 
 ### Key Endpoints
@@ -40,19 +40,35 @@ Authorization: Bearer <INTELACRAFT_AUTH_TOKEN>
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/v1/health` | Server health check (no auth) |
-| POST | `/v1/sessions/handshake` | Register/update a BDS session |
-| POST | `/v1/sessions/heartbeat` | Periodic session heartbeat |
-| GET | `/v1/sessions` | List active sessions |
+| POST | `/v1/bds/handshake` | Register/update a BDS session |
+| POST | `/v1/bds/poll` | BDS polls for pending actions |
+| POST | `/v1/bds/events` | BDS reports operation results |
+| POST | `/v1/bds/heartbeat` | Periodic session heartbeat |
+| POST | `/v1/actions` | Enqueue a raw action (policy-gated) |
+| GET | `/v1/events` | List recent operation events |
 | GET | `/v1/events/stream` | SSE stream of operation events |
-| POST | `/v1/tasks` | Create a new agent task |
-| GET | `/v1/tasks/:id` | Get task details |
-| POST | `/v1/tasks/:id/approve` | Approve a pending task |
-| POST | `/v1/tasks/:id/reject` | Reject a pending task |
-| POST | `/v1/tasks/:id/cancel` | Cancel a running task |
+| GET | `/v1/activity` | Query activity records |
+| DELETE | `/v1/activity` | Purge activity records |
 | GET | `/v1/settings` | Get runtime settings |
-| PUT | `/v1/settings` | Update runtime settings |
+| PATCH | `/v1/settings` | Update permission mode, thinking level |
+| POST | `/v1/emergency-disable` | Toggle emergency disable |
 | GET | `/v1/providers` | List AI providers |
 | POST | `/v1/providers` | Add/update a provider |
+| POST | `/v1/providers/active` | Set active provider |
+| POST | `/v1/providers/:id/test` | Test provider connectivity |
+| POST | `/v1/providers/:id/models` | Discover available models |
+| GET | `/v1/mcp/status` | MCP connection status |
+| GET/POST | `/v1/pi/sessions` | List or create Pi sessions |
+| POST | `/v1/tasks` | Create a new agent task |
+| POST | `/v1/tasks/stream` | Create task with SSE streaming |
+| GET | `/v1/tasks` | List all tasks |
+| GET | `/v1/tasks/:id` | Get task details + transcript |
+| DELETE | `/v1/tasks/:id` | Delete a task |
+| POST | `/v1/tasks/:id/approve` | Approve task mutations |
+| POST | `/v1/tasks/:id/reject` | Reject a task plan |
+| POST | `/v1/tasks/:id/cancel` | Cancel a running task |
+| POST | `/v1/tasks/:id/replan` | Edit-and-replan with user notes |
+| POST | `/v1/tasks/:id/stream` | Continue task with SSE streaming |
 
 ## Sub-Documents
 

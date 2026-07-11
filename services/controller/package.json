@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@intelacraft/shared-protocol": "*"
-    ,"@intelacraft/pi-extension":"*","@intelacraft/mcp-connection":"*"
+    ,"@intelacraft/pi-extension":"*","@intelacraft/mcp-connection":"*","@intelacraft/construction":"*"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

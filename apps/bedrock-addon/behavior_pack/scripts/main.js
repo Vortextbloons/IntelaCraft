@@ -72,6 +72,7 @@ var MAX_REGION_VOLUME = 32 * 32 * 32;
 var MAX_BUILD_VOLUME = 32 * 32 * 32;
 var DEFAULT_BATCH_SIZE = 512;
 var MAX_ROLLBACK_BLOCKS = 8192;
+var MAX_PLACE_BLOCKS = 8192;
 var MESSAGE_TYPES = [
   "handshake",
   "handshake_ack",
@@ -99,10 +100,15 @@ var READ_TOOLS = [
   "inspect.world_state",
   "inspect.entities",
   "inspect.scoreboard",
-  "inspect.tags"
+  "inspect.tags",
+  "inspect.heightmap",
+  "inspect.surface",
+  "inspect.build_collision",
+  "inspect.find_empty_area"
 ];
 var MUTATION_TOOLS = [
   "world.fill_blocks",
+  "world.place_blocks",
   "control.cancel",
   "control.emergency_disable",
   "admin.run_command"
@@ -411,8 +417,18 @@ function validateToolArguments(toolName, args) {
       return asArgs(validateInspectScoreboard(args));
     case "inspect.tags":
       return asArgs(validateInspectTags(args));
+    case "inspect.heightmap":
+      return asArgs(validateHeightmap(args));
+    case "inspect.surface":
+      return asArgs(validateHeightmap(args));
+    case "inspect.build_collision":
+      return asArgs(validateBuildCollision(args));
+    case "inspect.find_empty_area":
+      return asArgs(validateFindEmptyArea(args));
     case "world.fill_blocks":
       return asArgs(validateFillBlocks(args));
+    case "world.place_blocks":
+      return asArgs(validatePlaceBlocks(args));
     case "control.cancel":
       if (!isNonEmptyString(args.actionId)) return fail("INVALID_ARGS", "actionId is required");
       return ok({ actionId: args.actionId });
@@ -424,6 +440,46 @@ function validateToolArguments(toolName, args) {
     default:
       return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
   }
+}
+function validateHeightmap(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const region = parseRegion(args.region);
+  if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
+  const resolution = args.resolution ?? 1;
+  if (resolution !== 1 && resolution !== 2 && resolution !== 4) return fail("INVALID_ARGS", "resolution must be 1, 2, or 4");
+  return ok({ dimension: args.dimension, region, resolution });
+}
+function validateBuildCollision(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const region = parseRegion(args.region);
+  if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
+  return ok({ dimension: args.dimension, region });
+}
+function validateFindEmptyArea(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const origin = parseVec3i(args.origin), requiredSize = parseVec3i(args.requiredSize);
+  if (!origin || !requiredSize || requiredSize.x < 1 || requiredSize.y < 1 || requiredSize.z < 1) return fail("INVALID_ARGS", "origin and positive requiredSize are required");
+  if (!Number.isInteger(args.radius) || args.radius < 0 || args.radius > 128) return fail("INVALID_ARGS", "radius must be an integer 0-128");
+  if (args.maxSlope !== void 0 && (!Number.isFinite(args.maxSlope) || Number(args.maxSlope) < 0)) return fail("INVALID_ARGS", "maxSlope must be non-negative");
+  return ok({ dimension: args.dimension, origin, requiredSize, radius: args.radius, maxSlope: typeof args.maxSlope === "number" ? args.maxSlope : void 0 });
+}
+function validatePlaceBlocks(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  if (!Array.isArray(args.blocks) || args.blocks.length < 1 || args.blocks.length > MAX_PLACE_BLOCKS) return fail("INVALID_ARGS", `blocks must contain 1-${MAX_PLACE_BLOCKS} entries`);
+  const seen = /* @__PURE__ */ new Set();
+  const blocks = [];
+  for (const entry of args.blocks) {
+    if (!isRecord(entry)) return fail("INVALID_ARGS", "each block must be an object");
+    const position = parseVec3i(entry.position);
+    if (!position || !isNonEmptyString(entry.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(entry.blockType)) return fail("INVALID_ARGS", "each block needs integer position and namespaced blockType");
+    const key = `${position.x},${position.y},${position.z}`;
+    if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
+    seen.add(key);
+    blocks.push({ position, blockType: entry.blockType });
+  }
+  const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
+  return ok({ dimension: args.dimension, blocks, batchSize, captureRollback: args.captureRollback === true });
 }
 function validateFillBlocks(args) {
   if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
@@ -635,6 +691,14 @@ function executeInspectTool(action) {
         return inspectScoreboard(action.arguments);
       case "inspect.tags":
         return inspectTags(action.arguments);
+      case "inspect.heightmap":
+        return inspectHeightmap(action.arguments, false);
+      case "inspect.surface":
+        return inspectHeightmap(action.arguments, true);
+      case "inspect.build_collision":
+        return inspectBuildCollision(action.arguments);
+      case "inspect.find_empty_area":
+        return inspectFindEmptyArea(action.arguments);
       default:
         return {
           ok: false,
@@ -646,6 +710,56 @@ function executeInspectTool(action) {
     const message = err instanceof Error ? err.message : "Tool execution failed";
     return { ok: false, code: "TOOL_ERROR", message };
   }
+}
+function surfaceAt(dimension, x, z, fromY, toY) {
+  for (let y = toY; y >= fromY; y--) {
+    const block = dimension.getBlock({ x, y, z });
+    if (block?.isValid && !block.isAir && !block.isLiquid) return { y, typeId: block.typeId };
+  }
+  return null;
+}
+function inspectHeightmap(args, includeSurface) {
+  const d = getDimension(args.dimension), samples = [];
+  const r = args.region, resolution = args.resolution ?? 1;
+  for (let x = r.min.x; x <= r.max.x; x += resolution) for (let z = r.min.z; z <= r.max.z; z += resolution) {
+    const top = surfaceAt(d, x, z, r.min.y, r.max.y);
+    samples.push({ x, z, height: top?.y ?? null, ...includeSurface ? { surfaceType: top?.typeId ?? "minecraft:air" } : {} });
+  }
+  const heights = samples.map((s) => s.height).filter((h) => typeof h === "number");
+  const min = heights.length ? Math.min(...heights) : null, max = heights.length ? Math.max(...heights) : null, average = heights.length ? heights.reduce((a, b) => a + b, 0) / heights.length : null;
+  return { ok: true, result: { dimension: args.dimension, region: r, resolution, min, max, average, slope: min === null || max === null ? null : max - min, columns: samples }, completedWork: samples.length, totalEstimatedWork: samples.length, message: `Sampled ${samples.length} terrain columns` };
+}
+function inspectBuildCollision(args) {
+  const d = getDimension(args.dimension), collisions = [];
+  let checked = 0;
+  for (let x = args.region.min.x; x <= args.region.max.x; x++) for (let y = args.region.min.y; y <= args.region.max.y; y++) for (let z = args.region.min.z; z <= args.region.max.z; z++) {
+    checked++;
+    const b = d.getBlock({ x, y, z });
+    if (b?.isValid && !b.isAir) collisions.push({ position: { x, y, z }, type: "block", blockType: b.typeId });
+  }
+  const entities = d.getEntities().filter((e) => {
+    const p = e.location;
+    return p.x >= args.region.min.x && p.x <= args.region.max.x + 1 && p.y >= args.region.min.y && p.y <= args.region.max.y + 1 && p.z >= args.region.min.z && p.z <= args.region.max.z + 1;
+  }).map((e) => ({ type: "entity", id: e.id, typeId: e.typeId }));
+  return { ok: true, result: { dimension: args.dimension, region: args.region, nonAirBlocks: collisions.length, collisions: [...collisions, ...entities], worldHeightValid: args.region.min.y >= -64 && args.region.max.y <= 319 }, completedWork: checked, totalEstimatedWork: checked, message: `Found ${collisions.length + entities.length} collision(s)` };
+}
+function inspectFindEmptyArea(args) {
+  const candidates = [];
+  const d = getDimension(args.dimension), step = Math.max(1, Math.ceil(args.requiredSize.x / 2));
+  for (let dx = -args.radius; dx <= args.radius; dx += step) for (let dz = -args.radius; dz <= args.radius; dz += step) {
+    const min = { x: args.origin.x + dx, y: args.origin.y, z: args.origin.z + dz }, max = { x: min.x + args.requiredSize.x - 1, y: min.y + args.requiredSize.y - 1, z: min.z + args.requiredSize.z - 1 };
+    const c = inspectBuildCollision({ dimension: args.dimension, region: { min, max } });
+    if (c.ok) {
+      const data = c.result;
+      const heights = [surfaceAt(d, min.x, min.z, -64, 319), surfaceAt(d, max.x, min.z, -64, 319), surfaceAt(d, min.x, max.z, -64, 319), surfaceAt(d, max.x, max.z, -64, 319)].map((s) => s?.y).filter((y) => typeof y === "number");
+      const slope = heights.length ? Math.max(...heights) - Math.min(...heights) : 999;
+      if (args.maxSlope !== void 0 && slope > args.maxSlope) continue;
+      const suitable = heights.length === 4;
+      candidates.push({ region: { min, max }, obstructions: data.nonAirBlocks, distance: Math.abs(dx) + Math.abs(dz), slope, surfaceSuitable: suitable, score: data.nonAirBlocks * 1e3 + slope * 20 + Math.abs(dx) + Math.abs(dz) + (suitable ? 0 : 500) });
+    }
+  }
+  candidates.sort((a, b) => Number(a.score) - Number(b.score));
+  return { ok: true, result: { dimension: args.dimension, requiredSize: args.requiredSize, maxSlope: args.maxSlope ?? null, candidates: candidates.slice(0, 8) }, completedWork: candidates.length, totalEstimatedWork: candidates.length, message: `Ranked ${candidates.length} terrain-suitable candidate areas` };
 }
 function inspectServerStatus(args) {
   const players = world2.getPlayers();
@@ -1163,6 +1277,53 @@ function startFill(action, emit, protectedRegions = []) {
   }
   system.runJob(job());
 }
+function startPlaceBlocks(action, emit, protectedRegions = []) {
+  const args = action.arguments;
+  const total = args.blocks.length;
+  if (emergencyDisabled) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Emergency disabled", error: { code: "EMERGENCY_DISABLED", message: "Mutations disabled" } });
+    return;
+  }
+  const protectedHit = args.blocks.some(({ position }) => protectedRegions.some((p) => p.dimension === args.dimension && position.x >= p.region.min.x && position.x <= p.region.max.x && position.y >= p.region.min.y && position.y <= p.region.max.y && position.z >= p.region.min.z && position.z <= p.region.max.z));
+  if (protectedHit) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Protected region", error: { code: "PROTECTED_REGION", message: "Placement intersects an add-on protected region" } });
+    return;
+  }
+  const dimension = world3.getDimension(args.dimension);
+  let placed = 0, skipped = 0, failed = 0;
+  const rollback = [];
+  function* job() {
+    try {
+      for (const { position, blockType } of args.blocks) {
+        if (cancelled.has(action.actionId) || emergencyDisabled) {
+          cancelled.delete(action.actionId);
+          emit({ state: "cancelled", completedWork: placed, totalEstimatedWork: total, message: `Cancelled after ${placed}/${total} blocks`, result: { placed, skipped, failed, rollback: { capturedBlocks: rollback.length, coverage: rollback.length / total } } });
+          return;
+        }
+        const block = dimension.getBlock(position);
+        if (!block?.isValid) {
+          failed++;
+          continue;
+        }
+        if (block.typeId === blockType) {
+          skipped++;
+          continue;
+        }
+        if (args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({ position, typeId: block.typeId });
+        block.setType(blockType);
+        placed++;
+        if ((placed + skipped + failed) % (args.batchSize ?? 512) === 0) {
+          emit({ state: "running", completedWork: placed, totalEstimatedWork: total, message: `Placed ${placed}/${total} blocks`, result: { placed, skipped, failed } });
+          yield;
+        }
+      }
+      emit({ state: failed ? "partially_completed" : "completed", completedWork: placed, totalEstimatedWork: total, message: `Placed ${placed}, skipped ${skipped}, failed ${failed}`, result: { dimension: args.dimension, placed, skipped, failed, rollback: { available: rollback.length === placed, capturedBlocks: rollback.length, coverage: placed ? rollback.length / placed : 1 } } });
+    } catch (e) {
+      emit({ state: placed ? "partially_completed" : "failed", completedWork: placed, totalEstimatedWork: total, message: e instanceof Error ? e.message : "Placement failed", result: { placed, skipped, failed } });
+    }
+  }
+  system.runJob(job());
+}
 
 // src/net/client.ts
 import {
@@ -1171,6 +1332,13 @@ import {
   HttpRequestMethod,
   http
 } from "@minecraft/server-net";
+var ControllerHttpError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+    this.name = "ControllerHttpError";
+  }
+};
 var ControllerClient = class {
   constructor(baseUrl, authToken) {
     this.baseUrl = baseUrl;
@@ -1199,22 +1367,24 @@ var ControllerClient = class {
     if (response.status < 200 || response.status >= 300) {
       const err = parsed && typeof parsed === "object" && "error" in parsed && parsed.error ? parsed.error : void 0;
       const message = err && typeof err.message === "string" ? err.message : `HTTP ${response.status}`;
-      throw new Error(message);
+      throw new ControllerHttpError(response.status, message);
     }
     return { status: response.status, body: parsed };
   }
 };
 
 // src/net/session.ts
-var POLL_INTERVAL_TICKS = 40;
-var HEARTBEAT_EVERY_N_POLLS = 3;
+var POLL_INTERVAL_TICKS = 10;
+var HEARTBEAT_INTERVAL_TICKS = 120;
+var RECONNECT_BACKOFF_TICKS = 100;
 var ControllerSession = class {
   constructor(config) {
     this.config = config;
     this.sessionId = null;
     this.running = false;
     this.busy = false;
-    this.pollCount = 0;
+    this.nextHeartbeatTick = 0;
+    this.nextHandshakeTick = 0;
     this.idempotency = createIdempotencyTracker();
     this.client = new ControllerClient(config.controllerUrl, config.authToken);
   }
@@ -1227,6 +1397,7 @@ var ControllerSession = class {
     void this.handshake();
   }
   async handshake() {
+    if (system2.currentTick < this.nextHandshakeTick) return;
     try {
       const req = createHandshake({
         sessionId: "pending",
@@ -1243,11 +1414,13 @@ var ControllerSession = class {
         return;
       }
       this.sessionId = parsed.value.sessionId;
+      this.nextHandshakeTick = 0;
       notifyOperators(`Connected to controller (session ${this.sessionId})`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Handshake error";
       notifyOperators(`Handshake error: ${message}`);
       this.sessionId = null;
+      this.nextHandshakeTick = system2.currentTick + RECONNECT_BACKOFF_TICKS;
     }
   }
   async tick() {
@@ -1258,9 +1431,9 @@ var ControllerSession = class {
         await this.handshake();
         return;
       }
-      this.pollCount += 1;
-      if (this.pollCount % HEARTBEAT_EVERY_N_POLLS === 0) {
+      if (system2.currentTick >= this.nextHeartbeatTick) {
         await this.sendHeartbeat();
+        this.nextHeartbeatTick = system2.currentTick + HEARTBEAT_INTERVAL_TICKS;
       }
       await this.pollOnce();
     } finally {
@@ -1281,9 +1454,10 @@ var ControllerSession = class {
         emergencyDisabled: isEmergencyDisabled()
       }
     });
-    const res = await this.client.postJson("/v1/bds/heartbeat", body);
-    if (res.status === 401) {
-      this.sessionId = null;
+    try {
+      await this.client.postJson("/v1/bds/heartbeat", body);
+    } catch (err) {
+      this.handleTransportFailure(err);
     }
   }
   async pollOnce() {
@@ -1292,9 +1466,11 @@ var ControllerSession = class {
       sessionId: this.sessionId,
       requestId: newId("req")
     });
-    const res = await this.client.postJson("/v1/bds/poll", poll);
-    if (res.status === 401) {
-      this.sessionId = null;
+    let res;
+    try {
+      res = await this.client.postJson("/v1/bds/poll", poll);
+    } catch (err) {
+      this.handleTransportFailure(err);
       return;
     }
     const parsed = validatePollResponse(res.body);
@@ -1304,6 +1480,17 @@ var ControllerSession = class {
     }
     if (!parsed.value.action) return;
     await this.handleAction(parsed.value.action);
+  }
+  /** A controller restart invalidates in-memory session IDs. Drop the stale ID so tick() handshakes again. */
+  handleTransportFailure(err) {
+    if (err instanceof ControllerHttpError && (err.status === 401 || err.status === 404)) {
+      if (this.sessionId) notifyOperators("Controller session expired; reconnecting automatically");
+      this.sessionId = null;
+      this.nextHandshakeTick = 0;
+      return;
+    }
+    this.sessionId = null;
+    this.nextHandshakeTick = system2.currentTick + RECONNECT_BACKOFF_TICKS;
   }
   async handleAction(rawAction) {
     if (!this.sessionId) return;
@@ -1331,6 +1518,12 @@ var ControllerSession = class {
     }
     if (action.toolName === "world.fill_blocks") {
       startFill(action, (event) => {
+        void this.emitEvent({ actionId: action.actionId, ...event });
+      }, this.config.protectedRegions);
+      return;
+    }
+    if (action.toolName === "world.place_blocks") {
+      startPlaceBlocks(action, (event) => {
         void this.emitEvent({ actionId: action.actionId, ...event });
       }, this.config.protectedRegions);
       return;

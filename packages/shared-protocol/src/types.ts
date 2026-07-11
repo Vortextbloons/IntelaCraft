@@ -73,6 +73,18 @@ export interface FillBlocksArgs {
   captureRollback?: boolean;
 }
 
+export interface PlaceBlocksArgs {
+  dimension: DimensionId;
+  blocks: Array<{ position: Vec3i; blockType: string }>;
+  batchSize?: number;
+  captureRollback?: boolean;
+}
+
+export interface InspectHeightmapArgs { dimension: DimensionId; region: RegionBounds; resolution?: 1 | 2 | 4; }
+export interface InspectSurfaceArgs { dimension: DimensionId; region: RegionBounds; resolution?: 1 | 2 | 4; }
+export interface InspectBuildCollisionArgs { dimension: DimensionId; region: RegionBounds; }
+export interface InspectFindEmptyAreaArgs { dimension: DimensionId; origin: Vec3i; requiredSize: Vec3i; radius: number; maxSlope?: number; }
+
 export interface ActionRequestMessage extends MessageEnvelope {
   messageType: "action_request";
   actionId: string;

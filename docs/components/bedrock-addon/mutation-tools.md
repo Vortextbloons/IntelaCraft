@@ -1,6 +1,6 @@
 # Mutation Tools
 
-All 4 world-modifying tools. These tools execute within a single tick or via a generator for long-running fills.
+All 5 world-modifying tools. These tools execute within a single tick or via a generator for long-running fills and placements.
 
 ## Overview
 
@@ -101,7 +101,69 @@ The `control.cancel` tool adds an `actionId` to a module-level `cancelled` Set. 
 
 ---
 
-### 2. control.cancel
+### 2. world.place_blocks
+
+Places individually addressed blocks at specific positions using a generator-based approach.
+
+| Argument | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `dimension` | `DimensionId` | Yes | — | Target dimension |
+| `blocks` | `Array<{position: Vec3i, blockType: string}>` | Yes | — | 1–8192 position/block pairs |
+| `batchSize` | `number` | No | `512` | Blocks per yield interval |
+| `captureRollback` | `boolean` | No | `false` | Store original blocks before modification |
+
+#### Safety Checks (in order)
+
+1. **Emergency disable**: Fails with `EMERGENCY_DISABLED` if global kill switch is active
+2. **Block count**: Must be 1–`MAX_PLACE_BLOCKS` (8192). Fails with `INVALID_ARGS` if exceeded
+3. **Protected regions**: Fails with `PROTECTED_REGION` if any block position overlaps a protected region
+
+#### Generator Execution
+
+The placement runs as a generator via `system.runJob()`, yielding control back to the server every `batchSize` blocks:
+
+```
+startPlaceBlocks()
+  │
+  ├── Safety checks (emergency, protected regions)
+  │
+  ├── dimension = world.getDimension(args.dimension)
+  │
+  └── system.runJob(job())
+        │
+        ├── For each { position, blockType } in blocks:
+        │   ├── Check cancelled Set → emit "cancelled", return
+        │   ├── Check emergencyDisabled → emit "cancelled", return
+        │   ├── dimension.getBlock() → block unavailable? failed++
+        │   ├── block.typeId === blockType? → skipped++ (already correct)
+        │   ├── captureRollback? → store {position, typeId} (max 8192)
+        │   ├── block.setType(blockType) → placed++
+        │   └── (placed+skipped+failed) % batchSize === 0? → emit "running", yield
+        │
+        └── Loop complete → emit "completed" or "partially_completed"
+```
+
+#### Completion Result
+
+```json
+{
+  "dimension": "minecraft:overworld",
+  "placed": 128,
+  "skipped": 2,
+  "failed": 0,
+  "rollback": {
+    "available": true,
+    "capturedBlocks": 128,
+    "coverage": 1.0
+  }
+}
+```
+
+**Example**: *"Place an oak door at 5,64,5 and a torch at 5,65,5"*
+
+---
+
+### 3. control.cancel
 
 Cancels a running action by its action ID.
 
@@ -109,7 +171,7 @@ Cancels a running action by its action ID.
 |----------|------|----------|-------------|
 | `actionId` | `string` | Yes | ID of the action to cancel |
 
-**Mechanism**: Adds the `actionId` to a module-level `cancelled` Set. Running operations (currently only `world.fill_blocks`) check this Set per-iteration.
+**Mechanism**: Adds the `actionId` to a module-level `cancelled` Set. Running operations (`world.fill_blocks`, `world.place_blocks`) check this Set per-iteration.
 
 **Does not**:
 - Immediately stop operations
@@ -131,7 +193,7 @@ Cancels a running action by its action ID.
 
 ---
 
-### 3. control.emergency_disable
+### 4. control.emergency_disable
 
 Global kill switch that halts all mutations until cleared.
 
@@ -143,9 +205,10 @@ Global kill switch that halts all mutations until cleared.
 
 **Effects when enabled**:
 - `world.fill_blocks` → `EMERGENCY_DISABLED` error
+- `world.place_blocks` → `EMERGENCY_DISABLED` error
 - `admin.run_command` → `EMERGENCY_DISABLED` error
 - `control.emergency_disable` itself still works (to clear)
-- Fill generators check per-iteration and cancel mid-run
+- Fill/placement generators check per-iteration and cancel mid-run
 - Reported in heartbeat health data (`emergencyDisabled: true`)
 
 **Returns**:
@@ -163,7 +226,7 @@ Global kill switch that halts all mutations until cleared.
 
 ---
 
-### 4. admin.run_command
+### 5. admin.run_command
 
 Runs a pre-approved Minecraft command from the allowlist.
 
@@ -223,17 +286,18 @@ Runs a pre-approved Minecraft command from the allowlist.
 
 | Mechanism | Applies To | Check Point |
 |-----------|-----------|-------------|
-| Emergency disable | fill_blocks, admin.run_command | Pre-check + per-iteration (fill) |
+| Emergency disable | fill_blocks, place_blocks, admin.run_command | Pre-check + per-iteration (fill/placement) |
 | Volume limit | fill_blocks | Pre-check (≤ 32768 blocks) |
-| Protected regions | fill_blocks | Pre-check (AABB overlap) |
+| Block count limit | place_blocks | Pre-check (≤ 8192 blocks) |
+| Protected regions | fill_blocks, place_blocks | Pre-check (AABB overlap) |
 | Allowlist | admin.run_command | Pre-check (commandId lookup) |
 | Command mismatch | admin.run_command | Pre-check (optional string compare) |
-| Cancellation | fill_blocks | Per-iteration (cancelled Set check) |
-| Rollback capture | fill_blocks | Per-block (before setType) |
+| Cancellation | fill_blocks, place_blocks | Per-iteration (cancelled Set check) |
+| Rollback capture | fill_blocks, place_blocks | Per-block (before setType) |
 | Idempotency | All mutations | Pre-check (session-level tracker) |
 | Expiry | All mutations | Pre-check (isExpired on expiresAt) |
 | Busy guard | Session | Pre-tick (skips overlapping ticks) |
-| Auth invalidation | Session | Post-request (401 → re-handshake) |
+| Auth invalidation | Session | Post-request (401/404 → re-handshake with backoff) |
 
 ## Fill Generator Flow
 

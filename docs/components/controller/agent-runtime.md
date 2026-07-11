@@ -30,6 +30,8 @@ The AI agent runtime (`src/agent.ts`, ~1,287 lines) is the most complex componen
 | `error` | string \| null | Error message if failed |
 | `createdAt` | number | Creation timestamp |
 | `updatedAt` | number | Last update timestamp |
+| `preview` | BuildPreview \| null | Construction preview (blocks, batches, materials, warnings) |
+| `worldSnapshot` | WorldSnapshot \| null | Live collision data from inspect.build_collision |
 
 ## Task State Machine
 
@@ -77,8 +79,34 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 1. Bind `InspectionExecutor` for live BDS bridge
 2. Call `planWithPiSession` (pi-extension's main planning function)
 3. `validatePlanTools` — all inspection/verification actions must use `inspect.*` tools
-4. Dry-run `materializeAction` to validate arguments
-5. **Retry once** on validation failure with error context injected into the next attempt
+4. **Build validation** — semantic build steps (`build.*`) are validated via `validateBuildPlan()` from the construction package (checks step IDs, dependencies, circular refs, geometry, volume limits, protected regions)
+5. Dry-run `materializeAction` to validate arguments
+6. **Retry once** on validation failure with error context injected into the next attempt
+
+## Semantic Build Conversion
+
+When materializing actions, steps with `toolName.startsWith("build.")` are automatically converted:
+
+1. `generateSemantic(toolName, args)` from `@intelacraft/construction` produces a `GeneratedBuild` (dimension + `BlockPlacement[]` + bounds)
+2. The action is materialized as `world.place_blocks` with the generated block array
+3. `inspect.build_collision` actions are auto-added for each semantic build's bounding box
+4. `previewPlacements()` analyzes the combined builds for cost, conflicts, and warnings
+5. The preview is stored on `task.preview` for the webview to display
+
+### worldSnapshot
+
+When `inspect.build_collision` results arrive via `onOperationEvent`, the controller captures a `WorldSnapshot`:
+
+```typescript
+interface WorldSnapshot {
+  capturedAt: string;
+  dimension: DimensionId;
+  collisions: Array<{ position?: Vec3i; type: string }>;
+  protectedRegions: Array<{ dimension: string; region: RegionBounds }>;
+}
+```
+
+This snapshot is passed to `previewPlacements()` to account for live world state when estimating build cost.
 
 ## Live Inspection Execution
 
@@ -143,3 +171,5 @@ Controls the AI model's reasoning depth. Passed directly to the Pi SDK.
 | `low` | Light reasoning |
 | `medium` | Moderate reasoning |
 | `high` | Deep reasoning (slower, more thorough) |
+| `xhigh` | Extended reasoning |
+| `max` | Maximum reasoning budget |

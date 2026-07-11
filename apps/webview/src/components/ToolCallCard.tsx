@@ -57,22 +57,27 @@ export function ToolCallCard({
           </span>
         )}
       </div>
-      {argsSummary && !argsSummary.startsWith("call_") && (
-        <div className="tool-args meta">{argsSummary}</div>
-      )}
       {!done && total > 0 && (
         <div className="progress-bar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
           <span style={{ width: `${pct}%` }} />
         </div>
       )}
-      {showResult &&
-        (errorText ? (
-          <pre className="tool-result tool-result-error">Failed: {errorText}</pre>
-        ) : parsed ? (
-          <ToolResultBody summary={parsed.summary} data={parsed.data} facts={facts} />
-        ) : (
-          <pre className="tool-result">{resultText}</pre>
-        ))}
+      {(argsSummary || showResult) && (
+        <details className="tool-details" open={!done}>
+          <summary>{done ? "Show details" : "Working details"}</summary>
+          {argsSummary && !argsSummary.startsWith("call_") && (
+            <div className="tool-args meta">{argsSummary}</div>
+          )}
+          {showResult &&
+            (errorText ? (
+              <pre className="tool-result tool-result-error">Failed: {errorText}</pre>
+            ) : parsed ? (
+              <ToolResultBody summary={parsed.summary} data={parsed.data} facts={facts} />
+            ) : (
+              <pre className="tool-result">{resultText}</pre>
+            ))}
+        </details>
+      )}
     </div>
   );
 }

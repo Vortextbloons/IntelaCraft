@@ -68,18 +68,18 @@ The webview uses Server-Sent Events for real-time data in three places:
 
 ```
 POST /v1/tasks/stream
-Body: { "message": "...", "sessionId": "..." }
+Body: { "request": "...", "piSessionId": "...", "bdsSessionId": "..." }
 ```
 
 - Returns an SSE stream of model tokens as the AI generates a response
-- Events: `token`, `thinking`, `tool_call`, `plan`, `done`, `error`
+- Events: `ready`, `delta`, `reasoning_delta`, `status`, `tool`, `task`, `error`
 - Used when the user sends their first message on a new task
 
 ### 2. Conversation Continuation
 
 ```
 POST /v1/tasks/:id/stream
-Body: { "message": "..." }
+Body: { "request": "...", "piSessionId": "..." }
 ```
 
 - Resumes a conversation on an existing task
@@ -93,7 +93,7 @@ GET /v1/events/stream
 ```
 
 - Receives tool execution events from the controller in real time
-- Events: `tool_start`, `tool_progress`, `tool_complete`, `tool_error`
+- Events: `ready`, `operation` (contains `OperationEventMessage` data)
 - Drives the `ToolCallCard` progress indicators
 - Includes 15-second keepalive pings to prevent connection timeouts
 
@@ -118,11 +118,17 @@ Provides functions to save and restore chat transcripts using localStorage.
 
 ### Storage Key
 
+All conversations are stored in a single localStorage key:
+
 ```
-intelacon:{taskId}
+intelacraft_chats_v1
 ```
 
-Each task's conversation is stored independently in localStorage.
+This is a JSON object mapping task IDs to `ChatMsg[]` arrays. A separate key tracks the active chat:
+
+```
+intelacraft_active_chat
+```
 
 ### Reconstruction
 

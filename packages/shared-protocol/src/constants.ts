@@ -9,6 +9,8 @@ export const MAX_BUILD_VOLUME = 32 * 32 * 32;
 export const STRONG_BUILD_VOLUME = 4096;
 export const DEFAULT_BATCH_SIZE = 512;
 export const MAX_ROLLBACK_BLOCKS = 8192;
+/** Maximum individually addressed blocks in one deterministic placement action. */
+export const MAX_PLACE_BLOCKS = 8192;
 
 export const MESSAGE_TYPES = [
   "handshake",
@@ -54,9 +56,14 @@ export const READ_TOOLS = [
   "inspect.entities",
   "inspect.scoreboard",
   "inspect.tags",
+  "inspect.heightmap",
+  "inspect.surface",
+  "inspect.build_collision",
+  "inspect.find_empty_area",
 ] as const;
 export const MUTATION_TOOLS = [
   "world.fill_blocks",
+  "world.place_blocks",
   "control.cancel",
   "control.emergency_disable",
   "admin.run_command",

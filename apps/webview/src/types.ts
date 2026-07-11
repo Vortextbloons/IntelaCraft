@@ -47,7 +47,9 @@ export type Task = {
     inspection?: PlanStep[];
     actions?: PlanStep[];
     verification?: PlanStep[];
+    build?: { palette:Array<{role:string;blockType:string}>; steps:Array<{id:string;summary:string;toolName:string;dependsOn?:string[]}>; estimates:{blocksChanged:number;operations:number}; warnings:string[] };
   };
+  preview?: { generatedBlocks:number; blocksAdded:number; blocksReplaced:number; blocksRemoved:number; rollbackCoverage:number; estimatedBatches:number; warnings:string[]; materials:Record<string,number> };
   proposedActions?: ProposedAction[];
   enqueuedActionIds?: string[];
   completedActionIds?: string[];

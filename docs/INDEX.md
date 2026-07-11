@@ -19,8 +19,8 @@ The in-game execution agent that runs inside Minecraft Bedrock Dedicated Server.
 |------|-------------|
 | [components/bedrock-addon/README.md](components/bedrock-addon/README.md) | Addon overview, file structure, safety layers, BDS configuration |
 | [components/bedrock-addon/session.md](components/bedrock-addon/session.md) | Session lifecycle: handshake, poll loop (2s), heartbeat (6s), reconnection |
-| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | All 10 read-only world query tools with args, API calls, return values |
-| [components/bedrock-addon/mutation-tools.md](components/bedrock-addon/mutation-tools.md) | All 4 mutation tools: fill_blocks, control.cancel, emergency_disable, admin.run_command |
+| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | All 14 read-only world query tools with args, API calls, return values |
+| [components/bedrock-addon/mutation-tools.md](components/bedrock-addon/mutation-tools.md) | All 5 mutation tools: fill_blocks, place_blocks, control.cancel, emergency_disable, admin.run_command |
 | [components/bedrock-addon/build-deploy.md](components/bedrock-addon/build-deploy.md) | esbuild bundling, dev/prod deployment, BDS config writing, pack manifests |
 
 ## Components — Webview
@@ -51,7 +51,8 @@ npm workspace packages under @intelacraft scope.
 | File | Description |
 |------|-------------|
 | [components/packages/README.md](components/packages/README.md) | Package ecosystem overview, dependency graph, build order |
-| [components/packages/shared-protocol.md](components/packages/shared-protocol.md) | Wire protocol: constants, types, validation, helpers, factories |
+| [components/packages/shared-protocol.md](components/packages/shared-protocol.md) | Wire protocol types, validation, helpers, factories |
+| [components/packages/construction.md](components/packages/construction.md) | Semantic geometric build tools: walls, floors, rooms, stairs, roofs |
 | [components/packages/pi-extension.md](components/packages/pi-extension.md) | AI planning agent: system prompt, tools, session lifecycle, plan normalization |
 | [components/packages/prompts.md](components/packages/prompts.md) | Prompt utilities: wrapUntrusted, adminAllowlistSection |
 | [components/packages/mcp-connection.md](components/packages/mcp-connection.md) | Advisory MCP client: graceful degradation, query interface |
@@ -64,7 +65,7 @@ API documentation, configuration, and protocol specification.
 |------|-------------|
 | [reference/api.md](reference/api.md) | Complete HTTP API reference (21 endpoints) with request/response formats |
 | [reference/configuration.md](reference/configuration.md) | Environment variables, BDS config, permission modes, risk classes |
-| [reference/protocol.md](reference/protocol.md) | Protocol versioning, 8 message types, 14 tools, constants, validation |
+| [reference/protocol.md](reference/protocol.md) | Protocol versioning, 8 message types, 18 tools, constants, validation |
 
 ## Guides
 
@@ -95,4 +96,4 @@ Runbook, security analysis, and troubleshooting.
 
 ## File Count
 
-**30 documentation files** across 7 directories, totaling ~230 KB.
+**31 documentation files** across 7 directories, totaling ~240 KB.

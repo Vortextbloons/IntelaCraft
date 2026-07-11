@@ -30,6 +30,7 @@ import {
   type InspectionToolName,
 } from "@intelacraft/pi-extension";
 import { AdvisoryMcpClient } from "@intelacraft/mcp-connection";
+import { generateSemantic, previewPlacements, validateBuildPlan, type BuildPreview, type SemanticToolName, type WorldSnapshot } from "@intelacraft/construction";
 import type { ControllerConfig } from "./config.js";
 import { classify, payloadHash } from "./policy.js";
 import type { SessionStore, SettingsStore } from "./store.js";
@@ -57,6 +58,8 @@ export interface AgentTask {
   createdAt: string;
   updatedAt: string;
   plan?: AgentPlan;
+  preview?: BuildPreview;
+  worldSnapshot?: WorldSnapshot;
   /** Mutations awaiting approval, or inspect-only actions once materialized. */
   proposedActions?: ActionRequestMessage[];
   /** Read-only inspection actions auto-enqueued without approval. */
@@ -691,6 +694,25 @@ export class AgentRuntime {
         throw new Error("Inspection and verification steps must be read-only");
       }
     }
+    const semantic = plan.actions.filter((step) => step.toolName.startsWith("build."));
+    if (semantic.length) {
+      const validation = validateBuildPlan({
+        summary: plan.summary,
+        palette: plan.build?.palette ?? [],
+        steps: semantic.map((step, index) => ({
+          id: step.id ?? `build-${index + 1}`,
+          summary: step.summary,
+          toolName: step.toolName as SemanticToolName,
+          arguments: step.arguments,
+          dependsOn: step.dependsOn,
+        })),
+        verification: plan.verification,
+        estimates: plan.build?.estimates ?? { blocksChanged: 0, operations: semantic.length },
+        warnings: plan.build?.warnings ?? [],
+      }, { protectedRegions: this.config.protectedRegions as any });
+      const errors = validation.issues.filter((issue) => issue.severity === "error");
+      if (errors.length) throw new Error(errors.map((issue) => `${issue.code}: ${issue.message}`).join("; "));
+    }
   }
 
   private resolveHistory(piSessionId: string, clientHistory?: ChatTurn[]): ChatTurn[] {
@@ -734,8 +756,13 @@ export class AgentRuntime {
       builderRegions: this.config.builderRegions,
       adminCommands: this.config.adminCommands,
     };
-    const tool = step.toolName as ToolName;
+    let tool = step.toolName as ToolName;
     let args = step.arguments;
+    if (step.toolName.startsWith("build.")) {
+      const build = generateSemantic(step.toolName as SemanticToolName, args);
+      tool = "world.place_blocks";
+      args = { dimension: build.dimension, blocks: build.blocks, captureRollback: true };
+    }
     if (tool === "admin.run_command") {
       const commandId = String(args.commandId ?? "");
       const entry = this.config.adminCommands[commandId];
@@ -775,6 +802,18 @@ export class AgentRuntime {
     }
     const reads = plan.inspection.map((step) => this.materializeAction(step, input, true));
     const proposed = plan.actions.map((a) => this.materializeAction(a, input, false));
+    const generatedBuilds = plan.actions.filter((a) => a.toolName.startsWith("build.")).map((a) => generateSemantic(a.toolName as SemanticToolName, a.arguments));
+    const detailed = generatedBuilds.flatMap((build) => build.blocks);
+    // Semantic geometry must be checked against the live server immediately before approval.
+    // The normal inspect/replan gate returns these observations to Pi for one correction pass.
+    for (const build of generatedBuilds) {
+      reads.push(this.materializeAction({ toolName: "inspect.build_collision", arguments: { dimension: build.dimension, region: build.bounds } }, input, true));
+    }
+    task.preview = detailed.length ? previewPlacements({ dimension: generatedBuilds[0].dimension, blocks: detailed, bounds: { min: { x: Math.min(...detailed.map(b=>b.position.x)), y: Math.min(...detailed.map(b=>b.position.y)), z: Math.min(...detailed.map(b=>b.position.z)) }, max: { x: Math.max(...detailed.map(b=>b.position.x)), y: Math.max(...detailed.map(b=>b.position.y)), z: Math.max(...detailed.map(b=>b.position.z)) } } }, { protectedRegions: this.config.protectedRegions as any, snapshot: task.worldSnapshot }) : undefined;
+    if (plan.build && task.preview) {
+      plan.build.estimates = { blocksChanged: task.preview.generatedBlocks, operations: proposed.length };
+      plan.build.warnings = task.preview.warnings;
+    }
     const verification = plan.verification.map((step) => this.materializeAction(step, input, true));
     task.plan = plan;
     task.pendingReads = reads;
@@ -1390,6 +1429,12 @@ export class AgentRuntime {
             content: `[tool result ${tool}] ${resultText}`.slice(0, 4000),
           });
           await injectPiToolResult(task.piSessionId, tool, detail.message ?? "ok", detail.result);
+          if (tool === "inspect.build_collision" && detail.result && typeof detail.result === "object") {
+            const collisionResult = detail.result as { dimension?: string; collisions?: Array<{ position?: { x:number;y:number;z:number }; type?: string }> };
+            if (collisionResult.dimension && Array.isArray(collisionResult.collisions)) {
+              task.worldSnapshot = { capturedAt: new Date().toISOString(), dimension: collisionResult.dimension as WorldSnapshot["dimension"], collisions: collisionResult.collisions.map((c) => ({ position: c.position, type: c.type ?? "unknown" })), protectedRegions: this.config.protectedRegions as any };
+            }
+          }
         }
 
         if (state === "failed") {

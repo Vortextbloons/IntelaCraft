@@ -293,9 +293,11 @@ IntelaCraft processes tasks sequentially by default:
 ### Task status lifecycle
 
 ```
-planning → waiting_approval → executing → completed
-    ↓              ↓              ↓
-  failed        rejected       cancelled
+submitted → planning → inspecting → awaiting_approval → running → verifying → completed
+                       ↓                                  ↓
+                    awaiting_approval                  failed
+                       ↓                                  ↓
+                    rejected                          cancelled
 ```
 
 ### Checking task queue

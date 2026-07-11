@@ -53,12 +53,10 @@ export function Transcript({
               ? [liveProgress]
               : [];
           const parts = m.parts ?? [];
-          const reasoning = parts.find((p) => p.type === "reasoning");
-          const toolParts = parts.filter((p) => p.type === "tool_call");
-          const statusParts = parts.filter((p) => p.type === "status");
-          const textParts = parts.filter((p) => p.type === "text");
-          const bodyText =
-            textParts.map((p) => (p.type === "text" ? p.text : "")).join("") || m.text;
+          // Render parts in their emitted order. This keeps an assistant response
+          // flowing below each tool call instead of collecting every tool at the end.
+          const displayParts =
+            parts.length > 0 ? parts : m.text ? [{ type: "text" as const, text: m.text }] : [];
           // Only the newest turn for a task owns the Plan card (avoids jump-up on continue).
           const latestIndexForTask = m.taskId ? latestMessageByTask.get(m.taskId) : undefined;
           const isLatestForTask = !m.taskId || latestIndexForTask === index;
@@ -67,34 +65,44 @@ export function Transcript({
           return (
             <div key={m.id} className={`turn ${m.role}${m.streaming ? " streaming" : ""}`}>
               <div className="turn-stack">
-                <div className="turn-role">
-                  {m.role === "user" ? "You" : m.role === "assistant" ? "IntelaCraft" : "System"}
-                </div>
-
-                {m.role === "assistant" && reasoning && reasoning.type === "reasoning" && (
-                  <ReasoningBlock text={reasoning.text} streaming={reasoning.streaming} />
-                )}
-
-                {statusParts.map((p, i) =>
-                  p.type === "status" ? (
-                    <div key={`st-${i}`} className="turn-status meta">
-                      {p.text}
+                {displayParts.map((part, partIndex) => {
+                  const key = part.type === "tool_call" ? part.id : `${part.type}-${partIndex}`;
+                  if (part.type === "reasoning") {
+                    return (
+                      <div key={key} className="message-event message-event-reasoning">
+                        <ReasoningBlock text={part.text} streaming={part.streaming} />
+                      </div>
+                    );
+                  }
+                  if (part.type === "status") {
+                    return <div key={key} className="message-event turn-status meta">{part.text}</div>;
+                  }
+                  if (part.type === "tool_call") {
+                    return (
+                      <div key={key} className="message-event message-event-tool">
+                        <ToolCallCard part={part} />
+                      </div>
+                    );
+                  }
+                  if (part.type === "plan") return null;
+                  return (
+                    <div key={key} className="message-event message-event-text">
+                      <div className="message-event-role">
+                        {m.role === "user" ? "You" : m.role === "assistant" ? "IntelaCraft" : "System"}
+                      </div>
+                      <div className="turn-bubble">
+                      {m.role === "assistant" && !m.streaming ? (
+                        <MarkdownText className="turn-body" text={part.text} />
+                      ) : (
+                        <div className="turn-body">{part.text}</div>
+                      )}
+                      </div>
                     </div>
-                  ) : null,
-                )}
+                  );
+                })}
 
-                {(bodyText || m.streaming) && (
-                  <div className="turn-bubble">
-                    {m.role === "assistant" ? (
-                      <MarkdownText className="turn-body" text={bodyText} />
-                    ) : (
-                      <div className="turn-body">{bodyText}</div>
-                    )}
-                  </div>
-                )}
-
-                {toolParts.map((p) =>
-                  p.type === "tool_call" ? <ToolCallCard key={p.id} part={p} /> : null,
+                {m.streaming && !displayParts.some((part) => part.type === "text") && (
+                  <div className="turn-bubble"><div className="turn-body" /></div>
                 )}
 
                 {showPlan && task && (

@@ -73,6 +73,7 @@ class ControllerClient {
 ```typescript
 const POLL_INTERVAL_TICKS = 40;          // ~2 seconds
 const HEARTBEAT_EVERY_N_POLLS = 3;       // heartbeat every 3 polls (~6s)
+const RECONNECT_BACKOFF_TICKS = 100;     // 5 seconds after a failed handshake
 ```
 
 ### ControllerSession Class
@@ -84,6 +85,7 @@ class ControllerSession {
   private running = false;
   private busy = false;
   private pollCount = 0;
+  private nextHandshakeTick = 0;
   private readonly idempotency = createIdempotencyTracker();
 }
 ```
@@ -113,6 +115,8 @@ Response: validateHandshakeAck(body)
   └── parsed.value.ok === true → sessionId = parsed.value.sessionId
 ```
 
+**Backoff**: If `system.currentTick < this.nextHandshakeTick`, the handshake is skipped entirely. On failure, `nextHandshakeTick` is set to `currentTick + 100` (~5 seconds). On success, it is reset to `0`.
+
 On 401 or any error, `sessionId` is set to `null` so the next `tick()` will retry the handshake.
 
 ### tick()
@@ -137,21 +141,11 @@ try {
 
 ```
 POST /v1/bds/heartbeat
-  body: createHeartbeat({
-    sessionId,
-    requestId: newId("req"),
-    serverId,
-    health: {
-      ok: true,
-      playerCount: world.getPlayers().length,
-      tick: system.currentTick,
-      emergencyDisabled: isEmergencyDisabled()
-    }
-  })
+  body: createHeartbeat({...})
 
 Response handling:
-  ├── status 401 → sessionId = null (force re-handshake)
-  └── other → fire-and-forget
+  ├── success → ok
+  └── error → handleTransportFailure(err)
 ```
 
 ### pollOnce()
@@ -161,10 +155,23 @@ POST /v1/bds/poll
   body: createPoll({ sessionId, requestId: newId("req") })
 
 Response:
-  ├── status 401 → sessionId = null, return
+  ├── error → handleTransportFailure(err), return
   ├── validatePollResponse(body) fails → notifyOperators, return
   ├── parsed.value.action === undefined → no action, return
   └── parsed.value.action exists → handleAction(action)
+```
+
+### handleTransportFailure()
+
+```
+ControllerHttpError (401 or 404):
+  → sessionId = null
+  → nextHandshakeTick = 0 (immediate retry)
+  → notifyOperators("Controller session expired; reconnecting automatically")
+
+Network error / other:
+  → sessionId = null
+  → nextHandshakeTick = currentTick + 100 (throttled retry)
 ```
 
 ### handleAction()
@@ -180,10 +187,11 @@ Response:
    └── duplicate → emitFailure(DUPLICATE)
 
 4. Dispatch by toolName:
-   ├── "world.fill_blocks"  → startFill(action, emit, protectedRegions)
-   ├── "control.*"          → executeControl(action) → emitEvent
-   ├── "admin.run_command"  → executeAdminCommand(action, adminCommands) → emitEvent
-   └── "inspect.*"          → executeInspectTool(action) → emitEvent
+   ├── "world.fill_blocks"     → startFill(action, emit, protectedRegions)
+   ├── "world.place_blocks"    → startPlaceBlocks(action, emit, protectedRegions)
+   ├── "control.*"             → executeControl(action) → emitEvent
+   ├── "admin.run_command"     → executeAdminCommand(action, adminCommands) → emitEvent
+   └── "inspect.*"             → executeInspectTool(action) → emitEvent
 ```
 
 ### emitEvent()
@@ -237,8 +245,9 @@ Fire-and-forget: errors in event emission are silently ignored.
                              │                                    │
                              ▼                                    │
                     ┌─────────────────┐                           │
-                    │  401 on any     │──sessionId = null─────────┘
-                    │  request        │   (next tick re-handshakes)
+                    │  handleTransport│──401/404──────────────────┘
+                    │  Failure(err)   │   sessionId=null, nextHandshakeTick=0
+                    │  network error  │   sessionId=null, backoff 5s
                     └─────────────────┘
 ```
 
@@ -249,8 +258,9 @@ Fire-and-forget: errors in event emission are silently ignored.
 | `void this.handshake()` | Fire-and-forget for initial handshake (non-critical) |
 | `void this.tick()` | Interval callback ignores returned promise |
 | `void this.emitEvent(...)` | Fill tool emits events without blocking |
-| `try/catch` in `handshake()` | Catches network errors, sets `sessionId = null` |
+| `try/catch` in `handshake()` | Catches network errors, sets `sessionId = null`, applies backoff |
 | `try/catch` in `tick()` | Ensures `busy = false` via `finally` block |
-| `sessionId = null` on 401 | Forces re-handshake on auth failure |
+| `handleTransportFailure(err)` | Classifies errors: 401/404 → immediate retry, network → throttled retry |
+| `ControllerHttpError` | Typed error with HTTP status code for precise error classification |
 | `notifyOperators()` | Logs to operators + console on errors |
 | `emitFailure()` | Sends structured error events to controller |

@@ -13,12 +13,20 @@ The `classify(toolName, args)` function assigns a risk level to every action.
 | `control.emergency_disable` | `strong` | Halts all mutations on a session |
 | `admin.run_command` | varies | Looks up `commandId` in config; `prohibited` if not found |
 | `world.fill_blocks` | varies | See below |
+| `world.place_blocks` | varies | See below |
 
 ### world.fill_blocks Classification
 
 1. No region specified **or** volume > `MAX_BUILD_VOLUME` (32,768) → **`prohibited`**
 2. Overlaps a protected region → **`prohibited`**
 3. Block is `minecraft:air` **or** volume > `STRONG_BUILD_VOLUME` (4,096) → **`strong`**
+4. Otherwise → **`normal`**
+
+### world.place_blocks Classification
+
+1. No blocks or count > `MAX_BUILD_VOLUME` (32,768) → **`prohibited`**
+2. Any block position overlaps a protected region → **`prohibited`**
+3. Count > `STRONG_BUILD_VOLUME` (4,096) **or** any block is `minecraft:air` → **`strong`**
 4. Otherwise → **`normal`**
 
 ## Approval Requirements
@@ -28,7 +36,7 @@ The `approvalRequired(risk, permissionMode)` function determines if user approva
 | Permission Mode | read | normal | strong | prohibited |
 |----------------|------|--------|--------|------------|
 | `observe_only` | auto | blocked | blocked | blocked |
-| `allow_low_risk` | auto | auto | **requires approval** | blocked |
+| `allow_low_risk` | auto | auto (fill_blocks/place_blocks ≤ 256 blocks) | **requires approval** | blocked |
 | `confirm_every_change` | auto | **requires approval** | **requires approval** | blocked |
 | `builder_region` | auto | **requires approval** + region check | **requires approval** + region check | blocked |
 | `trusted_administrator` | auto | auto | auto | blocked |

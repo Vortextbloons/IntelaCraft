@@ -52,7 +52,11 @@ export function PlanCard({
         <section className="plan-section">
           <div className="plan-section-title">Mutations</div>
           {mutations.map((a) => {
-            const blocks = a.toolName === "world.fill_blocks" ? estimateFillBlocks(a.arguments) : null;
+            const blocks = a.toolName === "world.fill_blocks"
+              ? estimateFillBlocks(a.arguments)
+              : a.toolName === "world.place_blocks" && Array.isArray(a.arguments.blocks)
+                ? a.arguments.blocks.length
+                : null;
             const region = a.arguments.region as
               | { min?: { x: number; y: number; z: number }; max?: { x: number; y: number; z: number } }
               | undefined;
@@ -87,6 +91,11 @@ export function PlanCard({
                       Est. impact <code>{blocks.toLocaleString()} blocks</code>
                     </span>
                   )}
+                  {a.toolName === "world.place_blocks" && Array.isArray(a.arguments.blocks) && (
+                    <span>
+                      Operation <code>detailed placement</code>
+                    </span>
+                  )}
                   <span>
                     Rollback <code>{rollback ? "captured" : "not requested"}</code>
                   </span>
@@ -113,6 +122,26 @@ export function PlanCard({
               </div>
             </div>
           ))}
+        </section>
+      )}
+
+      {task.preview && (
+        <section className="plan-section">
+          <div className="plan-section-title">Construction preview</div>
+          <div className="plan-facts">
+            <span>Changed <code>{task.preview.generatedBlocks.toLocaleString()} blocks</code></span>
+            <span>Batches <code>{task.preview.estimatedBatches}</code></span>
+            <span>Rollback <code>{Math.round(task.preview.rollbackCoverage * 100)}%</code></span>
+          </div>
+          <div className="meta">Materials: {Object.entries(task.preview.materials).map(([type,count]) => `${type.replace(/^minecraft:/, "")} × ${count}`).join(", ")}</div>
+          {task.preview.warnings.map((warning, i) => <div key={i} className="meta">Warning: {warning}</div>)}
+        </section>
+      )}
+
+      {task.plan?.build && (
+        <section className="plan-section">
+          <div className="plan-section-title">Build steps</div>
+          {task.plan.build.steps.map((step) => <div key={step.id} className="plan-step mutate"><strong>{step.id}: {step.summary}</strong><div className="meta">{step.toolName}{step.dependsOn?.length ? ` · after ${step.dependsOn.join(", ")}` : ""}</div></div>)}
         </section>
       )}
 

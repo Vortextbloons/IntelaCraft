@@ -1,6 +1,6 @@
 # Webview Components
 
-All 7 React components that make up the IntelaCraft webview control panel.
+All 8 React components that make up the IntelaCraft webview control panel.
 
 ## Component Hierarchy
 
@@ -11,6 +11,7 @@ App.tsx
 ├── Transcript.tsx               (workspace main)
 │   ├── ReasoningBlock.tsx
 │   ├── MarkdownText.tsx
+│   ├── HighlightedJson.tsx
 │   ├── ToolCallCard.tsx
 │   └── PlanCard.tsx
 └── [Drawer — Activity Log]
@@ -123,6 +124,18 @@ Displays a proposed task plan with three sections:
 - **Edit & Replan** — Request a modified plan
 - **Cancel** — Abort the task entirely
 
+### Construction Preview
+
+When `task.preview` exists (populated for semantic builds), an additional section displays:
+
+- Total generated blocks, estimated batches, rollback coverage percentage
+- Material breakdown (e.g., `stone × 200, oak_planks × 50`)
+- Any warnings (e.g., protected region conflicts, partial rollback)
+
+### Build Steps
+
+When `task.plan.build` exists, a "Build steps" section lists each step with its ID, summary, tool name, and dependency chain.
+
 ---
 
 ## ToolCallCard.tsx
@@ -163,6 +176,27 @@ Lightweight, safe markdown renderer (no external library).
 2. Converts backtick-wrapped text to `<code>` elements
 3. Converts `**bold**` to `<strong>`
 4. Converts newlines to `<br>`
+
+---
+
+## HighlightedJson.tsx
+
+Tokenizes and syntax-highlights a JSON value as colored `<span>` elements.
+
+### Props
+
+| Prop | Type | Description |
+|------|------|-------------|
+| `value` | `unknown` | JSON-serializable value (objects are pretty-printed) |
+| `className` | `string?` | Optional CSS class appended to the `<pre>` element |
+
+### Rendering
+
+1. Converts the value to a pretty-printed JSON string (or uses the string directly)
+2. Tokenizes using a single-pass regex that identifies: keys, strings, numbers, literals (`true`/`false`/`null`), punctuation, and whitespace
+3. Renders each token as a `<span>` with a CSS class: `json-key`, `json-string`, `json-number`, `json-literal`, `json-punct`
+
+Styling is provided by `.json-hl` and its child selectors in `styles.css`.
 
 ---
 

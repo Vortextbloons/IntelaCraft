@@ -6,6 +6,7 @@ import {
   READ_TOOLS,
   MUTATION_TOOLS,
   MAX_BUILD_VOLUME,
+  MAX_PLACE_BLOCKS,
   DEFAULT_BATCH_SIZE,
   RISK_CLASSES,
   type DimensionId,
@@ -40,6 +41,8 @@ import type {
   InspectTagsArgs,
   AdminRunCommandArgs,
   FillBlocksArgs,
+  PlaceBlocksArgs,
+  InspectHeightmapArgs, InspectSurfaceArgs, InspectBuildCollisionArgs, InspectFindEmptyAreaArgs,
   MessageEnvelope,
   OperationEventMessage,
   PollMessage,
@@ -445,8 +448,13 @@ export function validateToolArguments(
       return asArgs(validateInspectScoreboard(args));
     case "inspect.tags":
       return asArgs(validateInspectTags(args));
+    case "inspect.heightmap": return asArgs(validateHeightmap(args));
+    case "inspect.surface": return asArgs(validateHeightmap(args));
+    case "inspect.build_collision": return asArgs(validateBuildCollision(args));
+    case "inspect.find_empty_area": return asArgs(validateFindEmptyArea(args));
     case "world.fill_blocks":
       return asArgs(validateFillBlocks(args));
+    case "world.place_blocks": return asArgs(validatePlaceBlocks(args));
     case "control.cancel":
       if(!isNonEmptyString(args.actionId)) return fail("INVALID_ARGS","actionId is required");
       return ok({actionId:args.actionId});
@@ -458,6 +466,33 @@ export function validateToolArguments(
     default:
       return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
   }
+}
+
+function validateHeightmap(args: Record<string, unknown>): ValidateResult<InspectHeightmapArgs | InspectSurfaceArgs> {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const region=parseRegion(args.region); if(!region) return fail("INVALID_ARGS","region must include min/max integer corners");
+  const resolution=args.resolution ?? 1; if(resolution!==1&&resolution!==2&&resolution!==4) return fail("INVALID_ARGS","resolution must be 1, 2, or 4");
+  return ok({dimension:args.dimension,region,resolution});
+}
+function validateBuildCollision(args: Record<string, unknown>): ValidateResult<InspectBuildCollisionArgs> { if(!isDimensionId(args.dimension)) return fail("INVALID_ARGS","dimension is required"); const region=parseRegion(args.region); if(!region) return fail("INVALID_ARGS","region must include min/max integer corners"); return ok({dimension:args.dimension,region}); }
+function validateFindEmptyArea(args: Record<string, unknown>): ValidateResult<InspectFindEmptyAreaArgs> { if(!isDimensionId(args.dimension)) return fail("INVALID_ARGS","dimension is required"); const origin=parseVec3i(args.origin),requiredSize=parseVec3i(args.requiredSize); if(!origin||!requiredSize||requiredSize.x<1||requiredSize.y<1||requiredSize.z<1) return fail("INVALID_ARGS","origin and positive requiredSize are required"); if(!Number.isInteger(args.radius)||(args.radius as number)<0||(args.radius as number)>128) return fail("INVALID_ARGS","radius must be an integer 0-128"); if(args.maxSlope!==undefined&&(!Number.isFinite(args.maxSlope)||Number(args.maxSlope)<0)) return fail("INVALID_ARGS","maxSlope must be non-negative"); return ok({dimension:args.dimension,origin,requiredSize,radius:args.radius as number,maxSlope:typeof args.maxSlope==='number'?args.maxSlope:undefined}); }
+
+function validatePlaceBlocks(args: Record<string, unknown>): ValidateResult<PlaceBlocksArgs> {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  if (!Array.isArray(args.blocks) || args.blocks.length < 1 || args.blocks.length > MAX_PLACE_BLOCKS) return fail("INVALID_ARGS", `blocks must contain 1-${MAX_PLACE_BLOCKS} entries`);
+  const seen = new Set<string>();
+  const blocks: PlaceBlocksArgs["blocks"] = [];
+  for (const entry of args.blocks) {
+    if (!isRecord(entry)) return fail("INVALID_ARGS", "each block must be an object");
+    const position = parseVec3i(entry.position);
+    if (!position || !isNonEmptyString(entry.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(entry.blockType)) return fail("INVALID_ARGS", "each block needs integer position and namespaced blockType");
+    const key = `${position.x},${position.y},${position.z}`;
+    if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
+    seen.add(key); blocks.push({ position, blockType: entry.blockType });
+  }
+  const batchSize = args.batchSize === undefined ? DEFAULT_BATCH_SIZE : args.batchSize;
+  if (!Number.isInteger(batchSize) || (batchSize as number) < 1 || (batchSize as number) > DEFAULT_BATCH_SIZE) return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
+  return ok({ dimension: args.dimension, blocks, batchSize: batchSize as number, captureRollback: args.captureRollback === true });
 }
 
 function validateFillBlocks(args: Record<string, unknown>): ValidateResult<FillBlocksArgs> {

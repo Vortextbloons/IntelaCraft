@@ -1,6 +1,6 @@
 # Inspection Tools
 
-All 10 read-only tools that query Minecraft world state. Each tool executes synchronously within a single server tick.
+All 14 read-only tools that query Minecraft world state. Each tool executes synchronously within a single server tick.
 
 ## Overview
 
@@ -369,6 +369,142 @@ Each objective caps at 64 participants in the response.
 
 ---
 
+### 11. inspect.heightmap
+
+**Inspects**: Terrain height samples across a region at a given resolution.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `dimension` | `DimensionId` | Yes | Target dimension |
+| `region` | `RegionBounds` | Yes | `{ min: {x,y,z}, max: {x,y,z} }` |
+| `resolution` | `1 \| 2 \| 4` | No | Sample every Nth block (default: 1) |
+
+**Minecraft API**: Iterates columns, uses `surfaceAt()` to find the top non-air block from `min.y` to `max.y`.
+
+**Returns**:
+
+```json
+{
+  "dimension": "minecraft:overworld",
+  "region": { "min": { "x": 0, "y": -64, "z": 0 }, "max": { "x": 10, "y": 319, "z": 10 } },
+  "resolution": 2,
+  "min": 62,
+  "max": 78,
+  "average": 69.5,
+  "slope": 16,
+  "columns": [
+    { "x": 0, "z": 0, "height": 64 },
+    { "x": 2, "z": 0, "height": 66 }
+  ]
+}
+```
+
+**Example**: *"What does the terrain look like around 0,0?"*
+
+---
+
+### 12. inspect.surface
+
+**Inspects**: Top solid block types for terrain columns (like heightmap but includes surface material).
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `dimension` | `DimensionId` | Yes | Target dimension |
+| `region` | `RegionBounds` | Yes | `{ min: {x,y,z}, max: {x,y,z} }` |
+| `resolution` | `1 \| 2 \| 4` | No | Sample every Nth block (default: 1) |
+
+**Returns**:
+
+```json
+{
+  "dimension": "minecraft:overworld",
+  "region": { "min": { "x": 0, "y": -64, "z": 0 }, "max": { "x": 10, "y": 319, "z": 10 } },
+  "resolution": 2,
+  "min": 62,
+  "max": 78,
+  "average": 69.5,
+  "slope": 16,
+  "columns": [
+    { "x": 0, "z": 0, "height": 64, "surfaceType": "minecraft:grass_block" },
+    { "x": 2, "z": 0, "height": 66, "surfaceType": "minecraft:stone" }
+  ]
+}
+```
+
+**Example**: *"What materials are on the surface near spawn?"*
+
+---
+
+### 13. inspect.build_collision
+
+**Inspects**: Non-air blocks and entities in a proposed build volume.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `dimension` | `DimensionId` | Yes | Target dimension |
+| `region` | `RegionBounds` | Yes | Proposed build bounding box |
+
+**Minecraft API**: Triple nested loop over coordinates checking `dimension.getBlock()`, plus `dimension.getEntities()` for entities in the region.
+
+**Returns**:
+
+```json
+{
+  "dimension": "minecraft:overworld",
+  "region": { "min": { "x": 0, "y": 64, "z": 0 }, "max": { "x": 10, "y": 70, "z": 10 } },
+  "nonAirBlocks": 42,
+  "collisions": [
+    { "position": { "x": 3, "y": 65, "z": 5 }, "type": "block", "blockType": "minecraft:oak_log" },
+    { "type": "entity", "id": "e1f2a3b4-...", "typeId": "minecraft:zombie" }
+  ],
+  "worldHeightValid": true
+}
+```
+
+**Example**: *"Are there any blocks where I want to build?"*
+
+---
+
+### 14. inspect.find_empty_area
+
+**Inspects**: Finds nearby rectangular areas that are mostly empty and suitable for building.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `dimension` | `DimensionId` | Yes | Target dimension |
+| `origin` | `Vec3i` | Yes | Center point to search around |
+| `requiredSize` | `Vec3i` | Yes | Minimum dimensions needed (x, y, z must be ≥ 1) |
+| `radius` | `number` | Yes | Search radius in blocks (0–128) |
+| `maxSlope` | `number` | No | Maximum allowed slope between corner heights |
+
+**Minecraft API**: Steps through candidate positions within the radius, runs `inspect.build_collision` on each, ranks by obstruction count + slope + distance.
+
+**Returns**:
+
+```json
+{
+  "dimension": "minecraft:overworld",
+  "requiredSize": { "x": 10, "y": 6, "z": 10 },
+  "maxSlope": 3,
+  "candidates": [
+    {
+      "region": { "min": { "x": 5, "y": 64, "z": 10 }, "max": { "x": 14, "y": 69, "z": 19 } },
+      "obstructions": 0,
+      "distance": 15,
+      "slope": 1,
+      "surfaceSuitable": true,
+      "score": 16
+    }
+  ]
+}
+```
+
+Candidates are sorted by score (lower = better). Up to 8 candidates are returned.
+
+**Example**: *"Find a flat spot near 0,64,0 to build a house"*
+
+---
+
 ## Summary Table
 
 | Tool | Reads | Dimensions | Key Limits |
@@ -383,3 +519,7 @@ Each objective caps at 64 participants in the response.
 | `inspect.entities` | Entity list | One | limit default 64, max 128 |
 | `inspect.scoreboard` | Objectives + scores | — | 64 participants per objective |
 | `inspect.tags` | Tags on target | All (fallback) | Player-first search |
+| `inspect.heightmap` | Terrain height samples | One | resolution 1/2/4 |
+| `inspect.surface` | Surface block types | One | resolution 1/2/4 |
+| `inspect.build_collision` | Blocks + entities in volume | One | Scans entire region |
+| `inspect.find_empty_area` | Ranked empty build areas | One | radius 0–128, max 8 candidates |

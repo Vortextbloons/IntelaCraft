@@ -10,8 +10,7 @@ All IntelaCraft-specific variables are prefixed with `INTELACRAFT_`. Set these i
 |----------|-------------|---------|------|---------|
 | `INTELACRAFT_BDS_TOKEN` | Shared bearer token for authenticating BDS ↔ controller communication | *required* | string | `sk-my-secret-token-123` |
 | `PORT` | HTTP port the controller listens on | `8787` | number | `8787` |
-| `INTELACRAFT_CONTROLLER_URL` | Full URL of the controller (used in BDS config) | `http://127.0.0.1:8787` | URL | `https://mc.example.com:8787` |
-| `INTELACRAFT_SERVER_ID` | Unique identity string for this server instance | `default` | string | `survival-1` |
+| `INTELACRAFT_HEARTBEAT_STALE_MS` | Milliseconds before a heartbeat is considered stale | `15000` | number | `20000` |
 
 ### Audit
 
@@ -40,7 +39,7 @@ All IntelaCraft-specific variables are prefixed with `INTELACRAFT_`. Set these i
 
 | Variable | Description | Default | Type | Example |
 |----------|-------------|---------|------|---------|
-| `INTELACRAFT_PI_STORAGE_PATH` | Directory for Pi session data | `./data/pi-sessions` | file path | `/var/lib/intelacraft/pi` |
+| `INTELACRAFT_PI_STORAGE_PATH` | Directory for Pi session data | `./data/pi` | file path | `/var/lib/intelacraft/pi` |
 
 ### MCP (Optional)
 
@@ -64,6 +63,26 @@ All IntelaCraft-specific variables are prefixed with `INTELACRAFT_`. Set these i
 
 ---
 
+## BDS Addon Configuration
+
+These values are configured in the BDS `config/default/variables.json` and `config/default/secrets.json` files (not controller env vars).
+
+### variables.json
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `intelacraft:controller_url` | URL of the controller API | `http://127.0.0.1:8787` |
+| `intelacraft:server_id` | Unique identifier for this BDS instance | `survival-1` |
+| `intelacraft:admin_commands` | JSON object of admin command allowlist | See below |
+
+### secrets.json
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `intelacraft:bds_token` | Bearer token header value (full `Bearer <token>` string) | `Bearer sk-my-secret-token-123` |
+
+---
+
 ## BDS Configuration Files
 
 The controller writes three JSON files into the BDS configuration directory on `npm run deploy`. These configure the behavior pack to communicate with the controller.
@@ -74,21 +93,17 @@ Runtime configuration injected into the behavior pack.
 
 ```json
 {
-  "controllerUrl": "http://127.0.0.1:8787",
-  "bdsToken": "your-shared-token",
-  "sessionId": "assigned-on-handshake",
-  "pollInterval": 2000,
-  "heartbeatInterval": 15000
+  "intelacraft:controller_url": "http://127.0.0.1:8787",
+  "intelacraft:server_id": "bds-default",
+  "intelacraft:admin_commands": "{\"time_day\":{\"command\":\"time set day\",\"risk\":\"normal\",\"label\":\"Set time to day\"}}"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| controllerUrl | string | Full URL of the controller API |
-| bdsToken | string | Bearer token for authentication |
-| sessionId | string | Session ID from handshake |
-| pollInterval | number | Milliseconds between poll requests |
-| heartbeatInterval | number | Milliseconds between heartbeat reports |
+| intelacraft:controller_url | string | Full URL of the controller API |
+| intelacraft:server_id | string | Unique identifier for this BDS instance |
+| intelacraft:admin_commands | string (JSON) | Admin command allowlist mapping command IDs to command definitions |
 
 ### secrets.json
 
@@ -96,33 +111,21 @@ Secrets that should not be committed to version control.
 
 ```json
 {
-  "bdsToken": "your-shared-token"
+  "intelacraft:bds_token": "Bearer your-shared-token"
 }
 ```
+
+**Note:** The value must be the full `Authorization` header value, including the `Bearer ` prefix.
 
 ### permissions.json
 
-Permission configuration controlling what the agent is allowed to do.
+Permission configuration controlling what modules are allowed.
 
 ```json
 {
-  "mode": "confirm_every_change",
-  "protectedRegions": [],
-  "builderRegions": [],
-  "adminCommands": {},
-  "maxRegionVolume": 32768,
-  "maxBuildVolume": 32768
+  "allowed_modules": ["@minecraft/server", "@minecraft/server-net", "@minecraft/server-admin"]
 }
 ```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| mode | string | Active permission mode |
-| protectedRegions | Region[] | Regions where mutations are blocked |
-| builderRegions | Region[] | Regions where builders can operate |
-| adminCommands | Record&lt;string, AdminCommandEntry&gt; | Allowlisted BDS commands mapping commandId to {command, risk, label} |
-| maxRegionVolume | number | Maximum blocks in a single region query |
-| maxBuildVolume | number | Maximum blocks in a single build operation |
 
 ---
 
