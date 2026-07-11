@@ -116,6 +116,20 @@ export function PlanCard({
         </section>
       )}
 
+      {(task.plan?.successCriteria?.length ?? 0) > 0 && (
+        <section className="plan-section">
+          <div className="plan-section-title">Success criteria</div>
+          {task.plan!.successCriteria!.map((criterion, i) => <div key={`criterion-${i}`} className="meta">â€¢ {criterion}</div>)}
+        </section>
+      )}
+
+      {(task.plan?.evidence?.length ?? 0) > 0 && (
+        <section className="plan-section">
+          <div className="plan-section-title">Verification evidence</div>
+          {task.plan!.evidence!.map((item, i) => <div key={`evidence-${i}`} className="meta">â€¢ {item}</div>)}
+        </section>
+      )}
+
       {(task.plan?.notes?.length ?? 0) > 0 && (
         <div className="meta plan-notes">{task.plan!.notes!.join(" · ")}</div>
       )}

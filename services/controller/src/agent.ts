@@ -80,14 +80,29 @@ export interface AgentTask {
     planLatencyMs?: number;
     validationRetries?: number;
     usedNormalizeFallback?: boolean;
+    inspectionToolCalls?: number;
+    inspectionCacheHits?: number;
   };
   /** True when we deferred mutations until inspect completes + replan. */
   awaitingInspectReplan?: boolean;
+  /** Guards the single post-mutation agent verification turn. */
+  agentVerificationStarted?: boolean;
 }
 
 interface ProvidersFile {
   activeProviderId: string;
   providers: ProviderProfile[];
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 export class AgentRuntime {
@@ -113,6 +128,7 @@ export class AgentRuntime {
   constructor(private config: ControllerConfig) {
     this.mcp = new AdvisoryMcpClient(config.mcpUrl, config.mcpToken);
     this.loadProviders();
+    this.loadTasks();
     if (config.providerBaseUrl && config.providerApiKey && config.providerModel) {
       this.saveProvider({
         id: "default",
@@ -122,6 +138,32 @@ export class AgentRuntime {
         model: config.providerModel,
       });
     }
+  }
+
+  private loadTasks() {
+    const path = this.config.tasksPath ?? resolve(dirname(this.config.providersPath), "tasks.json");
+    if (!existsSync(path)) return;
+    try {
+      const rows = JSON.parse(readFileSync(path, "utf8"));
+      if (!Array.isArray(rows)) return;
+      for (const raw of rows) {
+        if (!raw || typeof raw !== "object" || typeof raw.id !== "string") continue;
+        const task = raw as AgentTask;
+        if (!["completed", "rejected", "cancelled", "failed", "partial"].includes(task.state)) {
+          task.state = "partial";
+          task.error = "Controller restarted while this task was active; review world state before continuing.";
+        }
+        this.tasks.set(task.id, task);
+      }
+    } catch {
+      // A damaged snapshot must not prevent the safety controller from starting.
+    }
+  }
+
+  private persistTasks() {
+    const path = this.config.tasksPath ?? resolve(dirname(this.config.providersPath), "tasks.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify([...this.tasks.values()], null, 2)}\n`, "utf8");
   }
 
   setThinkingLevel(level: ThinkingLevel) {
@@ -336,6 +378,8 @@ export class AgentRuntime {
           bdsSessionId: task.bdsSessionId!,
           actor: task.actor,
           permissionMode: task.permissionMode,
+          sessions: input.sessions,
+          audit: input.audit,
         },
       );
       task.request = `${task.request}\n\nFollow-up: ${input.request}`;
@@ -483,9 +527,16 @@ export class AgentRuntime {
       audit?: AuditLog;
     },
   ): Promise<AgentPlan> {
+    const inspectionCache = new Map<
+      string,
+      Promise<{ message: string; result?: unknown }>
+    >();
     if (input.sessions && input.audit) {
-      setPiInspectionExecutor(sessionId, (toolName, arguments_) =>
-        this.executePiInspection(task, toolName, arguments_, input.sessions!, input.audit!),
+      setPiInspectionExecutor(
+        sessionId,
+        this.createBoundedInspectionExecutor(task, inspectionCache, (toolName, arguments_) =>
+          this.executePiInspection(task, toolName, arguments_, input.sessions!, input.audit!),
+        ),
       );
     }
     let lastError: string | undefined = opts.validationError;
@@ -521,6 +572,46 @@ export class AgentRuntime {
       }
     }
     throw new Error(lastError ?? "Planning failed");
+  }
+
+  private createBoundedInspectionExecutor(
+    task: AgentTask,
+    cache: Map<string, Promise<{ message: string; result?: unknown }>>,
+    execute: (
+      toolName: InspectionToolName,
+      arguments_: Record<string, unknown>,
+    ) => Promise<{ message: string; result?: unknown }>,
+  ) {
+    let uniqueCalls = 0;
+    return async (toolName: InspectionToolName, arguments_: Record<string, unknown>) => {
+      const key = `${toolName}:${stableJson(arguments_)}`;
+      const cached = cache.get(key);
+      if (cached) {
+        task.metrics = {
+          ...(task.metrics ?? {}),
+          inspectionCacheHits: (task.metrics?.inspectionCacheHits ?? 0) + 1,
+        };
+        return cached;
+      }
+      if (uniqueCalls >= 8) {
+        throw new Error(
+          "Inspection budget exhausted (8 unique calls). Use the observations already gathered and finish the plan.",
+        );
+      }
+      uniqueCalls += 1;
+      task.metrics = {
+        ...(task.metrics ?? {}),
+        inspectionToolCalls: (task.metrics?.inspectionToolCalls ?? 0) + 1,
+      };
+      const pending = execute(toolName, arguments_);
+      cache.set(key, pending);
+      try {
+        return await pending;
+      } catch (error) {
+        cache.delete(key);
+        throw error;
+      }
+    };
   }
 
   private async executePiInspection(
@@ -788,6 +879,100 @@ export class AgentRuntime {
     audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
   }
 
+  private scheduleAgentVerification(task: AgentTask, sessions: SessionStore, audit: AuditLog) {
+    if (task.agentVerificationStarted) return;
+    task.agentVerificationStarted = true;
+    task.state = "verifying";
+    task.updatedAt = new Date().toISOString();
+    audit.append({
+      type: "task_lifecycle",
+      taskId: task.id,
+      state: task.state,
+      phase: "agent_verification",
+    });
+    // Release the operation-event queue before Pi can call another live inspection tool.
+    setTimeout(() => {
+      void this.verifyAfterMutations(task.id, sessions, audit);
+    }, 0);
+  }
+
+  private async verifyAfterMutations(taskId: string, sessions: SessionStore, audit: AuditLog) {
+    const task = this.tasks.get(taskId);
+    if (!task || task.state === "cancelled" || task.state === "rejected") return;
+    const session = this.pi.get(task.piSessionId);
+    if (!session) {
+      task.state = "partial";
+      task.error = "Pi session missing for post-mutation verification";
+      audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state, error: task.error });
+      return;
+    }
+    try {
+      const provider = this.needProvider(session.providerId);
+      await refreshPiSessionProvider(session, provider, this.thinkingLevel);
+      const history = this.chatHistory.get(session.id) ?? [];
+      const plan = await this.planWithValidationRetry(
+        session.id,
+        `The approved mutations for this task have finished. Verify the actual world state now using live inspect_* tools. If the requested outcome is satisfied, submit a plan with no actions. If correction is needed, submit only the smallest corrective actions; they will require fresh approval.\nOriginal request: ${task.request}`,
+        this.buildWorldContext(sessions),
+        undefined,
+        {
+          thinkingLevel: this.thinkingLevel,
+          adminCommandIds: Object.keys(this.config.adminCommands),
+          history,
+        },
+        task,
+        {
+          bdsSessionId: task.bdsSessionId!,
+          actor: task.actor,
+          permissionMode: task.permissionMode,
+          sessions,
+          audit,
+        },
+      );
+      this.appendHistory(session.id, { role: "assistant", content: this.planHistoryText(plan) });
+      this.applyAgentVerificationPlan(task, plan);
+      task.error = undefined;
+    } catch (error) {
+      task.state = "partial";
+      task.error = error instanceof Error ? error.message : "Post-mutation verification failed";
+    }
+    task.updatedAt = new Date().toISOString();
+    audit.append({
+      type: "task_lifecycle",
+      taskId: task.id,
+      state: task.state,
+      phase: "agent_verification_complete",
+      error: task.error,
+    });
+  }
+
+  private applyAgentVerificationPlan(task: AgentTask, plan: AgentPlan) {
+    if (plan.actions.length > 0) {
+      // Corrective work is a new immutable proposal and must be approved again.
+      this.applyPlanToTask(task, { ...plan, inspection: [] }, {
+        bdsSessionId: task.bdsSessionId!,
+        actor: task.actor,
+        permissionMode: task.permissionMode,
+      });
+      return;
+    }
+    if (!(plan.evidence?.length)) {
+      task.state = "partial";
+      task.error = "Verification finished without observable evidence";
+      return;
+    }
+    if (plan.outcome !== "complete") {
+      task.state = "partial";
+      task.error = plan.outcome === "blocked" ? plan.summary : "Agent did not explicitly confirm completion";
+      return;
+    }
+    task.plan = { ...plan, inspection: [], verification: [] };
+    task.proposedActions = [];
+    task.pendingReads = [];
+    task.pendingVerification = [];
+    task.state = "completed";
+  }
+
   /** After inspect wave completes, re-plan mutations with real world facts. */
   async replanAfterInspection(
     taskId: string,
@@ -1013,6 +1198,7 @@ export class AgentRuntime {
     }
     task.enqueuedActionIds = enqueued;
     task.mutationActionIds = [...(task.mutationActionIds ?? []), ...mutationIds];
+    task.agentVerificationStarted = false;
     task.state = "running";
     task.updatedAt = new Date().toISOString();
     input.audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
@@ -1199,11 +1385,8 @@ export class AgentRuntime {
             mutationIds.length > 0 &&
             done(mutationIds)
           ) {
-            if ((task.pendingVerification?.length ?? 0) > 0 && detail?.sessions) {
-              this.enqueueVerification(task, detail.sessions, audit);
-            } else if (verifyIds.length === 0) {
-              task.state = "completed";
-            }
+            if (detail?.sessions) this.scheduleAgentVerification(task, detail.sessions, audit);
+            else task.state = "partial";
           } else if (task.state === "verifying" && done(verifyIds)) {
             task.state = "completed";
           } else if (
@@ -1234,6 +1417,7 @@ export class AgentRuntime {
         state: task.state,
         operationState: state,
       });
+      this.persistTasks();
       return;
   }
 
@@ -1265,6 +1449,7 @@ export class AgentRuntime {
   }
 
   private publicTask(t: AgentTask) {
+    this.persistTasks();
     const clone = structuredClone(t);
     delete clone.pendingReads;
     delete clone.pendingVerification;

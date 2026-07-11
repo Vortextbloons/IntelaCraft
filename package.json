@@ -19,7 +19,8 @@
     "test": "npm run test -w @intelacraft/shared-protocol && npm run test -w @intelacraft/pi-extension && npm run test -w @intelacraft/controller",
     "typecheck": "npm run typecheck -w @intelacraft/shared-protocol && npm run typecheck -w @intelacraft/prompts && npm run typecheck -w @intelacraft/pi-extension && npm run typecheck -w @intelacraft/mcp-connection && npm run typecheck -w @intelacraft/controller && npm run typecheck -w @intelacraft/bedrock-addon && npm run typecheck -w @intelacraft/webview",
     "load-smoke": "node scripts/load-smoke.mjs",
-    "combine-docs": "node scripts/combine-docs.mjs"
+    "combine-docs": "node scripts/combine-docs.mjs",
+    "agent-eval": "npm run build -w @intelacraft/shared-protocol && npm run build -w @intelacraft/pi-extension && node scripts/agent-eval.mjs"
   },
   "devDependencies": {
     "typescript": "^7.0.2"

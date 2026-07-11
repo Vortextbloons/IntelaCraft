@@ -29,6 +29,9 @@ export interface AgentAction {
 
 export interface AgentPlan {
   summary: string;
+  outcome?: "respond" | "propose" | "complete" | "blocked";
+  successCriteria?: string[];
+  evidence?: string[];
   inspection: AgentAction[];
   actions: AgentAction[];
   verification: AgentAction[];
@@ -195,6 +198,9 @@ export const SYSTEM = `You are IntelaCraft — an isolated Pi Coding Agent that 
 
 ## Output contract (submit_plan)
 - summary: short plain-language reply the user will see in chat (NOT raw JSON)
+- outcome: respond | propose | complete | blocked
+- successCriteria: observable conditions that define success (empty for chat/read-only answers)
+- evidence: observed facts supporting completion (empty until verification)
 - inspection: read-only inspect.* steps to run now (no approval)
 - actions: mutations that need approval (may be empty)
 - verification: inspect.* steps to run after mutations succeed (may be empty)
@@ -279,6 +285,43 @@ const planStepSchema = Type.Object({
   summary: Type.String({ description: "One-line description of this step" }),
 });
 
+const mutationStepSchema = Type.Union([
+  Type.Object(
+    {
+      toolName: Type.Literal("world.fill_blocks"),
+      arguments: Type.Object(
+        {
+          dimension: Type.Union([
+            Type.Literal("minecraft:overworld"),
+            Type.Literal("minecraft:nether"),
+            Type.Literal("minecraft:the_end"),
+          ]),
+          region: Type.Object({
+            min: Type.Object({ x: Type.Integer(), y: Type.Integer(), z: Type.Integer() }),
+            max: Type.Object({ x: Type.Integer(), y: Type.Integer(), z: Type.Integer() }),
+          }),
+          blockType: Type.String({ minLength: 1 }),
+          captureRollback: Type.Literal(true),
+        },
+        { additionalProperties: false },
+      ),
+      summary: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      toolName: Type.Literal("admin.run_command"),
+      arguments: Type.Object(
+        { commandId: Type.String({ minLength: 1 }) },
+        { additionalProperties: false },
+      ),
+      summary: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 function createSubmitPlanTool(onPlan: (plan: AgentPlan) => void) {
   return defineTool({
     name: "submit_plan",
@@ -291,14 +334,19 @@ function createSubmitPlanTool(onPlan: (plan: AgentPlan) => void) {
       "Call live inspect_* tools directly for world facts. Final inspection should normally be empty.",
       "verification: inspect.* only. actions: world.fill_blocks or admin.run_command only.",
       "For greetings/capability questions use empty inspection/actions/verification arrays.",
+      "Always include successCriteria and evidence arrays. Corrective/build plans need concrete observable success criteria.",
+      "Set outcome explicitly: respond, propose, complete, or blocked.",
       "Reuse prior [tool result] context for follow-ups instead of re-inspecting when already answered.",
     ],
     parameters: Type.Object({
       summary: Type.String({ description: "Short plain-language reply shown in chat" }),
+      outcome: Type.Union([Type.Literal("respond"), Type.Literal("propose"), Type.Literal("complete"), Type.Literal("blocked")]),
+      successCriteria: Type.Array(Type.String(), { description: "Observable conditions that define success" }),
+      evidence: Type.Array(Type.String(), { description: "Observed facts supporting completion; empty before execution" }),
       inspection: Type.Array(planStepSchema, {
         description: "Read-only inspect.* steps (auto-run, no approval)",
       }),
-      actions: Type.Array(planStepSchema, {
+      actions: Type.Array(mutationStepSchema, {
         description: "Mutations needing webview approval before BDS execution",
       }),
       verification: Type.Array(planStepSchema, {
@@ -352,11 +400,16 @@ function createInspectionTool(
       const executor = inspectionExecutors.get(sessionId);
       if (!executor) throw new Error("Live world inspection is unavailable for this turn");
       const observation = await executor(name, params as Record<string, unknown>);
+      const serialized = JSON.stringify({ toolName: name, ...observation });
+      const bounded =
+        serialized.length > 12_000
+          ? `${serialized.slice(0, 12_000)}\n[truncated: observation exceeded 12000 characters]`
+          : serialized;
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ toolName: name, ...observation }),
+            text: bounded,
           },
         ],
         details: observation,
@@ -682,6 +735,12 @@ export function normalizePlan(raw: unknown, userRequest: string): AgentPlan {
   const actions = asActionList(p.actions ?? p.writes ?? p.mutations);
   const verification = asActionList(p.verification ?? p.verify ?? p.checks);
   const notes = Array.isArray(p.notes) ? p.notes.map(String) : [];
+  const successCriteria = Array.isArray(p.successCriteria) ? p.successCriteria.map(String) : [];
+  const evidence = Array.isArray(p.evidence) ? p.evidence.map(String) : [];
+  const requestedOutcome = String(p.outcome ?? "");
+  const outcome = (["respond", "propose", "complete", "blocked"] as const).includes(requestedOutcome as any)
+    ? (requestedOutcome as AgentPlan["outcome"])
+    : actions.length > 0 ? "propose" : evidence.length > 0 ? "complete" : "respond";
 
   const plan: AgentPlan = {
     summary:
@@ -689,10 +748,13 @@ export function normalizePlan(raw: unknown, userRequest: string): AgentPlan {
       (inspection.length || actions.length
         ? "Plan ready."
         : `Got it — ask me to inspect the world or plan a bounded build.`),
+    outcome,
     inspection,
     actions,
     verification,
     notes,
+    successCriteria,
+    evidence,
   };
 
   const casual = /^(hi|hello|hey|thanks|thank you|yo|sup|ok|okay)\b/i.test(userRequest.trim());
@@ -803,7 +865,7 @@ export async function planWithPiSession(
     request: userRequest,
     adminCommandIds: adminIds,
     reminder:
-      "Use live inspect_* tools now if world facts are needed, then call submit_plan. For greetings use empty inspection/actions/verification. Use tool results for follow-ups and never guess world state.",
+      "Use live inspect_* tools now if world facts are needed, then call submit_plan. Always include successCriteria and evidence arrays. For greetings use empty arrays. Use tool results for follow-ups and never guess world state.",
   };
 
   try {

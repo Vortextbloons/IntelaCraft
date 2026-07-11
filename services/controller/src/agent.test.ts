@@ -247,4 +247,117 @@ describe("AgentRuntime read-only inspect auto-run", () => {
       result: { weather: "clear" },
     });
   });
+
+  it("schedules one agent verification turn after mutation completion", async () => {
+    const agent = new AgentRuntime(config());
+    const sessions = new SessionStore();
+    const activity = new ActivityStore(join(dir, "audit-agent5.jsonl"), 30);
+    const audit = new AuditLog(join(dir, "audit-agent5.jsonl"), activity);
+    const sessionId = newId("session");
+    const actionId = newId("action");
+    openSession(sessions, sessionId);
+    const row: any = {
+      id: newId("task"),
+      piSessionId: "pi",
+      request: "build a platform",
+      state: "running",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      bdsSessionId: sessionId,
+      actor: "pi-agent",
+      permissionMode: "confirm_every_change",
+      enqueuedActionIds: [actionId],
+      mutationActionIds: [actionId],
+      completedActionIds: [],
+      pendingVerification: [],
+      agentVerificationStarted: false,
+    };
+    (agent as any).tasks.set(row.id, row);
+    let verificationCalls = 0;
+    (agent as any).verifyAfterMutations = async () => {
+      verificationCalls += 1;
+    };
+
+    await agent.onOperationEvent(actionId, "completed", audit, {
+      message: "fill complete",
+      result: { changedBlocks: 9 },
+      sessions,
+    });
+    await agent.onOperationEvent(actionId, "completed", audit, {
+      message: "duplicate",
+      sessions,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    assert.equal(row.state, "verifying");
+    assert.equal(row.agentVerificationStarted, true);
+    assert.equal(verificationCalls, 1);
+  });
+
+  it("requires fresh approval for an agent-proposed corrective mutation", () => {
+    const agent = new AgentRuntime(config());
+    const task: any = {
+      id: newId("task"),
+      piSessionId: "pi",
+      request: "build a platform",
+      state: "verifying",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      bdsSessionId: newId("session"),
+      actor: "pi-agent",
+      permissionMode: "confirm_every_change",
+    };
+    (agent as any).applyAgentVerificationPlan(task, {
+      summary: "One corner is missing; proposing a bounded repair.",
+      inspection: [],
+      actions: [
+        {
+          toolName: "world.fill_blocks",
+          arguments: {
+            dimension: "minecraft:overworld",
+            region: { min: { x: 1, y: 64, z: 1 }, max: { x: 1, y: 64, z: 1 } },
+            blockType: "minecraft:stone",
+            captureRollback: true,
+          },
+          summary: "Repair missing corner",
+        },
+      ],
+      verification: [],
+      notes: [],
+    });
+
+    assert.equal(task.state, "awaiting_approval");
+    assert.equal(task.proposedActions.length, 1);
+    assert.equal(task.proposedActions[0].toolName, "world.fill_blocks");
+    assert.equal(task.proposedActions[0].approval, undefined);
+  });
+
+  it("reuses identical inspections and caps unique calls per planning turn", async () => {
+    const agent = new AgentRuntime(config());
+    const task: any = { metrics: {} };
+    const cache = new Map();
+    let executions = 0;
+    const bounded = (agent as any).createBoundedInspectionExecutor(
+      task,
+      cache,
+      async (toolName: string, arguments_: Record<string, unknown>) => {
+        executions += 1;
+        return { message: "ok", result: { toolName, arguments_ } };
+      },
+    );
+
+    const first = await bounded("inspect.player", { name: "Steve", detail: { b: 2, a: 1 } });
+    const repeated = await bounded("inspect.player", { detail: { a: 1, b: 2 }, name: "Steve" });
+    assert.deepEqual(repeated, first);
+    assert.equal(executions, 1);
+    assert.equal(task.metrics.inspectionToolCalls, 1);
+    assert.equal(task.metrics.inspectionCacheHits, 1);
+
+    for (let i = 0; i < 7; i++) await bounded("inspect.block", { position: { x: i, y: 64, z: 0 } });
+    await assert.rejects(
+      bounded("inspect.block", { position: { x: 99, y: 64, z: 0 } }),
+      /Inspection budget exhausted/,
+    );
+    assert.equal(executions, 8);
+  });
 });

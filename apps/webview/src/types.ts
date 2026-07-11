@@ -40,6 +40,9 @@ export type Task = {
   state: string;
   plan?: {
     summary: string;
+    outcome?: "respond" | "propose" | "complete" | "blocked";
+    successCriteria?: string[];
+    evidence?: string[];
     notes?: string[];
     inspection?: PlanStep[];
     actions?: PlanStep[];
@@ -53,6 +56,8 @@ export type Task = {
     planLatencyMs?: number;
     validationRetries?: number;
     usedNormalizeFallback?: boolean;
+    inspectionToolCalls?: number;
+    inspectionCacheHits?: number;
   };
 };
 
