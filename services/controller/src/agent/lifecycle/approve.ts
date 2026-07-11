@@ -19,18 +19,28 @@ export function approveTask(
     });
   }
   const actions = task.proposedActions ?? [];
+  const enqueued = new Set(task.enqueuedActionIds ?? []);
+  const pendingMutations = actions.filter(
+    (action) => action.risk !== "read" && !enqueued.has(action.actionId),
+  );
+  if (pendingMutations.length === 0 && actions.some((action) => action.risk !== "read")) {
+    throw Object.assign(new Error("Task approval has already been consumed"), {
+      code: "INVALID_STATE",
+      status: 409,
+    });
+  }
   if (actions.length === 0) {
     task.state = "completed";
     task.updatedAt = new Date().toISOString();
     input.audit.append({ type: "task_lifecycle", taskId: task.id, state: task.state });
     return publicTask(task);
   }
-  const enqueued: string[] = [...(task.enqueuedActionIds ?? [])];
+  const enqueuedActionIds: string[] = [...enqueued];
   const mutationIds: string[] = [];
   for (const action of actions) {
     if (action.risk === "read") {
       // Already auto-enqueued via enqueuePendingReads — skip duplicates.
-      if (enqueued.includes(action.actionId)) continue;
+      if (enqueuedActionIds.includes(action.actionId)) continue;
       const result = input.sessions.enqueue(action.sessionId, {
         ...action,
         noApprovalReason: "read_risk_no_approval",
@@ -38,7 +48,7 @@ export function approveTask(
       if (!result.ok) {
         throw Object.assign(new Error(result.message), { code: result.code, status: 409 });
       }
-      enqueued.push(action.actionId);
+      enqueuedActionIds.push(action.actionId);
       input.audit.append({
         type: "action_enqueued",
         taskId: task.id,
@@ -72,7 +82,7 @@ export function approveTask(
     if (!result.ok) {
       throw Object.assign(new Error(result.message), { code: result.code, status: 409 });
     }
-    enqueued.push(approved.actionId);
+    enqueuedActionIds.push(approved.actionId);
     mutationIds.push(approved.actionId);
     input.audit.append({
       type: "approval_granted",
@@ -95,7 +105,7 @@ export function approveTask(
       arguments: approved.arguments,
     });
   }
-  task.enqueuedActionIds = enqueued;
+  task.enqueuedActionIds = enqueuedActionIds;
   task.mutationActionIds = [...(task.mutationActionIds ?? []), ...mutationIds];
   task.agentVerificationStarted = false;
   task.state = "running";

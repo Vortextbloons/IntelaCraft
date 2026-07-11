@@ -120,6 +120,14 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     assert.equal(task.state, "running");
     assert.equal(sessions.dequeue(sessionId)?.toolName, "world.fill_blocks");
 
+    // A late/stale lifecycle update must not make the consumed proposal
+    // approvable again.
+    task.state = "awaiting_approval";
+    assert.throws(
+      () => (agent as any).approveTask(task.id, { approvedBy: "tester", sessions, audit }),
+      (error: any) => error?.code === "INVALID_STATE" && error?.status === 409,
+    );
+
     task.mode = "ask";
     assert.throws(() => (agent as any).applyPlanToTask(task, {
       summary: "Try another pad", inspection: [], verification: [], notes: [],

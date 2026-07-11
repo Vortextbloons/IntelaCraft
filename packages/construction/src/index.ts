@@ -4,6 +4,7 @@ export interface BlockPlacement { position: Vec3i; blockType: string; }
 export interface BuildWallArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; height: number; blockType: string; thickness?: number; }
 export interface BuildFloorArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; blockType: string; thickness?: number; }
 export interface BuildPillarArgs { dimension: DimensionId; position: Vec3i; height: number; blockType: string; }
+export interface BuildRoofArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; blockType: string; }
 export interface GeneratedBuild { dimension: DimensionId; blocks: BlockPlacement[]; bounds: RegionBounds; }
 
 function generated(dimension: DimensionId, blocks: BlockPlacement[]): GeneratedBuild {
@@ -15,6 +16,29 @@ function generated(dimension: DimensionId, blocks: BlockPlacement[]): GeneratedB
 export function buildWall(args: BuildWallArgs): GeneratedBuild { if (!Number.isInteger(args.height)||args.height<1) throw new Error("height must be a positive integer"); const thickness=args.thickness??1; if(!Number.isInteger(thickness)||thickness<1) throw new Error("thickness must be a positive integer"); const blocks:BlockPlacement[]=[]; const dx=Math.abs(args.to.x-args.from.x), dz=Math.abs(args.to.z-args.from.z); if(dx && dz) throw new Error("wall endpoints must align on X or Z"); for(let y=0;y<args.height;y++) for(let t=0;t<thickness;t++) for(let n=0;n<=Math.max(dx,dz);n++) blocks.push({position:{x:args.from.x+(dx?n:0),y:args.from.y+y,z:args.from.z+(dz?n:0)+(dx?t:0)},blockType:args.blockType}); return generated(args.dimension,blocks); }
 export function buildFloor(args: BuildFloorArgs): GeneratedBuild { const r=normalizeRegion(args.from,args.to), thickness=args.thickness??1; if(!Number.isInteger(thickness)||thickness<1) throw new Error("thickness must be a positive integer"); const blocks:BlockPlacement[]=[]; for(let y=0;y<thickness;y++) for(let x=r.min.x;x<=r.max.x;x++) for(let z=r.min.z;z<=r.max.z;z++) blocks.push({position:{x,y:r.min.y-y,z},blockType:args.blockType}); return generated(args.dimension,blocks); }
 export function buildPillar(args: BuildPillarArgs): GeneratedBuild { if(!Number.isInteger(args.height)||args.height<1) throw new Error("height must be a positive integer"); return generated(args.dimension,Array.from({length:args.height},(_,i)=>({position:{x:args.position.x,y:args.position.y+i,z:args.position.z},blockType:args.blockType}))); }
+/** Builds continuous gable planes with a ridge along the longer footprint axis. */
+export function buildRoof(args: BuildRoofArgs): GeneratedBuild {
+  const r = normalizeRegion(args.from, args.to);
+  const spanX = r.max.x - r.min.x;
+  const spanZ = r.max.z - r.min.z;
+  const blocks: BlockPlacement[] = [];
+  if (spanZ <= spanX) {
+    for (let z = r.min.z; z <= r.max.z; z++) {
+      const rise = Math.min(z - r.min.z, r.max.z - z);
+      for (let x = r.min.x; x <= r.max.x; x++) {
+        blocks.push({ position: { x, y: r.min.y + rise, z }, blockType: args.blockType });
+      }
+    }
+  } else {
+    for (let x = r.min.x; x <= r.max.x; x++) {
+      const rise = Math.min(x - r.min.x, r.max.x - x);
+      for (let z = r.min.z; z <= r.max.z; z++) {
+        blocks.push({ position: { x, y: r.min.y + rise, z }, blockType: args.blockType });
+      }
+    }
+  }
+  return generated(args.dimension, blocks);
+}
 export function materialTotals(blocks: BlockPlacement[]): Record<string,number> { return blocks.reduce<Record<string,number>>((totals,b)=>{totals[b.blockType]=(totals[b.blockType]??0)+1;return totals;},{}); }
 
 export type SemanticToolName = "build.wall"|"build.floor"|"build.pillar"|"build.doorway"|"build.window"|"build.roof"|"build.stairs"|"build.room"|"build.path";
@@ -34,7 +58,7 @@ export function generateSemantic(tool: SemanticToolName, args: Record<string, un
   if(tool==="build.wall") return buildWall(a); if(tool==="build.floor"||tool==="build.path") return buildFloor(a); if(tool==="build.pillar") return buildPillar(a);
   if(tool==="build.room") { const floor=buildFloor(a); const r=normalizeRegion(a.from,a.to); const height=a.height; const blocks=[...floor.blocks]; for(const [from,to] of [[r.min,{x:r.max.x,y:r.min.y,z:r.min.z}],[{x:r.min.x,y:r.min.y,z:r.max.z},r.max],[r.min,{x:r.min.x,y:r.min.y,z:r.max.z}],[{x:r.max.x,y:r.min.y,z:r.min.z},r.max]] as any) blocks.push(...buildWall({...a,from,to,height}).blocks); return generated(a.dimension, dedupe(blocks)); }
   if(tool==="build.stairs") { const blocks:BlockPlacement[]=[]; for(let i=0;i<a.height;i++) for(let w=0;w<(a.width??1);w++) blocks.push({position:{x:a.from.x+i,y:a.from.y+i,z:a.from.z+w},blockType:a.blockType}); return generated(a.dimension,blocks); }
-  if(tool==="build.roof") { const r=normalizeRegion(a.from,a.to),blocks:BlockPlacement[]=[]; for(let y=0;y<=Math.floor(Math.min(r.max.x-r.min.x,r.max.z-r.min.z)/2);y++) for(let x=r.min.x+y;x<=r.max.x-y;x++) for(let z=r.min.z+y;z<=r.max.z-y;z++) if(x===r.min.x+y||x===r.max.x-y||z===r.min.z+y||z===r.max.z-y) blocks.push({position:{x,y:r.min.y+y,z},blockType:a.blockType}); return generated(a.dimension,blocks); }
+  if(tool==="build.roof") return buildRoof(a);
   if(tool==="build.doorway"||tool==="build.window") { const wall=buildWall({...a,height:a.height??(tool==="build.doorway"?3:2)}); const width=a.width??1; const opening=wall.blocks.filter(b=>!(b.position.x>=a.from.x&&b.position.x<a.from.x+width&&b.position.y>=a.from.y+(tool==="build.window"?1:0))); return generated(a.dimension,opening); }
   throw new Error(`Unsupported semantic tool ${tool}`);
 }

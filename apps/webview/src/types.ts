@@ -176,9 +176,10 @@ export function taskNeedsPlanCard(task: Task): boolean {
 }
 
 export function taskNeedsApproval(task: Task): boolean {
+  const enqueued = new Set(task.enqueuedActionIds ?? []);
   return (
     task.state === "awaiting_approval" &&
-    (task.proposedActions?.some((a) => a.risk !== "read") ?? false)
+    (task.proposedActions?.some((a) => a.risk !== "read" && !enqueued.has(a.actionId)) ?? false)
   );
 }
 

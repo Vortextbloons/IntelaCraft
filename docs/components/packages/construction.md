@@ -95,7 +95,7 @@ Supported tools and their behavior:
 | `build.pillar` | Delegates to `buildPillar` |
 | `build.room` | Combines `buildFloor` + 4 `buildWall` calls for the perimeter, deduplicates overlapping blocks |
 | `build.stairs` | Diagonal ascending blocks from `from` to `from + height` |
-| `build.roof` | Pyramidal roof shell using concentric shrink rectangles |
+| `build.roof` | Continuous gable roof with a ridge along the longer footprint axis |
 | `build.doorway` | Wall with a rectangular opening (full-height opening) |
 | `build.window` | Wall with a rectangular opening offset 1 block up from the floor |
 
