@@ -68,6 +68,7 @@ docs/
 │   └── packages/
 │       ├── README.md
 │       ├── shared-protocol.md
+│       ├── construction.md
 │       ├── pi-extension.md
 │       ├── prompts.md
 │       └── mcp-connection.md

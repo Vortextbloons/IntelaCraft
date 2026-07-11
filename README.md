@@ -28,7 +28,7 @@ Describe what you want in natural language. The AI inspects your world, proposes
 
 ## Quick Start
 
-**Prerequisites:** Node.js 20+, Minecraft BDS, and an AI provider API key (OpenAI, Groq, Ollama, or any OpenAI-compatible endpoint)
+**Prerequisites:** Node.js 20+, Minecraft BDS, and an AI provider API key (OpenAI, Anthropic, Google, Groq, Ollama, or any OpenAI-compatible endpoint)
 
 ```powershell
 npm run setup     # install deps, build, create .env
@@ -87,14 +87,18 @@ You: "Build a 10x10 stone house at 0,64,0"
 
 ## Provider Support
 
-IntelaCraft works with any OpenAI-compatible `/v1/chat/completions` endpoint.
+IntelaCraft works with any OpenAI-compatible `/v1/chat/completions` endpoint. Supports configurable reasoning/thinking levels across all compatible providers.
 
 | Provider | Base URL | Recommended Models | Notes |
 |----------|----------|-------------------|-------|
-| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o`, `gpt-4o-mini` | Full reasoning/thinking support |
-| **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant` | Free tier, fastest inference |
-| **Ollama** | `http://localhost:11434/v1` | `llama3.3`, `mistral`, `codellama` | No API key needed, fully local |
-| **OpenRouter** | `https://openrouter.ai/api/v1` | `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514` | Multi-provider aggregator |
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | Flagship reasoning, 1M+ context, configurable thinking |
+| **Anthropic** | `https://api.anthropic.com/v1` | `claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5` | Adaptive thinking, 1M context |
+| **Google** | `https://generativelanguage.googleapis.com/v1beta` | `gemini-3.1-pro`, `gemini-3.5-flash` | Thinking mode, multimodal |
+| **Groq** | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b`, `llama-3.3-70b-versatile` | Fastest inference, free tier available |
+| **Ollama** | `http://localhost:11434/v1` | `deepseek-r1`, `qwen3.5`, `gemma4`, `gpt-oss` | No API key, fully local |
+| **OpenRouter** | `https://openrouter.ai/api/v1` | `openai/gpt-5.6-sol`, `anthropic/claude-sonnet-5`, `google/gemini-3.1-pro` | Multi-provider aggregator |
+| **Mistral** | `https://api.mistral.ai/v1` | `mistral-medium-2508`, `mistral-small-2503` | Open-weight, adaptive thinking |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-v4-flash`, `deepseek-v4-pro` | 1M context, thinking modes, very cost-effective |
 
 ---
 
