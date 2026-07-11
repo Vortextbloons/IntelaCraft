@@ -316,6 +316,29 @@ export async function continueTask(
   assertPiSessionAvailable(ctx, task.piSessionId);
   const s = ctx.pi.get(task.piSessionId);
   if (!s) throw new Error("Pi session missing for task");
+  // BDS creates a new controller session after a restart. A continued task
+  // must use that live session; otherwise catalog lookups and all follow-up
+  // actions remain tied to the discarded session. Rebind automatically only
+  // when there is exactly one target, because choosing between multiple BDS
+  // servers would be an unsafe change of world.
+  if (!task.bdsSessionId || !input.sessions?.getSession(task.bdsSessionId)) {
+    const liveSessions = input.sessions?.listSessions() ?? [];
+    if (liveSessions.length !== 1) {
+      throw Object.assign(
+        new Error("The task's Bedrock session is no longer available. Connect exactly one BDS server, then continue the task."),
+        { code: "NO_SESSION", status: 409 },
+      );
+    }
+    const previousSessionId = task.bdsSessionId;
+    task.bdsSessionId = liveSessions[0].sessionId;
+    input.audit?.append({
+      type: "task_lifecycle",
+      taskId: task.id,
+      phase: "bds_session_rebound",
+      previousSessionId,
+      sessionId: task.bdsSessionId,
+    });
+  }
   task.mode = input.mode ?? task.mode ?? "ask";
   s.mode = task.mode;
   task.state = "planning";

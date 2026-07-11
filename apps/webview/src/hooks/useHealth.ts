@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { ApiError, api, clearToken, getToken } from "../api";
 import { createAuthorizedEventSource } from "../lib/stream";
 import type {
@@ -10,6 +10,7 @@ import type {
   ThinkingLevel,
   ToolRun,
 } from "../types";
+import { isTaskActive } from "../types";
 
 export function useHealth(deps: {
   authed: boolean;
@@ -45,6 +46,7 @@ export function useHealth(deps: {
   } = deps;
 
   const operationRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [hasActiveTasks, setHasActiveTasks] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -62,6 +64,7 @@ export function useHealth(deps: {
       ]);
       setHealth(h);
       setTasks(t.tasks);
+      setHasActiveTasks(t.tasks.some(isTaskActive));
       setProviders(p.providers);
       setActivity([...a.records].reverse());
       setPermissionMode(s.permissionMode);
@@ -108,6 +111,7 @@ export function useHealth(deps: {
       api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
     ]);
     setTasks(t.tasks);
+    setHasActiveTasks(t.tasks.some(isTaskActive));
     setActivity([...a.records].reverse());
   }, [setActivity, setTasks]);
 
@@ -117,6 +121,17 @@ export function useHealth(deps: {
     const id = setInterval(() => void refresh(), 10_000);
     return () => clearInterval(id);
   }, [authed, refresh]);
+
+  // Operation SSE tells us that something changed, but post-mutation AI
+  // verification can finish without another Bedrock operation.  Poll only
+  // while work is active so terminal states reach the UI promptly without
+  // making the normal idle refresh loop noisy.
+  useEffect(() => {
+    if (!authed || !hasActiveTasks) return;
+    void refreshOperationalData();
+    const id = setInterval(() => void refreshOperationalData(), 1_000);
+    return () => clearInterval(id);
+  }, [authed, hasActiveTasks, refreshOperationalData]);
 
   useEffect(() => {
     if (!authed || !getToken()) return;

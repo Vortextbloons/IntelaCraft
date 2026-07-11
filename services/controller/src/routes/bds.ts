@@ -111,7 +111,6 @@ export async function handleBdsEvents(
     });
     return;
   }
-  ctx.events.add(parsed.value);
   ctx.audit.append({
     type: "operation_event",
     sessionId: parsed.value.sessionId,
@@ -128,6 +127,11 @@ export async function handleBdsEvents(
     result: parsed.value.result,
     sessions: ctx.sessions,
   });
+  // Publish only after the task lifecycle has consumed the operation.  Clients
+  // refresh their task list in response to this stream, so publishing first
+  // could make them read the previous state (for example, "running" instead
+  // of "verifying" or "completed") and leave the UI looking stuck.
+  ctx.events.add(parsed.value);
   sendJson(res, 200, { ok: true });
 }
 

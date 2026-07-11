@@ -51,7 +51,7 @@ apps/webview/
 │   │   ├── useActivity.ts              Activity log + text filter
 │   │   ├── useConversations.ts         Chat transcript, conversation management
 │   │   ├── useTasks.ts                 Task CRUD (approve/reject/cancel/replan/delete)
-│   │   ├── useHealth.ts               10s polling, SSE stream for operation events
+│   │   ├── useHealth.ts               SSE operation stream, 10s full polling, active-task refresh
 │   │   ├── useProviders.ts            Provider lifecycle, model catalogs, Pi session
 │   │   ├── useSettings.ts             Permission mode, thinking level, emergency
 │   │   ├── useChatStream.ts           SSE streaming, prompt state, auto-approve

@@ -30,6 +30,13 @@ try {
       );
     }
   }
+  const catalog = data.catalog;
+  if (catalog) {
+    const counts = catalog.counts ?? {};
+    console.log(
+      `  Catalog      ${catalog.available ? "ready" : "pending"}  blocks=${counts.blocks ?? 0} items=${counts.items ?? 0} entities=${counts.entities ?? 0}`,
+    );
+  }
 
   // Also probe auth quickly
   const events = await api(baseUrl, "/v1/events", { token });

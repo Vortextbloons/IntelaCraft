@@ -59,7 +59,7 @@ All state lives in custom React hooks. `App.tsx` instantiates them and threads r
 | Hook | Lines | Responsibility |
 |------|-------|----------------|
 | `useAuth` | 38 | Bearer token input, login validation, sign-out |
-| `useHealth` | 197 | 10s `GET /v1/health` polling, SSE event stream, bulk refresh |
+| `useHealth` | 197 | 10s full refresh, SSE operation stream, and 1s task-only refresh while work is active |
 | `useProviders` | 469 | Provider CRUD, model discovery, Pi session lifecycle, picker state |
 | `useTasks` | 189 | Task list fetch, approve/reject/cancel/replan/delete mutations |
 | `useConversations` | 143 | Active conversation, message history, localStorage persistence |
