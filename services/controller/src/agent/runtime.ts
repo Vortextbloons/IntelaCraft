@@ -138,14 +138,11 @@ export class AgentRuntime implements AgentContext {
       supportsTools = (await testProvider(p)).toolCalling;
       this.toolCallingSupport.set(supportKey, supportsTools);
     }
-    if (!supportsTools) {
-      throw Object.assign(
-        new Error(
-          `Model ${p.model} does not support the function calls IntelaCraft requires. Select a tool-capable model (for Groq, llama-3.3-70b-versatile is verified).`,
-        ),
-        { code: "MODEL_TOOL_CALLING_UNSUPPORTED", status: 400 },
-      );
-    }
+    // The compatibility probe is intentionally advisory. Some
+    // OpenAI-compatible providers accept tools but do not produce a call for
+    // this small synthetic prompt; rejecting those models here prevented
+    // known-capable models from ever reaching Pi's native tool runtime.
+    // Actual plans still require validated native tool calls and fail closed.
     const s = createPiSession(resolve(this.config.piStoragePath), p);
     await initializePiSession(s, p, this.thinkingLevel);
     const effective = s.thinkingLevel ?? this.thinkingLevel;

@@ -141,6 +141,28 @@ export function useProviders(deps: {
     [activeProviderId],
   );
 
+  // Pi sessions are held in controller memory, while the browser persists the
+  // selected session ID. A controller restart therefore makes that saved ID
+  // stale. Clear it as soon as the controller reports it missing so the next
+  // message creates a fresh session instead of failing with a vague 400.
+  useEffect(() => {
+    if (!authed || !piSessionId) return;
+    let disposed = false;
+    void api<{ sessions: Array<{ id: string }> }>("/v1/pi/sessions")
+      .then(({ sessions }) => {
+        if (!disposed && !sessions.some((session) => session.id === piSessionId)) {
+          updatePiSessionId(null);
+        }
+      })
+      .catch(() => {
+        // Keep the current ID during a transient network outage. The next
+        // successful controller response will reconcile it.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [authed, piSessionId]);
+
   // Capability data is needed for the safety drawer as well as the model picker.
   // Fetch it lazily for the active provider so a page reload does not leave the
   // reasoning selector with stale or generic options.

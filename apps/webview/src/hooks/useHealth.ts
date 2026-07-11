@@ -106,14 +106,22 @@ export function useHealth(deps: {
   ]);
 
   const refreshOperationalData = useCallback(async () => {
-    const [t, a] = await Promise.all([
-      api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
-      api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
-    ]);
-    setTasks(t.tasks);
-    setHasActiveTasks(t.tasks.some(isTaskActive));
-    setActivity([...a.records].reverse());
-  }, [setActivity, setTasks]);
+    try {
+      const [t, a] = await Promise.all([
+        api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
+        api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
+      ]);
+      setTasks(t.tasks);
+      setHasActiveTasks(t.tasks.some(isTaskActive));
+      setActivity([...a.records].reverse());
+    } catch (e) {
+      // Do not keep a one-second active-task poll running while the controller
+      // is offline. The regular health refresh will reconnect and reactivate
+      // it once the controller is back.
+      setHasActiveTasks(false);
+      setError(e instanceof Error ? e.message : "Controller refresh failed");
+    }
+  }, [setActivity, setError, setTasks]);
 
   useEffect(() => {
     if (!authed) return;

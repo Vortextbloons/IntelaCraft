@@ -113,7 +113,38 @@ describe("IntelaCraft Pi extension", () => {
     try {
       const result = await testProvider({ ...p, baseUrl: `http://127.0.0.1:${address.port}`, model: "gateway-model" });
       assert.equal(result.toolCalling, true);
-      assert.deepEqual(requests, [{ type: "function", function: { name: "ping" } }, "auto"]);
+      assert.deepEqual(requests, [{ type: "function", function: { name: "ping" } }, "required", "auto"]);
+    } finally {
+      await new Promise<void>((resolve, reject) => gateway.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+  it("accepts gateways that require the portable required tool choice", async () => {
+    const requests: unknown[] = [];
+    const gateway = createServer(async (req, res) => {
+      if (req.url === "/models") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const parsed = JSON.parse(body);
+      requests.push(parsed.tool_choice);
+      res.setHeader("Content-Type", "application/json");
+      if (parsed.tool_choice !== "required") {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: { message: "only required is supported" } }));
+        return;
+      }
+      res.end(JSON.stringify({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name: "ping", arguments: "{}" } }] } }] }));
+    });
+    await new Promise<void>((resolve) => gateway.listen(0, resolve));
+    const address = gateway.address();
+    assert.ok(address && typeof address === "object");
+    try {
+      const result = await testProvider({ ...p, baseUrl: `http://127.0.0.1:${address.port}`, model: "required-model" });
+      assert.equal(result.toolCalling, true);
+      assert.deepEqual(requests, [{ type: "function", function: { name: "ping" } }, "required"]);
     } finally {
       await new Promise<void>((resolve, reject) => gateway.close((error) => error ? reject(error) : resolve()));
     }

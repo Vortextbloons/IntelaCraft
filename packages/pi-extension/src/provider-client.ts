@@ -121,13 +121,21 @@ export async function testProvider(
           choice?.finish_reason === "tool_calls",
       );
     };
-    // Prefer a deterministic named call. OpenCode Zen's DeepSeek V4 Free
-    // rejects forced tool_choice, yet produces standard tool_calls with auto.
-    // Both paths still require a native structured response to pass.
+    // Gateways differ in their OpenAI-compatible `tool_choice` support. Try
+    // the three forms seen in production before concluding that a model did
+    // not return a native structured call. In particular, some providers
+    // accept `required` but reject a named function choice.
     try {
       toolCalling = await probe({ type: "function", function: { name: "ping" } });
     } catch {
       toolCalling = false;
+    }
+    if (!toolCalling) {
+      try {
+        toolCalling = await probe("required");
+      } catch {
+        toolCalling = false;
+      }
     }
     if (!toolCalling) toolCalling = await probe("auto");
   } catch {
