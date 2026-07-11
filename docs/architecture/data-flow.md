@@ -12,10 +12,10 @@ The complete flow from a user's natural-language request to world mutation. The 
 The diagram below shows the full Agent mode flow:
 
 ```text
- ┌─────────┐    ┌───────────┐    ┌────────────┐    ┌──────────┐    ┌─────────┐
- │  User   │    │ Webview   │    │ Controller │    │ Pi Agent │    │   BDS   │
- │(browser)│    │  (React)  │    │  (Node.js) │    │ (runtime)│    │ (addon) │
- └────┬────┘    └─────┬─────┘    └─────┬──────┘    └────┬─────┘    └────┬────┘
+ ┌─────────┐    ┌───────────┐    ┌─────────────────────┐    ┌──────────┐    ┌─────────┐
+ │  User   │    │ Webview   │    │ Controller          │    │ Pi Agent │    │   BDS   │
+ │(browser)│    │  (React)  │    │  (Node.js)          │    │ (runtime)│    │ (addon) │
+ └────┬────┘    └─────┬─────┘    └─────┬───────────────┘    └────┬─────┘    └────┬────┘
       │               │                │                  │               │
       │ 1. Type       │                │                  │               │
       │ "Fill 10x10   │                │                  │               │
@@ -92,9 +92,9 @@ The diagram below shows the full Agent mode flow:
 
 1. **User types request** in the webview chat input (natural language)
 2. **Webview sends SSE request** to `POST /v1/tasks/stream` with `{ request, piSessionId, bdsSessionId, mode }` — mode is `"ask"` or `"agent"` (persisted in the webview's localStorage)
-3. **Controller queries MCP** for advisory Bedrock API guidance (optional, 15s timeout)
+3. **Controller queries MCP** for advisory Bedrock API guidance (optional, 15s timeout) — handled in `src/routes/tasks.ts`
 4. **MCP returns advice** (or null if unconfigured/unreachable)
-5. **Controller sends prompt** to Pi agent with user request, world context, MCP advice, chat history, and a **mode-specific reminder**:
+5. **Controller sends prompt** to Pi agent with user request, world context, MCP advice, chat history, and a **mode-specific reminder** (handled in `src/agent/planning/planner.ts`):
    - Ask: *"answer or inspect read-only state only. actions and verification must both be empty."*
    - Agent: *"use live inspect_* tools when needed, then call submit_plan."*
 6. **AI calls inspection tools** — Pi invokes `inspect.*` tools which are bridged to the BDS addon via the controller's session store queue
@@ -103,7 +103,7 @@ The diagram below shows the full Agent mode flow:
 9. **User sees the plan** with action cards showing targets, bounds, risk, and approval requirements
 10. **User approves** the plan in the webview (Agent mode only — Ask mode plans have no mutations)
 11. **Webview sends approval** to `POST /v1/tasks/:id/approve`
-12. **Controller validates and enqueues** — policy check, SHA-256 approval binding, emergency disable gate, then queues the action for BDS pickup
+12. **Controller validates and enqueues** — policy check, SHA-256 approval binding (`src/agent/lifecycle/approve.ts`), emergency disable gate, then queues the action for BDS pickup (`src/routes/bds.ts`)
 13. **BDS polls** `POST /v1/bds/poll` every 0.5 seconds
 14. **Controller returns action** from the session queue (or null if empty)
 15. **BDS executes** the action in configurable batch sizes (default 512 blocks/tick)
@@ -281,7 +281,7 @@ Authorization: Bearer <token>
 - Validates session and message schema
 - Stores the event in `EventStore`
 - Logs to audit trail
-- Notifies `AgentRuntime.onOperationEvent()` for task state transitions
+- Notifies `AgentRuntime.onOperationEvent()` (in `src/agent/lifecycle/operations.ts`) for task state transitions
 - Broadcasts to SSE subscribers
 
 ### Heartbeat
@@ -456,7 +456,7 @@ The `enforceMode()` function in `policy.ts:99` gates mutations:
 
 ### AI Mode Enforcement
 
-The `validatePlanTools()` function in `agent.ts:704` enforces the AI capability boundary:
+The `validatePlanTools()` function in `src/agent/planning/planner.ts` enforces the AI capability boundary:
 
 | Mode | Behavior |
 |------|----------|
@@ -536,7 +536,7 @@ POST /v1/emergency-disable
 
 When emergency disable is active:
 - `SessionStore.isEmergencyDisabled(sessionId)` returns `true`
-- Controller blocks all non-read mutations at enqueue time (`app.ts:762`)
+- Controller blocks all non-read mutations at enqueue time (`src/routes/bds.ts`)
 - BDS addon skips non-read actions during dequeue (`store.ts:95`)
 - Heartbeat reports `emergencyDisabled: true` to the webview
 - The webview shows a prominent emergency-disable indicator
@@ -547,10 +547,10 @@ When emergency disable is active:
 The AI agent queries the world through a bridge that connects Pi's inspection tools to the BDS addon:
 
 ```text
- ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
- │  Pi Agent   │     │ Controller  │     │ Session     │     │  BDS Addon  │
- │  (runtime)  │     │  (agent.ts) │     │  Store      │     │  (tools/)   │
- └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+ ┌─────────────┐     ┌─────────────────────┐     ┌─────────────┐     ┌─────────────┐
+ │  Pi Agent   │     │ Controller          │     │ Session     │     │  BDS Addon  │
+ │  (runtime)  │     │  (agent/inspection/) │     │  Store      │     │  (tools/)   │
+ └──────┬──────┘     └──────┬──────────────┘     └──────┬──────┘     └──────┬──────┘
         │                   │                   │                   │
         │ 1. AI calls       │                   │                   │
         │ inspect_region()  │                   │                   │
@@ -591,9 +591,9 @@ The AI agent queries the world through a bridge that connects Pi's inspection to
         │ world state       │                   │                   │
 ```
 
-**Key implementation details** (from `agent.ts:526-566`):
+**Key implementation details** (from `src/agent/inspection/bridge.ts`):
 
-- Inspection tools are bridged via `setPiInspectionExecutor()` — the controller injects a callback that routes `inspect.*` calls through the session store
+- Inspection tools are bridged via `setPiInspectionExecutor()` — the controller injects a callback that routes `inspect.*` calls through the session store (defined in `src/agent/inspection/bridge.ts`)
 - The inspection creates an `ActionRequestMessage` with `risk: "read"` (no approval needed)
 - The action is enqueued and a Promise is created with a 30-second timeout
 - The controller's `onOperationEvent()` resolves the Promise when the BDS addon reports back

@@ -24,11 +24,16 @@
 ## Project Structure
 
 Monorepo with npm workspaces:
-- `apps/` - Bedrock addon, webview
-- `packages/` - Shared libraries (shared-protocol, pi-extension, etc.)
-- `services/` - Controller, API services
+- `apps/bedrock-addon/` - Behavior + resource packs (BDS add-on)
+- `apps/webview/` - React control panel
+- `services/controller/` - HTTP controller, audit, activity API
+- `packages/shared-protocol/` - Wire protocol types, validation
+- `packages/pi-extension/` - AI planning agent runtime (planner/, session/)
+- `packages/construction/` - Semantic build tools
+- `packages/prompts/` - Versioned agent prompts
+- `packages/mcp-connection/` - Advisory MCP client
 
-Each workspace has its own `package.json` and `tsconfig.json`.
+Each workspace has its own `package.json` and `tsconfig.json`. The controller uses an `agent/` subdirectory for the AI runtime (lifecycle, planning, inspection, task persistence) and `routes/` for HTTP endpoint handlers.
 
 ## Coding Conventions
 
@@ -49,7 +54,7 @@ Each workspace has its own `package.json` and `tsconfig.json`.
 
 ## Adding New API Endpoints
 
-1. Add route handler in `services/controller/src/app.ts`
+1. Add route handler in `services/controller/src/routes/`
 2. Add to API reference docs
 
 ## Adding New Packages

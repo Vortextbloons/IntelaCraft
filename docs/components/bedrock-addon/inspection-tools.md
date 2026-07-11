@@ -4,9 +4,22 @@ All 13 read-only tools that query Minecraft world state. Each tool executes sync
 
 ## Overview
 
-Inspection tools are dispatched by `executeInspectTool()` in `src/tools/inspect/index.ts`. They never modify the world — they only read data via the Minecraft Script API.
+Inspection tools are split across domain-cohesive sub-modules under `src/tools/inspect/`. A central dispatcher in `index.ts` routes each tool to the appropriate handler. They never modify the world — they only read data via the Minecraft Script API.
+
+### Module Layout
+
+| Module | Tools |
+|--------|-------|
+| `src/tools/inspect/helpers.ts` | Shared types (`ToolResult`, `ToolSuccess`, `ToolFailure`) and utilities (`getDimension()`, `surfaceAt()`) |
+| `src/tools/inspect/server.ts` | `inspect_server_status`, `inspect_players`, `inspect_player` |
+| `src/tools/inspect/world.ts` | `inspect_block`, `inspect_region`, `inspect_world_state`, `inspect_entities` |
+| `src/tools/inspect/terrain.ts` | `inspect_heightmap`, `inspect_surface`, `inspect_build_collision`, `inspect_find_empty_area` |
+| `src/tools/inspect/meta.ts` | `inspect_scoreboard`, `inspect_tags` |
+| `src/tools/inspect/index.ts` | Dispatcher — switches on `action.toolName`, delegates to the sub-modules above |
 
 ### ToolResult Type
+
+Defined in `src/tools/inspect/helpers.ts`:
 
 ```typescript
 type ToolResult = ToolSuccess | ToolFailure;
@@ -29,7 +42,7 @@ interface ToolFailure {
 
 ### Dispatcher
 
-`executeInspectTool(action)` uses a `switch` statement on `action.toolName` to route to the appropriate handler. Unrecognized tool names return `{ ok: false, code: "UNKNOWN_TOOL", ... }`. All handlers are wrapped in a `try/catch` that returns `{ ok: false, code: "TOOL_ERROR", ... }`.
+`executeInspectTool(action)` in `src/tools/inspect/index.ts` uses a `switch` statement on `action.toolName` to route to the appropriate handler in the sub-modules listed above. Unrecognized tool names return `{ ok: false, code: "UNKNOWN_TOOL", ... }`. All handlers are wrapped in a `try/catch` that returns `{ ok: false, code: "TOOL_ERROR", ... }`.
 
 ---
 
@@ -37,6 +50,7 @@ interface ToolFailure {
 
 ### 1. inspect.server_status
 
+**File**: `src/tools/inspect/server.ts`
 **Inspects**: Overall server health — player count and names.
 
 | Argument | Type | Required | Description |
@@ -63,6 +77,7 @@ The `dimensions` field is only present when `includeDimensions` is `true`.
 
 ### 2. inspect.players
 
+**File**: `src/tools/inspect/server.ts`
 **Inspects**: Detailed player list with location, dimension, and permission info.
 
 | Argument | Type | Required | Description |
@@ -97,6 +112,7 @@ Locations are floored to integers. `permissionLevel` uses the `PlayerPermissionL
 
 ### 3. inspect.player
 
+**File**: `src/tools/inspect/server.ts`
 **Inspects**: Detailed info for a single online player — health, inventory, equipment, effects, tags, and XP.
 
 | Argument | Type | Required | Description |
@@ -143,6 +159,7 @@ Locations are floored to integers. `permissionLevel` uses the `PlayerPermissionL
 
 ### 4. inspect.block
 
+**File**: `src/tools/inspect/world.ts`
 **Inspects**: A single block at a specific position.
 
 | Argument | Type | Required | Description |
@@ -173,6 +190,7 @@ Locations are floored to integers. `permissionLevel` uses the `PlayerPermissionL
 
 ### 5. inspect.region
 
+**File**: `src/tools/inspect/world.ts`
 **Inspects**: A block type histogram for a 3D region.
 
 | Argument | Type | Required | Description |
@@ -209,6 +227,7 @@ Unloaded blocks are counted in the `unloaded` field and excluded from `typeCount
 
 ### 6. inspect.world_state
 
+**File**: `src/tools/inspect/world.ts`
 **Inspects**: Time of day, weather, and game rules in a single call.
 
 | Argument | Type | Required | Description |
@@ -260,6 +279,7 @@ Unloaded blocks are counted in the `unloaded` field and excluded from `typeCount
 
 ### 7. inspect.entities
 
+**File**: `src/tools/inspect/world.ts`
 **Inspects**: Entity list in a dimension with type, name, and location.
 
 | Argument | Type | Required | Description |
@@ -296,6 +316,7 @@ Unloaded blocks are counted in the `unloaded` field and excluded from `typeCount
 
 ### 8. inspect.scoreboard
 
+**File**: `src/tools/inspect/meta.ts`
 **Inspects**: Scoreboard objectives with participants and scores.
 
 | Argument | Type | Required | Description |
@@ -332,6 +353,7 @@ Each objective caps at 64 participants in the response.
 
 ### 9. inspect.tags
 
+**File**: `src/tools/inspect/meta.ts`
 **Inspects**: Tags on a player or entity by name or ID.
 
 | Argument | Type | Required | Description |
@@ -376,6 +398,7 @@ Each objective caps at 64 participants in the response.
 
 ### 10. inspect.heightmap
 
+**File**: `src/tools/inspect/terrain.ts`
 **Inspects**: Terrain height samples across a region at a given resolution.
 
 | Argument | Type | Required | Description |
@@ -410,6 +433,7 @@ Each objective caps at 64 participants in the response.
 
 ### 11. inspect.surface
 
+**File**: `src/tools/inspect/terrain.ts`
 **Inspects**: Top solid block types for terrain columns (like heightmap but includes surface material).
 
 | Argument | Type | Required | Description |
@@ -442,6 +466,7 @@ Each objective caps at 64 participants in the response.
 
 ### 12. inspect.build_collision
 
+**File**: `src/tools/inspect/terrain.ts`
 **Inspects**: Non-air blocks and entities in a proposed build volume.
 
 | Argument | Type | Required | Description |
@@ -472,6 +497,7 @@ Each objective caps at 64 participants in the response.
 
 ### 13. inspect.find_empty_area
 
+**File**: `src/tools/inspect/terrain.ts`
 **Inspects**: Finds nearby rectangular areas that are mostly empty and suitable for building.
 
 | Argument | Type | Required | Description |

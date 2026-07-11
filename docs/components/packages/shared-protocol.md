@@ -11,7 +11,13 @@ The foundational shared contract for the entire IntelaCraft system. Defines the 
 | `src/constants.ts` | Protocol constants and enumerated string unions |
 | `src/types.ts` | TypeScript interfaces for all protocol messages |
 | `src/helpers.ts` | Utility functions: parsing, validation, redaction |
-| `src/validate.ts` | Runtime validation of every message type |
+| `src/validate.ts` | Barrel re-export (backward compat → `validate/index.js`) |
+| `src/validate/index.ts` | Public API re-exports from sub-modules |
+| `src/validate/common.ts` | Foundation: `ValidationResult`, `fail()`, `ok()`, type guards, envelope validation |
+| `src/validate/messages.ts` | Message-level validators (9 types: handshake → error, union dispatcher) |
+| `src/validate/tools.ts` | Tool argument dispatcher (switch on 18 tool names) |
+| `src/validate/tools-inspect.ts` | Read-only tool validators (12 validators) |
+| `src/validate/tools-mutate.ts` | Write tool validators (3 validators) |
 | `src/factory.ts` | Message construction helpers |
 | `src/protocol.test.ts` | Unit tests |
 
@@ -98,13 +104,87 @@ interface MessageEnvelope {
 
 ## Validation
 
-Every message type has a validator returning `ValidateResult<T>`:
+### Result Type
+
+Every validator returns `ValidateResult<T>`:
 
 ```typescript
 type ValidateResult<T> = 
   | { ok: true; value: T } 
   | { ok: false; error: ProtocolErrorBody };
 ```
+
+Helpers: `ok(value)` and `fail(code, message, details?)` construct these results.
+
+### Module Structure
+
+The `validate.ts` barrel re-exports from `validate/index.ts` for backward compatibility. Internally, validation is decomposed into domain-driven modules:
+
+```
+src/validate.ts          → re-exports validate/index.js (barrel)
+src/validate/
+  index.ts               → public API (re-exports from sub-modules)
+  common.ts              → foundation: types, guards, envelope validation
+  messages.ts            → message-level validators
+  tools.ts               → tool argument dispatcher
+  tools-inspect.ts       → read-only tool validators
+  tools-mutate.ts        → write tool validators
+```
+
+**Dependency direction:** common → messages (depends on tools) → tools → tools-inspect / tools-mutate.
+
+### Sub-modules
+
+#### `common.ts` (foundation)
+
+- `ValidationFailure`, `ValidationResult<T>`, `ValidateResult<T>` types
+- `fail()`, `ok()`, `asArgs()` constructors
+- Type guards: `isMessageType()`, `isRisk()`, `isPermissionMode()`, `isOperationState()`, `isReadTool()`, `isTool()`, `isDimensionId()`
+- `validateErrorBody()` — validates `{ code, message, details? }` shape
+- `validateEnvelope()` — validates protocol version compatibility (major match), required envelope fields
+
+#### `messages.ts` (9 message validators)
+
+| Validator | Notes |
+|-----------|-------|
+| `validateHandshake` | |
+| `validateHandshakeAck` | |
+| `validatePoll` | |
+| `validateActionRequest` | Most complex — validates `toolName`, `arguments`, risk-tool consistency, permission mode, expiry |
+| `validatePollResponse` | |
+| `validateOperationEvent` | |
+| `validateHeartbeat` | |
+| `validateErrorMessage` | |
+| `validateProtocolMessage` | Union dispatcher — routes to the correct validator by `messageType` |
+
+#### `tools.ts` (argument dispatcher)
+
+`validateToolArguments(toolName, args)` — switches on 18 tool names, delegates to tools-inspect or tools-mutate.
+
+#### `tools-inspect.ts` (12 read validators)
+
+| Validator | Shared with |
+|-----------|-------------|
+| `validateHeightmap` | Also used by `inspect.surface` |
+| `validateBuildCollision` | |
+| `validateFindEmptyArea` | |
+| `validateInspectServerStatus` | |
+| `validateInspectPlayers` | |
+| `validateInspectPlayer` | |
+| `validateInspectBlock` | |
+| `validateInspectRegion` | |
+| `validateInspectWorldState` | |
+| `validateInspectEntities` | |
+| `validateInspectScoreboard` | |
+| `validateInspectTags` | |
+
+#### `tools-mutate.ts` (3 write validators)
+
+| Validator | Notes |
+|-----------|-------|
+| `validatePlaceBlocks` | Duplicate position detection |
+| `validateFillBlocks` | Volume check (≤ `MAX_BUILD_VOLUME`), block type `minecraft:` pattern |
+| `validateAdminRunCommand` | Requires `commandId` string |
 
 ### Key Validation Rules
 
@@ -113,6 +193,7 @@ type ValidateResult<T> =
 - **Fill blocks**: Region volume must be ≤ `MAX_BUILD_VOLUME`, block type must match `minecraft:` pattern
 - **Entities**: Limit must be 1-128 (default 64)
 - **Admin command**: Requires `commandId` string
+- **Place blocks**: Duplicate positions rejected
 
 ## Factory Functions
 

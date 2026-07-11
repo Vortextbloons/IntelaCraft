@@ -13,17 +13,54 @@ Central HTTP server for IntelaCraft. Bridges the BDS (Bedrock Dedicated Server),
 | File | Lines | Purpose |
 |------|-------|---------|
 | `src/index.ts` | — | Entry point, boots the server |
-| `src/app.ts` | ~849 | Route definitions (all handlers) |
+| `src/app.ts` | ~38 | HTTP server creation with error handling |
 | `src/http.ts` | ~62 | HTTP server utilities, request/response helpers |
 | `src/config.ts` | ~108 | Configuration loading and defaults |
 | `src/env.ts` | ~39 | Environment variable parsing |
-| `src/store.ts` | ~196 | SessionStore, EventStore, SettingsStore |
+| `src/store.ts` | ~209 | SessionStore, EventStore, SettingsStore |
 | `src/policy.ts` | ~121 | Risk classification and approval policy |
-| `src/audit.ts` | ~22 | Audit log (JSONL append, async write queue) |
+| `src/audit.ts` | ~31 | Audit log (integrates with ActivityStore) |
 | `src/activity.ts` | ~112 | Activity store with query/prune, async write queue |
-| `src/agent.ts` | ~1564 | AI agent runtime (task lifecycle) |
 | `src/static.ts` | ~41 | Serves the React webview from `apps/webview/dist/` |
+| `src/agent/` | — | AI agent runtime (modular, see below) |
+| `src/routes/` | — | HTTP route handlers (modular, see below) |
 | `src/*.test.ts` | — | Unit tests |
+
+### `src/routes/` Directory
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `routes/types.ts` | ~15 | `AppContext` interface |
+| `routes/router.ts` | ~151 | Central URL dispatcher, auth, static serving |
+| `routes/tasks.ts` | ~254 | Task CRUD, approve/reject/cancel/replan, SSE streaming |
+| `routes/bds.ts` | ~338 | Handshake, poll, events, heartbeat, action enqueue (policy enforcement) |
+| `routes/settings.ts` | ~70 | Settings CRUD, emergency disable |
+| `routes/providers.ts` | ~46 | Provider CRUD, test, model discovery |
+| `routes/health.ts` | ~40 | Health check |
+| `routes/events.ts` | ~34 | Event listing, SSE stream (15s keepalive) |
+| `routes/activity-api.ts` | ~21 | Activity query and purge |
+| `routes/pi-sessions.ts` | ~18 | Pi session list/create |
+| `routes/mcp.ts` | ~8 | MCP connection status |
+
+### `src/agent/` Directory
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `agent/index.ts` | ~2 | Barrel exports: `AgentRuntime`, `AgentTask`, `AgentTaskState` |
+| `agent/types.ts` | ~124 | `AgentTaskState`, `AgentTask`, `AgentContext`, `InspectionWaiter`, `PlanInput`, `CreateTaskInput` |
+| `agent/runtime.ts` | ~303 | `AgentRuntime` facade class implementing `AgentContext` |
+| `agent/task-store.ts` | ~66 | Task persistence (debounced 50ms), CRUD, `publicTask` |
+| `agent/provider-store.ts` | ~115 | Provider persistence, CRUD, model discovery, `needProvider` |
+| `agent/chat-history.ts` | ~39 | Chat history resolution (16 turns), append (32-turn cap, 4k chars/turn) |
+| `agent/sanitize.ts` | ~23 | Deterministic JSON, API key sanitization |
+| `agent/lifecycle/approve.ts` | ~105 | Task approval with payload hashing, auto-enqueue reads |
+| `agent/lifecycle/cancel.ts` | ~50 | Task cancellation, removes queued actions |
+| `agent/lifecycle/operations.ts` | ~153 | Operation event processing, per-task promise chain, state machine driver |
+| `agent/lifecycle/reject.ts` | ~29 | Task rejection |
+| `agent/planning/planner.ts` | ~377 | `createTaskInternal`, `continueTask`, validation retry loop, pending reads |
+| `agent/planning/replan.ts` | ~221 | Agent verification, inspect replan, edit-and-replan |
+| `agent/inspection/bridge.ts` | ~121 | Inspection executor (rate-limited, cached, 30s timeout) |
+| `agent/inspection/materialize.ts` | ~215 | World context, action materialization, plan application, collision updates |
 
 ## API Surface
 

@@ -65,7 +65,7 @@ The central HTTP server that bridges all components. Written in TypeScript on No
 - Bearer token authentication on all API routes
 - Action queuing and idempotent delivery to the BDS addon
 - Risk classification (`policy.ts:47`) and permission mode enforcement (`policy.ts:99`)
-- AI mode enforcement (`agent.ts:704`) — rejects mutation and verification steps in Ask mode
+- AI mode enforcement (`src/agent/planning/planner.ts`) — rejects mutation and verification steps in Ask mode
 - SHA-256 approval binding (`policy.ts:21`)
 - Emergency disable gate (`store.ts:25`)
 - Audit log append-only persistence (`audit.ts`)
@@ -77,11 +77,36 @@ The central HTTP server that bridges all components. Written in TypeScript on No
 
 | File | Role |
 |------|------|
-| `src/app.ts` | HTTP router — all endpoint handlers |
+| `src/app.ts` | HTTP server creation (38 lines) |
+| `src/routes/router.ts` | Central URL dispatcher with regex matching |
+| `src/routes/tasks.ts` | Task CRUD + SSE streaming |
+| `src/routes/bds.ts` | BDS protocol endpoints + action enqueue |
+| `src/routes/settings.ts` | Settings CRUD + emergency disable |
+| `src/routes/providers.ts` | Provider CRUD |
+| `src/routes/health.ts` | Health check |
+| `src/routes/events.ts` | Event list + SSE stream |
+| `src/routes/activity-api.ts` | Activity query + purge |
+| `src/routes/pi-sessions.ts` | Pi session management |
+| `src/routes/mcp.ts` | MCP status |
+| `src/routes/types.ts` | AppContext interface (dependency injection) |
 | `src/http.ts` | JSON parsing, bearer auth, response helpers |
 | `src/policy.ts` | Risk classification, mode enforcement, approval validation |
 | `src/store.ts` | SessionStore (queues, idempotency), EventStore, SettingsStore |
-| `src/agent.ts` | AgentRuntime — Pi session lifecycle, task management, planning |
+| `src/agent/index.ts` | Public exports for agent module |
+| `src/agent/types.ts` | AgentTask, AgentTaskState (12 states), AgentContext, PlanInput, CreateTaskInput |
+| `src/agent/runtime.ts` | AgentRuntime facade class — thin delegation to pure functions |
+| `src/agent/task-store.ts` | File-based task persistence with debounced writes |
+| `src/agent/provider-store.ts` | Provider persistence, CRUD, model discovery |
+| `src/agent/chat-history.ts` | 32-turn chat history with 4000-char truncation |
+| `src/agent/sanitize.ts` | API key validation, stable JSON serialization |
+| `src/agent/lifecycle/approve.ts` | Task approval with payload hashing |
+| `src/agent/lifecycle/cancel.ts` | Task cancellation with queued action removal |
+| `src/agent/lifecycle/operations.ts` | BDS event processing, state machine driver |
+| `src/agent/lifecycle/reject.ts` | Task rejection |
+| `src/agent/planning/planner.ts` | Task creation, planning with 2-retry validation |
+| `src/agent/planning/replan.ts` | Replan, edit-replan, verify-after-mutations |
+| `src/agent/inspection/bridge.ts` | Pi-to-BDS async tool bridge (16 call limit, 30s timeout) |
+| `src/agent/inspection/materialize.ts` | Plan-to-action conversion, world context |
 | `src/config.ts` | Environment variable parsing, region/admin-command config |
 | `src/activity.ts` | Append-only activity record store |
 | `src/audit.ts` | Structured audit log writer |
@@ -364,6 +389,32 @@ intelacraft/                          # Root (npm workspace)
 │   └── webview/                      # @intelacraft/webview
 ├── services/
 │   └── controller/                   # @intelacraft/controller
+│       └── src/
+│           ├── agent.ts              # Barrel re-export
+│           ├── agent/                # Agent module (modular directory)
+│           │   ├── types.ts          # AgentTask, AgentTaskState, AgentContext
+│           │   ├── runtime.ts        # AgentRuntime facade class
+│           │   ├── task-store.ts     # File-based task persistence
+│           │   ├── provider-store.ts # Provider persistence, CRUD
+│           │   ├── chat-history.ts   # 32-turn chat history
+│           │   ├── sanitize.ts       # API key validation
+│           │   ├── lifecycle/        # Task lifecycle operations
+│           │   ├── planning/         # Task creation, replan
+│           │   └── inspection/       # Pi-to-BDS tool bridge
+│           ├── app.ts                # HTTP server creation
+│           ├── routes/               # Route handlers (modular directory)
+│           │   ├── router.ts         # Central URL dispatcher
+│           │   ├── tasks.ts          # Task CRUD + SSE
+│           │   ├── bds.ts            # BDS protocol endpoints
+│           │   ├── settings.ts       # Settings CRUD
+│           │   ├── providers.ts      # Provider CRUD
+│           │   ├── health.ts         # Health check
+│           │   ├── events.ts         # Event list + SSE
+│           │   ├── activity-api.ts   # Activity query + purge
+│           │   ├── pi-sessions.ts    # Pi session management
+│           │   ├── mcp.ts            # MCP status
+│           │   └── types.ts          # AppContext interface
+│           └── ...                   # Other source files
 ├── packages/
 │   ├── shared-protocol/              # @intelacraft/shared-protocol
 │   ├── pi-extension/                 # @intelacraft/pi-extension

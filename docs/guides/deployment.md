@@ -44,7 +44,7 @@ See `docs/reference/configuration.md` for full list.
 
 - Localhost-only binding (`127.0.0.1:8787`)
 - No Docker support (runs as local Node.js process)
-- In-memory stores (no persistence across restarts except audit/activity)
+- Activity history is in-memory (lost on restart); tasks, providers, and audit log persist to disk
 - JSONL audit log (append-only)
 
 ## Systemd / Background Service
@@ -172,6 +172,7 @@ The following files persist across controller restarts:
 | File | Location | Description |
 |------|----------|-------------|
 | `providers.json` | `INTELACRAFT_PROVIDERS_PATH` (default: `./data/providers.json`) | AI provider configurations (API keys, models, active provider) |
+| `tasks.json` | `INTELACRAFT_TASKS_PATH` (default: `./data/tasks.json`) | Task state (debounced async writes; in-progress tasks marked `partial` on restart) |
 | `audit.jsonl` | `INTELACRAFT_AUDIT_PATH` (default: `./data/audit.jsonl`) | Append-only log of all executed actions |
 | Activity records | In-memory (lost on restart) | Recent activity history |
 | Pi sessions | `INTELACRAFT_PI_STORAGE_PATH` (default: `./data/pi-sessions/`) | AI agent conversation history and plans |
@@ -181,7 +182,8 @@ The following files persist across controller restarts:
 ### What Does NOT Persist
 
 - **Action queue**: Pending actions are lost on restart
-- **Task state**: In-progress tasks are lost on restart
+- **In-flight task state**: Active tasks are persisted to `tasks.json` but marked `partial` on restart (review world state before continuing)
+- **Activity history**: In-memory activity records are lost on restart
 - **SSE connections**: All active streams disconnect
 - **Pi session state**: Running sessions must be restarted from their last saved point
 

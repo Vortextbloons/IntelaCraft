@@ -485,8 +485,14 @@ Returns height values across a region.
 Returns surface block types across a region.
 
 ```json
-{ "toolName": "inspect.surface", "arguments": { "dimension": "minecraft:overworld", "region": { "min": { "x": 0, "y": 0, "z": 0 }, "max": { "x": 10, "y": 0, "z": 10 } } } }
+{ "toolName": "inspect.surface", "arguments": { "dimension": "minecraft:overworld", "region": { "min": { "x": 0, "y": 0, "z": 0 }, "max": { "x": 10, "y": 0, "z": 10 } }, "resolution": 2 } }
 ```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| dimension | DimensionId | yes | Target dimension |
+| region | RegionBounds | yes | Region to scan |
+| resolution | 1 \| 2 \| 4 | no | Sample every Nth block (default: 1) |
 
 **Returns:** `{ dimension, region, surface: Array<{ position, typeId }> }`
 

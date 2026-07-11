@@ -1,6 +1,6 @@
 # Data Stores
 
-All stores live in `src/store.ts` unless otherwise noted. Everything is in-memory with optional persistence.
+All stores live in `src/store.ts` (209 lines) unless otherwise noted. Everything is in-memory with optional persistence.
 
 ## SessionStore
 
@@ -16,6 +16,7 @@ Manages BDS server sessions. One active session per `serverId`.
 - **`dequeue(sessionId)`** — Returns the next non-expired, non-emergency-blocked action from the queue. Skips mutations when emergency is disabled.
 - **`setEmergencyDisabled(sessionId, value)`** — Toggles the emergency disable flag for a session.
 - **`isEmergencyDisabled(sessionId)`** — Returns true if the session has emergency disable active.
+- **`cancelQueuedAction(sessionId, actionId)`** — Removes a specific action from the session's queue by ID. Used by `cancelTask` to clean up queued mutations before sending control.cancel.
 - **`listSessions()`** — Returns all active sessions.
 
 ### Properties
@@ -63,7 +64,7 @@ Thin wrapper (`src/audit.ts`) that appends JSONL entries.
 - All entries are run through `redactSecrets` from `shared-protocol` to strip API keys and tokens
 - **Async writes**: Uses a serialized write queue (`writeQueue`) backed by `fs/promises` for non-blocking JSONL appends. Errors are logged to console but do not crash the process.
 
-## Provider Persistence
+## Provider Persistence (`agent/provider-store.ts`)
 
 Providers are persisted to a `providers.json` file in the working directory.
 

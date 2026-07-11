@@ -18,22 +18,49 @@ The IntelaCraft webview is a single-page React application that serves as the us
 ```
 apps/webview/
 ├── src/
-│   ├── App.tsx                  (~2044 lines) Root component, all state & logic
-│   ├── components/
-│   │   ├── Transcript.tsx       Chat message list
-│   │   ├── PlanCard.tsx         Task plan display & approval
-│   │   ├── ToolCallCard.tsx     Tool execution progress
-│   │   ├── ReasoningBlock.tsx   Collapsible AI thinking
-│   │   ├── MarkdownText.tsx     Safe markdown renderer
-│   │   ├── HighlightedJson.tsx  JSON syntax highlighting
-│   │   ├── ConnectionStrip.tsx  Connection status indicator
-│   │   └── WorldContextPanel.tsx Live world stats
-│   ├── utils/
-│   │   └── format.ts           Tool result formatting
-│   ├── api.ts                   Typed HTTP client
-│   ├── chatStore.ts             Conversation persistence
-│   ├── types.ts                 Shared type definitions
-│   └── styles.css               Global styles & CSS custom properties
+│   ├── main.tsx                        Entry point
+│   ├── App.tsx                         Composition root — wires hooks, zero business logic
+│   ├── types.ts                        All domain types
+│   ├── constants.ts                    Permission modes, provider presets, welcome text
+│   ├── api.ts                          Typed HTTP client with Bearer token
+│   ├── chatStore.ts                    Conversation persistence (localStorage)
+│   ├── styles.css                      Global styles & CSS custom properties
+│   ├── components/                     Shared presentational components
+│   │   ├── Transcript.tsx              Chat message list
+│   │   ├── PlanCard.tsx               Task plan display & approval
+│   │   ├── ToolCallCard.tsx           Tool execution progress
+│   │   ├── ReasoningBlock.tsx          Collapsible AI thinking
+│   │   ├── MarkdownText.tsx            Safe markdown renderer
+│   │   ├── HighlightedJson.tsx         JSON syntax highlighting
+│   │   ├── ConnectionStrip.tsx         Connection status indicator
+│   │   └── WorldContextPanel.tsx       Live world stats
+│   ├── features/                       Feature-scoped components
+│   │   ├── LoginGate.tsx               Bearer token login form
+│   │   ├── Composer/
+│   │   │   ├── Composer.tsx            Main input bar (textarea, mode toggle, send/stop)
+│   │   │   ├── ProviderPicker.tsx      Provider connection popover
+│   │   │   ├── ModelPicker.tsx         Model selection popover
+│   │   │   └── ReasoningPicker.tsx     Reasoning level dropdown
+│   │   ├── Drawers/
+│   │   │   ├── SafetyDrawer.tsx        Permission mode + thinking level + emergency
+│   │   │   └── ActivityDrawer.tsx      Filtered activity log
+│   │   └── Sidebar/
+│   │       └── TaskList.tsx            Left sidebar with task list
+│   ├── hooks/                          React hooks (state + side effects)
+│   │   ├── useAuth.ts                  Authentication state
+│   │   ├── useActivity.ts              Activity log + text filter
+│   │   ├── useConversations.ts         Chat transcript, conversation management
+│   │   ├── useTasks.ts                 Task CRUD (approve/reject/cancel/replan/delete)
+│   │   ├── useHealth.ts               10s polling, SSE stream for operation events
+│   │   ├── useProviders.ts            Provider lifecycle, model catalogs, Pi session
+│   │   ├── useSettings.ts             Permission mode, thinking level, emergency
+│   │   ├── useChatStream.ts           SSE streaming, prompt state, auto-approve
+│   │   └── useScroll.ts               Auto-scroll, jump-to-bottom
+│   ├── lib/                            Pure utilities
+│   │   ├── chat-helpers.ts            uid(), getAiMode(), saveAiMode(), welcomeMsg()
+│   │   └── stream.ts                 SSE client (fetch-based), stream update queue
+│   └── utils/
+│       └── format.ts                  Tool result formatting/parsing
 ```
 
 ## Features
@@ -47,6 +74,10 @@ apps/webview/
 - **Emergency Disable** — Global kill switch to halt all mutations immediately
 - **Provider Management** — Configure LLM providers, select models, and test connectivity
 
+## Architecture
+
+The app follows a **composition root** pattern. `App.tsx` (285 lines) instantiates all hooks and threads their returns via props — no Context or Redux. Cross-hook calls use `useRef` slots to break circular dependencies.
+
 ## How to Access
 
 1. Start the controller: `npm run dev`
@@ -55,5 +86,5 @@ apps/webview/
 
 ## Sub-Documents
 
-- [components.md](./components.md) — Detailed documentation of all 9 React components
+- [components.md](./components.md) — Detailed documentation of all React components
 - [data-flow.md](./data-flow.md) — Data flow, SSE streaming, REST polling, and persistence

@@ -8,7 +8,7 @@ High-level system design, component responsibilities, and data flow.
 
 | File | Description |
 |------|-------------|
-| [architecture/overview.md](architecture/overview.md) | System architecture, 7 components, trust boundaries, deployment topology |
+| [architecture/overview.md](architecture/overview.md) | System architecture, modular components, trust boundaries, deployment topology |
 | [architecture/data-flow.md](architecture/data-flow.md) | Primary workflow, message protocol, SSE streaming, safety flow, task lifecycle |
 
 ## Components — Bedrock Addon
@@ -19,7 +19,7 @@ The in-game execution agent that runs inside Minecraft Bedrock Dedicated Server.
 |------|-------------|
 | [components/bedrock-addon/README.md](components/bedrock-addon/README.md) | Addon overview, file structure, safety layers, BDS configuration |
 | [components/bedrock-addon/session.md](components/bedrock-addon/session.md) | Session lifecycle: handshake, poll loop (0.5s), heartbeat (6s), reconnection |
-| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | All 13 read-only world query tools with args, API calls, return values |
+| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | 13 read-only world query tools across 6 modules (server, world, terrain, meta) |
 | [components/bedrock-addon/mutation-tools.md](components/bedrock-addon/mutation-tools.md) | All 5 mutation tools: fill_blocks, place_blocks, control.cancel, emergency_disable, admin.run_command |
 | [components/bedrock-addon/build-deploy.md](components/bedrock-addon/build-deploy.md) | esbuild bundling, dev/prod deployment, BDS config writing, pack manifests |
 
@@ -30,8 +30,8 @@ React control panel SPA served by the controller.
 | File | Description |
 |------|-------------|
 | [components/webview/README.md](components/webview/README.md) | Webview overview, tech stack, features, access instructions |
-| [components/webview/components.md](components/webview/components.md) | All 9 React components with props, behavior, hierarchy diagram |
-| [components/webview/data-flow.md](components/webview/data-flow.md) | REST polling, SSE streaming, conversation persistence, provider flow |
+| [components/webview/components.md](components/webview/components.md) | React components with props, behavior, hierarchy diagram (Composer, TaskList, drawers, pickers) |
+| [components/webview/data-flow.md](components/webview/data-flow.md) | REST polling, SSE streaming, hooks architecture, conversation persistence, batched updates |
 
 ## Components — Controller
 
@@ -39,10 +39,10 @@ Central HTTP server bridging BDS, webview, and AI agent.
 
 | File | Description |
 |------|-------------|
-| [components/controller/README.md](components/controller/README.md) | Controller overview, file structure, API surface, authentication |
+| [components/controller/README.md](components/controller/README.md) | Controller overview, modular file structure, API surface, authentication |
 | [components/controller/stores.md](components/controller/stores.md) | SessionStore, EventStore, SettingsStore, ActivityStore, AuditLog |
 | [components/controller/policy.md](components/controller/policy.md) | Risk classification, approval binding, permission modes, protected regions |
-| [components/controller/agent-runtime.md](components/controller/agent-runtime.md) | Task lifecycle, planning flow, inspection-replan, provider management |
+| [components/controller/agent-runtime.md](components/controller/agent-runtime.md) | Modular agent architecture: runtime facade, lifecycle, planning, inspection bridge |
 
 ## Components — Packages
 
@@ -51,9 +51,9 @@ npm workspace packages under @intelacraft scope.
 | File | Description |
 |------|-------------|
 | [components/packages/README.md](components/packages/README.md) | Package ecosystem overview, dependency graph, build order |
-| [components/packages/shared-protocol.md](components/packages/shared-protocol.md) | Wire protocol types, validation, helpers, factories |
+| [components/packages/shared-protocol.md](components/packages/shared-protocol.md) | Wire protocol types, modular validation, helpers, factories |
 | [components/packages/construction.md](components/packages/construction.md) | Semantic geometric build tools: walls, floors, rooms, stairs, roofs |
-| [components/packages/pi-extension.md](components/packages/pi-extension.md) | AI planning agent: system prompt, tools, session lifecycle, plan normalization |
+| [components/packages/pi-extension.md](components/packages/pi-extension.md) | AI planning agent: planner, session lifecycle, provider client, reasoning, plan normalization |
 | [components/packages/prompts.md](components/packages/prompts.md) | Prompt utilities: wrapUntrusted, adminAllowlistSection |
 | [components/packages/mcp-connection.md](components/packages/mcp-connection.md) | Advisory MCP client: graceful degradation, query interface |
 
@@ -73,9 +73,9 @@ Step-by-step instructions for development, testing, deployment, and provider set
 
 | File | Description |
 |------|-------------|
-| [guides/development.md](guides/development.md) | Developer setup, coding conventions, extending the system |
+| [guides/development.md](guides/development.md) | Developer setup, project structure, coding conventions, extending the system |
 | [guides/testing.md](guides/testing.md) | Testing framework, mock strategies, writing tests |
-| [guides/deployment.md](guides/deployment.md) | Local dev, BDS setup, pack deployment, production considerations |
+| [guides/deployment.md](guides/deployment.md) | Local dev, BDS setup, pack deployment, task persistence, production considerations |
 | [guides/provider-setup.md](guides/provider-setup.md) | Configuring AI providers: OpenAI, Groq, Ollama, OpenRouter, custom |
 
 ## Operations
@@ -86,7 +86,7 @@ Runbook, security analysis, and troubleshooting.
 |------|-------------|
 | [ops/runbook.md](ops/runbook.md) | Operations runbook: start/stop, deploy, incident response |
 | [ops/security-review.md](ops/security-review.md) | Trust model, threat analysis, residual risks |
-| [troubleshooting.md](troubleshooting.md) | Common issues and solutions for all components |
+| [troubleshooting.md](troubleshooting.md) | Common issues and solutions for all components (verified current) |
 
 ## Other
 

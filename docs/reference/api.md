@@ -257,7 +257,7 @@ Enqueue a new action for execution. Accepts either a full `ActionRequestMessage`
 - `409 APPROVAL_REQUIRED` — action requires approval; response includes `approval.payloadHash`
 - `409 APPROVAL_INVALID` — hash mismatch
 - `409 APPROVAL_EXPIRED` — approval is stale (>5 minutes)
-- `409 DUPLICATE_ACTION` — idempotency key conflict
+- `409 DUPLICATE` — idempotency key conflict
 - `503 EMERGENCY_DISABLED` — emergency disable is active
 
 ---
@@ -930,6 +930,6 @@ Handlers may throw errors with custom `status` (400–599) and `code` properties
 | 409 | `APPROVAL_REQUIRED` | Action needs approval; includes `approval.payloadHash` |
 | 409 | `APPROVAL_INVALID` | Approval hash doesn't match action payload |
 | 409 | `APPROVAL_EXPIRED` | Approval is stale (>5 minutes) |
-| 409 | `DUPLICATE_ACTION` | Idempotency key conflict |
+| 409 | `DUPLICATE` | Idempotency key conflict |
 | 500 | `INTERNAL` | Server-side error |
 | 503 | `EMERGENCY_DISABLED` | Emergency disable is active |

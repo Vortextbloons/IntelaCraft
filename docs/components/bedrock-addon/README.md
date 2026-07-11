@@ -14,7 +14,12 @@ apps/bedrock-addon/
 │   │   └── session.ts       Session lifecycle (handshake, poll, heartbeat, action dispatch)
 │   ├── tools/
 │   │   ├── inspect/
-│   │   │   └── index.ts     13 read-only inspection tools
+│   │   │   ├── index.ts     Dispatcher — routes to sub-modules by tool name
+│   │   │   ├── helpers.ts   Shared types (ToolResult) and utilities
+│   │   │   ├── server.ts    Server/player queries (server_status, players, player)
+│   │   │   ├── world.ts     Block/entity/world-state queries (block, region, world_state, entities)
+│   │   │   ├── terrain.ts   Spatial/terrain analysis (heightmap, surface, build_collision, find_empty_area)
+│   │   │   └── meta.ts      Server metadata (scoreboard, tags)
 │   │   └── mutate.ts        5 mutation tools (fill, place, cancel, emergency, admin command)
 │   └── audit/
 │       └── notify.ts        Operator notification (in-game + console)

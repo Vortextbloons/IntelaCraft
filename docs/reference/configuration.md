@@ -61,6 +61,7 @@ All IntelaCraft-specific variables are prefixed with `INTELACRAFT_`. Set these i
 | Variable | Description | Default | Type | Example |
 |----------|-------------|---------|------|---------|
 | `BDS_PATH` | Path to the BDS installation directory | *none* (required for deploy) | file path | `/opt/bedrock-server` |
+| `INTELACRAFT_WEBVIEW_DIST` | Path to the built webview dist directory | `apps/webview/dist` | file path | `/var/lib/intelacraft/webview` |
 
 ---
 

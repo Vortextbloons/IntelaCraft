@@ -1,6 +1,6 @@
 # Agent Runtime
 
-The AI agent runtime (`src/agent.ts`, ~1,564 lines) is the most complex component. It manages the full task lifecycle from natural language input to world mutation.
+The AI agent runtime (`src/agent/`, ~1,800 lines total) is the most complex component. It manages the full task lifecycle from natural language input to world mutation. The code is organized into a modular directory structure with clear separation of concerns.
 
 ## Overview
 
@@ -9,6 +9,37 @@ The AI agent runtime (`src/agent.ts`, ~1,564 lines) is the most complex componen
 3. AI model plans a sequence of tool calls
 4. In **Agent mode**: inspection wave runs, model replans, user approves mutations, mutations execute, verification confirms
 5. In **Ask mode**: only inspection (read-only) actions are allowed; mutations and verification are rejected by `validatePlanTools()`
+
+## Module Architecture
+
+The agent is decomposed into focused modules under `src/agent/`:
+
+```
+src/agent/
+├── types.ts                 # All shared types (AgentTaskState, AgentTask, AgentContext, etc.)
+├── runtime.ts               # AgentRuntime facade — implements AgentContext, delegates to pure functions
+├── task-store.ts            # Task persistence and CRUD
+├── provider-store.ts        # Provider persistence, CRUD, model discovery
+├── chat-history.ts          # Chat history resolution and append
+├── sanitize.ts              # Deterministic JSON serialization, API key sanitization
+├── lifecycle/
+│   ├── approve.ts           # approveTask — payload hashing, auto-enqueue reads
+│   ├── cancel.ts            # cancelTask — removes queued actions, enqueues control.cancel
+│   ├── reject.ts            # rejectTask — state transition to rejected
+│   └── operations.ts        # onOperationEvent — per-task promise chain, state machine driver
+├── planning/
+│   ├── planner.ts           # createTaskInternal, continueTask, planWithValidationRetry
+│   └── replan.ts            # scheduleAgentVerification, verifyAfterMutations, replanAfterInspection, editAndReplan
+└── inspection/
+    ├── bridge.ts            # createBoundedInspectionExecutor — rate-limiting, caching, 30s timeout
+    └── materialize.ts       # buildWorldContext, materializeAction, validatePlanTools, applyPlanToTask
+```
+
+### Design Patterns
+
+- **Facade**: `AgentRuntime` (`agent/runtime.ts`) is a thin facade that implements `AgentContext` and delegates to pure functions in the sub-modules. It owns the mutable state but all business logic lives in the lifecycle/planning/inspection modules.
+- **AgentContext interface**: The shared mutable interface (`agent/types.ts`) defines the contract that all modules operate against. `AgentRuntime` is the sole implementation.
+- **Pure function delegation**: Lifecycle methods (`approveTask`, `cancelTask`, `rejectTask`), planning functions, and inspection functions are all pure or near-pure, taking `AgentContext` as input.
 
 ## Ask vs Agent Mode
 
@@ -21,8 +52,8 @@ Every task has a `mode` field (`AiMode` from `shared-protocol`) that controls wh
 
 ### Enforcement
 
-- `validatePlanTools(plan, mode)` in `agent.ts` rejects plans containing `actions` or `verification` steps when `mode === "ask"`
-- The mode is passed through to all planning calls (`planWithValidationRetry`, `continueTask`, `replanAfterInspection`)
+- `validatePlanTools(plan, mode)` in `agent/inspection/materialize.ts` rejects plans containing `actions` or `verification` steps when `mode === "ask"`
+- The mode is passed through to all planning calls (`planWithValidationRetry`, `continueTask`, `replanAfterInspection` in `agent/planning/`)
 - Pi sessions are tagged with `s.mode = task.mode` so the model knows the constraint
 - The webview/task API accepts `mode` on `POST /v1/tasks`, `POST /v1/tasks/stream`, and `POST /v1/tasks/:id/stream`
 
@@ -74,10 +105,14 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 
 ## Provider Management
 
-- **CRUD**: create, read, update, delete provider profiles (`baseUrl`, `apiKey`, `model`)
-- **Persistence**: `providers.json` file
-- **`sanitizeApiKey`**: strips `Bearer` prefix, rejects browser extension error messages, validates printable ASCII only
-- **Hot-swap**: `refreshPiSessionProvider()` swaps the active provider on a live session without restart
+Provider CRUD and persistence lives in `agent/provider-store.ts`:
+
+- **CRUD**: `saveProvider`, `listProviders`, `getActiveProvider`, `setActiveProvider`
+- **Persistence**: `providers.json` file (debounced writes)
+- **`sanitizeApiKey`**: strips `Bearer` prefix, rejects browser extension error messages, validates printable ASCII only (in `agent/sanitize.ts`)
+- **`needProvider`**: ensures at least one provider exists, throws descriptive error if not
+- **`testProviderById`**: tests provider connectivity
+- **`modelsForProvider`**: discovers available models for a provider
 - **Constructor**: Creates provider and task directories (`mkdirSync`) on startup if they don't exist
 
 ## Session Management
@@ -86,7 +121,7 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 - In-memory `Map<sessionId, PiSession>` of active sessions
 - `disposePiSession` — cleanup on task completion or error
 
-## Task Creation Flow (`createTaskInternal`)
+## Task Creation Flow (`createTaskInternal` in `agent/planning/planner.ts`)
 
 1. Create `AgentTask` with state `submitted`, `mode` defaults to `"ask"`
 2. Tag Pi session with `s.mode = task.mode`
@@ -98,7 +133,7 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 8. `applyPlanToTask` — materialize actions, set state
 9. Enqueue pending reads (inspection actions)
 
-## Task Persistence
+## Task Persistence (`agent/task-store.ts`)
 
 Tasks are persisted to a `tasks.json` file using **debounced async writes**:
 
@@ -110,7 +145,7 @@ Tasks are persisted to a `tasks.json` file using **debounced async writes**:
 
 This replaces the previous synchronous `writeFileSync` approach which could block the event loop during concurrent task operations.
 
-## Planning with Validation Retry
+## Planning with Validation Retry (`agent/planning/planner.ts`)
 
 1. Bind `InspectionExecutor` for live BDS bridge
 2. Call `planWithPiSession` (pi-extension's main planning function)
@@ -123,7 +158,7 @@ This replaces the previous synchronous `writeFileSync` approach which could bloc
 
 ## Semantic Build Conversion
 
-When materializing actions, steps with `toolName.startsWith("build.")` are automatically converted:
+When materializing actions (in `agent/inspection/materialize.ts`), steps with `toolName.startsWith("build.")` are automatically converted:
 
 1. `generateSemantic(toolName, args)` from `@intelacraft/construction` produces a `GeneratedBuild` (dimension + `BlockPlacement[]` + bounds)
 2. The action is materialized as `world.place_blocks` with the generated block array
@@ -133,7 +168,7 @@ When materializing actions, steps with `toolName.startsWith("build.")` are autom
 
 ### worldSnapshot
 
-When `inspect.build_collision` results arrive via `onOperationEvent`, the controller captures a `WorldSnapshot`:
+When `inspect.build_collision` results arrive via `onOperationEvent` (in `agent/lifecycle/operations.ts`), the controller captures a `WorldSnapshot` (stored via `updateWorldSnapshotFromCollision` in `agent/inspection/materialize.ts`):
 
 ```typescript
 interface WorldSnapshot {
@@ -146,16 +181,16 @@ interface WorldSnapshot {
 
 This snapshot is passed to `previewPlacements()` to account for live world state when estimating build cost.
 
-## Live Inspection Execution
+## Live Inspection Execution (`agent/inspection/bridge.ts`)
 
-`executePiInspection(action)`:
+`executePiInspection(action)` (bounded executor with rate-limiting + caching):
 1. Materialize the action
 2. Enqueue on the target `SessionStore`
 3. Wait for BDS response via `inspectionWaiters` Map
 4. 30-second timeout per inspection
 5. Resolves when `onOperationEvent` fires with a terminal state
 
-## Inspection-Replan Flow
+## Inspection-Replan Flow (`agent/planning/replan.ts`)
 
 When a plan contains both inspection and mutation actions:
 1. Mutations are **deferred**
@@ -166,28 +201,29 @@ When a plan contains both inspection and mutation actions:
 
 ## Task Lifecycle Methods
 
-### `approveTask(taskId)`
+### `approveTask(taskId)` — `agent/lifecycle/approve.ts`
 1. Create `ApprovalRecord` with SHA-256 hash of the action payload
 2. Check emergency disable flag on the session
 3. Enqueue all approved mutations
+4. Auto-enqueue read-only inspection actions
 
-### `rejectTask(taskId)`
+### `rejectTask(taskId)` — `agent/lifecycle/reject.ts`
 Sets task state to `rejected`, discards the plan.
 
-### `cancelTask(taskId)`
-Sends `control.cancel` for **every** enqueued action on the session.
+### `cancelTask(taskId)` — `agent/lifecycle/cancel.ts`
+Removes queued actions from the session queue. Enqueues `control.cancel` for every enqueued action.
 
-### `editAndReplan(taskId, editedInput)`
+### `editAndReplan(taskId, editedInput)` — `agent/planning/replan.ts`
 Allows the user to modify the prompt and re-run planning.
 
-## Operation Event Processing (`processOperationEvent`)
+## Operation Event Processing (`agent/lifecycle/operations.ts`)
 
 - Serial operation event queues per task (`operationEventQueues` Map)
 - Inspection waiter resolution (unblocks `executePiInspection`)
 - Deduplication via `completedActionIds` Set
 - State transitions based on completion of inspect/mutation/verify waves
 
-## Chat History
+## Chat History (`agent/chat-history.ts`)
 
 - `resolveHistory(taskId)` — loads stored history for a task
 - `appendHistory(taskId, messages)` — persists new turns

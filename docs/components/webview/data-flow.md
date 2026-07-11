@@ -10,8 +10,14 @@ Technical details of how the IntelaCraft webview communicates with the controlle
 │                                                                 │
 │  ┌──────────┐  ┌────────────┐  ┌──────────┐  ┌──────────────┐ │
 │  │ App.tsx  │  │ api.ts     │  │ chatStore│  │ types.ts     │ │
-│  │ (state)  │  │ (fetch)    │  │ (localStorage) │ (types)   │ │
+│  │ (compose)│  │ (fetch)    │  │(localStorage)│ (types)     │ │
 │  └────┬─────┘  └─────┬──────┘  └─────┬────┘  └──────────────┘ │
+│       │              │               │                          │
+│  ┌────┴─────┐  ┌─────┴──────┐  ┌────┴────┐                    │
+│  │ 9 hooks  │  │ lib/stream │  │ lib/    │                    │
+│  │ (state)  │  │ (SSE fetch)│  │ chat-   │                    │
+│  │          │  │            │  │ helpers │                    │
+│  └──────────┘  └────────────┘  └─────────┘                    │
 │       │              │               │                          │
 └───────┼──────────────┼───────────────┼──────────────────────────┘
         │              │               │
@@ -46,6 +52,37 @@ Technical details of how the IntelaCraft webview communicates with the controlle
 
 ---
 
+## Hooks Architecture
+
+All state lives in custom React hooks. `App.tsx` instantiates them and threads returns via props — no Context or Redux.
+
+| Hook | Lines | Responsibility |
+|------|-------|----------------|
+| `useAuth` | 38 | Bearer token input, login validation, sign-out |
+| `useHealth` | 197 | 10s `GET /v1/health` polling, SSE event stream, bulk refresh |
+| `useProviders` | 469 | Provider CRUD, model discovery, Pi session lifecycle, picker state |
+| `useTasks` | 189 | Task list fetch, approve/reject/cancel/replan/delete mutations |
+| `useConversations` | 143 | Active conversation, message history, localStorage persistence |
+| `useChatStream` | 458 | Prompt state, SSE streaming, auto-approve read-only plans |
+| `useSettings` | 146 | Permission mode, thinking level, emergency disable toggle |
+| `useActivity` | 28 | Activity log aggregation, text filter |
+| `useScroll` | 56 | Auto-scroll tracking, jump-to-bottom |
+
+### Cross-Hook Communication
+
+Hooks cannot call each other directly. `App.tsx` bridges them via `useRef` slots:
+
+```
+App.tsx
+  ├── tasksRef         ──→  useConversations reads current task list
+  ├── refreshRef       ──→  useChatStream / useTasks calls health.refreshAll
+  ├── setPromptRef     ──→  useConversations sets the prompt input
+  ├── updatePiSessionIdRef ──→ useChatStream updates the Pi session ID
+  └── setPermissionModeRef ──→ useChatStream auto-switches to confirm_every_change
+```
+
+---
+
 ## REST Polling
 
 ### Task List Updates
@@ -55,8 +92,16 @@ GET /v1/tasks  →  every 4 seconds
 ```
 
 - Returns the full list of tasks for the current session
-- App.tsx updates the task sidebar on each poll
 - Polling stops for a task when it enters a terminal state (`completed`, `failed`, `cancelled`)
+
+### Health Polling
+
+```
+GET /v1/health  →  every 10 seconds
+```
+
+- Returns server connectivity, player count, tick number, session info
+- Drives the `ConnectionStrip` status dots and `WorldContextPanel`
 
 ---
 
@@ -111,9 +156,23 @@ GET /v1/events/stream
 - Drives the `ToolCallCard` progress indicators
 - Includes 15-second keepalive pings to prevent connection timeouts
 
-### Keepalive
+### Custom SSE Client (lib/stream.ts)
 
-All SSE connections send `:keepalive` comments every 15 seconds. The webview ignores these comments but uses them to detect connection drops.
+The browser's native `EventSource` does not support custom headers (e.g., `Authorization`). The webview uses a **fetch-based SSE client**:
+
+1. `createAuthorizedEventSource(url, token)` opens a `fetch` stream with `Authorization: Bearer <token>` and `Accept: text/event-stream`
+2. Reads the response body via `ReadableStream` in a `while` loop
+3. Parses SSE framing (`event:`, `data:` lines) manually
+4. Exposes `addEventListener(type, fn)` and `abort()` matching the `EventSource` interface
+
+### Batched Stream Updates (createStreamUpdateQueue)
+
+SSE deltas arrive at high frequency. To avoid re-rendering on every token:
+
+1. `createStreamUpdateQueue(setMessages)` returns a `push(msg)` function
+2. Incoming `ChatMsg` updates are buffered in a `Map<id, ChatMsg>`
+3. A `requestAnimationFrame` callback flushes the buffer to `setMessages` once per frame
+4. This coalesces many small updates into a single React render
 
 ---
 
@@ -129,6 +188,8 @@ Provides functions to save and restore chat transcripts using localStorage.
 | `loadConversation(taskId)` | Retrieve a previously saved transcript |
 | `deleteConversation(taskId)` | Remove a saved transcript |
 | `transcriptFromTask(task)` | Reconstruct a chat transcript from a task object |
+| `getPersistedActiveChatId()` | Read the last active conversation ID |
+| `setPersistedActiveChatId(id)` | Persist the active conversation ID |
 
 ### Storage Key
 

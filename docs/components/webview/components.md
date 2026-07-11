@@ -1,84 +1,59 @@
 # Webview Components
 
-All 9 React components that make up the IntelaCraft webview control panel.
+All React components that make up the IntelaCraft webview control panel.
 
 ## Component Hierarchy
 
 ```
-App.tsx
-├── ConnectionStrip.tsx          (status bar)
-├── WorldContextPanel.tsx        (sidebar header)
-├── Transcript.tsx               (workspace main)
-│   ├── ReasoningBlock.tsx
-│   ├── MarkdownText.tsx
-│   ├── HighlightedJson.tsx
-│   ├── ToolCallCard.tsx
-│   └── PlanCard.tsx
-└── [Composer — inline in App.tsx]
-    ├── Model picker popovers (providers, models, reasoning)
-    ├── Ask / Agent mode toggle (ai-mode group)
-    └── Send / Stop button
+main.tsx
+└── App.tsx (composition root)
+    ├── LoginGate.tsx                  (auth gate)
+    ├── TaskList.tsx                   (left sidebar)
+    ├── WorldContextPanel.tsx          (sidebar header)
+    ├── Transcript.tsx                 (workspace main)
+    │   ├── ReasoningBlock.tsx
+    │   ├── MarkdownText.tsx
+    │   ├── HighlightedJson.tsx
+    │   ├── ToolCallCard.tsx
+    │   └── PlanCard.tsx
+    ├── Composer.tsx                   (input bar)
+    │   ├── ProviderPicker.tsx         (popover)
+    │   ├── ModelPicker.tsx            (popover)
+    │   └── ReasoningPicker.tsx        (dropdown)
+    ├── SafetyDrawer.tsx               (right drawer)
+    ├── ActivityDrawer.tsx             (right drawer)
+    └── ConnectionStrip.tsx            (status bar)
 ```
 
 ---
 
-## App.tsx (~2044 lines)
+## App.tsx (285 lines)
 
-Root monolithic component containing all application state and logic.
+Composition root. Instantiates all hooks and threads their returns via props — zero business logic.
 
-### State Management
+### Hook Wiring
 
-Uses React hooks exclusively — no external state library:
+| Hook | Purpose | Key Returns |
+|------|---------|-------------|
+| `useAuth` | Bearer token login | `authed`, `login`, `signOut` |
+| `useHealth` | 10s polling + SSE | `health`, `refreshAll` |
+| `useProviders` | Provider lifecycle | `providers`, `activeProviderId`, `connectProvider`, `pickModel` |
+| `useTasks` | Task CRUD | `tasks`, `approveTask`, `rejectTask`, `cancelTask` |
+| `useConversations` | Chat transcript | `messages`, `selectedTaskId`, `sendMessage` |
+| `useChatStream` | SSE streaming | `prompt`, `setPrompt`, `sendPrompt`, `stopStream` |
+| `useSettings` | Permission/thinking | `permissionMode`, `thinkingLevel`, `emergencyDisable` |
+| `useActivity` | Activity log | `activityLog`, `activityFilter` |
+| `useScroll` | Auto-scroll | `stickToBottom`, `scrollRef` |
 
-- `useState` for UI state, task list, active task, chat messages
-- `useEffect` for SSE connections, REST polling, authentication
-- `useMemo` for derived data (filtered tasks, conversation transcript)
-- `useCallback` for stable handler references
-- `useRef` for mutable values that don't trigger re-renders (SSE controllers, DOM refs)
+### Ref-Based Cross-Hook Calls
 
-### Authentication
+Five `useRef` slots break circular dependencies between hooks:
 
-- Bearer token entered by user, stored in `sessionStorage`
-- Cleared automatically when the browser tab closes
-- Attached to every request via the `api()` client
-
-### Provider / Model Selection
-
-1. User enters base URL and API key for an LLM provider
-2. `POST /v1/providers` saves the provider
-3. `POST /v1/providers/:id/models` discovers available models
-4. `POST /v1/providers/:id/test` verifies connectivity
-5. `POST /v1/pi/sessions` creates an AI session bound to the selected model
-
-### Task Lifecycle
-
-| Action | Endpoint | Description |
-|--------|----------|-------------|
-| Create | `POST /v1/tasks` | Start a new task from a user message |
-| Approve | `POST /v1/tasks/:id/approve` | Accept the proposed plan |
-| Reject | `POST /v1/tasks/:id/reject` | Decline the plan, request revision |
-| Cancel | `POST /v1/tasks/:id/cancel` | Abort a running or pending task |
-| Replan | `POST /v1/tasks/:id/replan` | Request a new plan for the same goal |
-| Delete | `DELETE /v1/tasks/:id` | Remove a completed or cancelled task |
-
-### Ask / Agent Mode
-
-A toggle in the composer bar switches between two interaction modes:
-
-| Mode | Behavior |
-|------|----------|
-| `ask` | Question-only — the agent responds without executing tools |
-| `agent` | Full agent — the agent inspects the world and proposes/executes changes |
-
-- Mode is persisted to `localStorage` under key `intelacraft_ai_mode`
-- Mode is included in both task creation (`POST /v1/tasks/stream`) and continuation (`POST /v1/tasks/:id/stream`) request bodies
-- When opening an existing task, mode is restored from the task's `mode` field
-
-### SSE Streaming
-
-- **Task creation**: `POST /v1/tasks/stream` returns an SSE stream with real-time model tokens as they are generated
-- **Continuation**: `POST /v1/tasks/:id/stream` resumes a conversation on an existing task
-- **Live events**: `GET /v1/events/stream` receives tool execution events from the controller
+- `tasksRef` — current task list, read by `useConversations`
+- `refreshRef` — `useHealth.refreshAll`, called after task mutations
+- `setPromptRef` — `useChatStream.setPrompt`, called by `useConversations`
+- `updatePiSessionIdRef` — `useProviders.updatePiSessionId`, called by `useChatStream`
+- `setPermissionModeRef` — `useSettings.setPermissionMode`, called by auto-approve logic
 
 ### Layout
 
@@ -102,9 +77,86 @@ A toggle in the composer bar switches between two interaction modes:
 └────────────────────────────────────────────────┘
 ```
 
-The composer bar contains the model/provider picker on the left, an Ask/Agent mode toggle group in the center-right (`composer-actions`), and the Send/Stop button on the right.
-
 A collapsible drawer on the right shows the activity log or safety settings.
+
+---
+
+## LoginGate.tsx
+
+Bearer token login form. Shown when the user is not authenticated.
+
+- Text input for the bearer token
+- Submits via `useAuth.login`, which validates the token against `GET /v1/settings`
+- On failure, clears the token and shows the error message
+- On success, renders children (the main app)
+
+---
+
+## Composer.tsx
+
+Main input bar with textarea, mode toggle, and send/stop button.
+
+### Features
+
+- Auto-resizing textarea (grows with input up to max height)
+- Ask / Agent mode toggle (persisted to localStorage)
+- Send button (enabled when prompt is non-empty and not streaming)
+- Stop button (visible during active stream, calls `abort()` on the SSE controller)
+
+### Sub-Components
+
+- **ProviderPicker** — Popover to select/add an LLM provider
+- **ModelPicker** — Popover to select a model from the active provider's catalog
+- **ReasoningPicker** — Dropdown to select reasoning level (off, low, medium, high)
+
+---
+
+## ProviderPicker.tsx
+
+Popover for managing LLM provider connections.
+
+### Flow
+
+1. User selects a preset (OpenCode Zen, OpenAI, OpenRouter, Groq, Ollama, Custom) or enters a custom base URL + API key
+2. `POST /v1/providers` saves the provider
+3. `POST /v1/providers/:id/models` discovers available models
+4. `POST /v1/providers/:id/test` verifies connectivity
+5. Active provider is highlighted; clicking "Connect" calls `useProviders.connectProvider`
+
+### Presets
+
+Seven built-in provider presets defined in `constants.ts`:
+
+| Preset | Base URL | Default Model |
+|--------|----------|---------------|
+| OpenCode Zen | opencode.ai/zen/v1 | gpt-5.4-mini |
+| OpenCode Go | opencode.ai/zen/go/v1 | qwen3-coder |
+| OpenAI / Codex | api.openai.com/v1 | gpt-4.1-mini |
+| OpenRouter | openrouter.ai/api/v1 | openai/gpt-4.1-mini |
+| Groq | api.groq.com/openai/v1 | llama-3.3-70b-versatile |
+| Ollama (local) | 127.0.0.1:11434/v1 | llama3.2 |
+| Custom | 127.0.0.1:8080/v1 | local-model |
+
+---
+
+## ModelPicker.tsx
+
+Popover for selecting a model from the active provider's catalog.
+
+- Lists models returned by `POST /v1/providers/:id/models`
+- Shows model capabilities (reasoning support, context window)
+- Selecting a model creates/updates the Pi session via `POST /v1/pi/sessions`
+- Displays current model name as the trigger button label
+
+---
+
+## ReasoningPicker.tsx
+
+Dropdown to select the AI reasoning level.
+
+- Options: `off`, `low`, `medium`, `high`
+- Stored in `useSettings` and sent with task creation requests
+- Only enabled when the selected model supports reasoning (per `ReasoningCapabilities`)
 
 ---
 
@@ -262,3 +314,34 @@ Polls `GET /v1/health` at a regular interval.
 - **Player Count** — Currently connected players
 - **Tick Number** — Current server tick
 - **Health Status** — Overall system health indicator
+
+---
+
+## SafetyDrawer.tsx
+
+Right-side drawer for permission and safety controls.
+
+- **Permission mode** — Select from the 5 modes (`observe_only` through `trusted_administrator`)
+- **Thinking level** — Override the model's reasoning level
+- **Emergency disable** — Toggle the global mutation kill switch (`POST /v1/emergency-disable`)
+
+---
+
+## ActivityDrawer.tsx
+
+Right-side drawer showing a filtered activity log.
+
+- Displays `ToolRun` records from `useActivity`
+- Text filter input to search by tool name or description
+- Shows phase, status, and timestamp for each entry
+
+---
+
+## TaskList.tsx
+
+Left sidebar component rendering the list of tasks.
+
+- Fetches tasks from `useTasks` hook
+- Highlights the currently selected task
+- Shows task state (pending, running, completed, failed, cancelled)
+- Clicking a task switches the conversation transcript to that task's history

@@ -12,6 +12,8 @@ Uses Node.js built-in test runner (`node --test`).
 - `services/controller/src/agent.test.ts` - Agent runtime tests
 - `services/controller/src/e2e.test.ts` - End-to-end mock BDS tests
 
+Note: The controller source is organized into `agent/` (AI runtime, lifecycle, planning, inspection, task persistence) and `routes/` (HTTP handlers). Tests remain colocated at the package root for backward compatibility.
+
 ## Running Tests
 
 Run all tests:
@@ -100,8 +102,8 @@ beforeEach(() => {
 |---------------------|-------------------|
 | Protocol validation | `packages/shared-protocol/src/protocol.test.ts` |
 | Pi extension logic | `packages/pi-extension/src/index.test.ts` |
-| Controller routes | `services/controller/src/app.test.ts` |
-| Agent lifecycle | `services/controller/src/agent.test.ts` |
+| Controller routes | `services/controller/src/app.test.ts` (routes source: `src/routes/`) |
+| Agent lifecycle | `services/controller/src/agent.test.ts` (agent source: `src/agent/`) |
 | Full end-to-end flow | `services/controller/src/e2e.test.ts` |
 
 ### Naming Conventions
