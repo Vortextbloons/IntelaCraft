@@ -1496,37 +1496,38 @@ export function App() {
             </div>
           )}
 
-          <div
-            className="transcript-scroll"
-            ref={transcriptRef}
-            onScroll={(ev) => {
-              const el = ev.currentTarget;
-              const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-              setStickToBottom(nearBottom);
-              setShowJump(!nearBottom);
-            }}
-          >
-            <Transcript
-              chat={chat}
-              tasks={tasks}
-              progressByTask={progressByTask}
-              busy={busy}
-              chatEndRef={chatEndRef}
-              showJump={showJump}
-              onJumpLatest={() => {
-                setStickToBottom(true);
-                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-                setShowJump(false);
+          <div className="chat-column">
+            <div
+              className="transcript-scroll"
+              ref={transcriptRef}
+              onScroll={(ev) => {
+                const el = ev.currentTarget;
+                const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                setStickToBottom(nearBottom);
+                setShowJump(!nearBottom);
               }}
-              onApprove={(task) => void approveTask(task)}
-              onReject={(task) => void rejectTask(task)}
-              onCancel={(task) => void cancelTask(task)}
-              onEditReplan={(task) => void editAndReplan(task)}
-            />
-          </div>
+            >
+              <Transcript
+                chat={chat}
+                tasks={tasks}
+                progressByTask={progressByTask}
+                busy={busy}
+                chatEndRef={chatEndRef}
+                showJump={showJump}
+                onJumpLatest={() => {
+                  setStickToBottom(true);
+                  chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                  setShowJump(false);
+                }}
+                onApprove={(task) => void approveTask(task)}
+                onReject={(task) => void rejectTask(task)}
+                onCancel={(task) => void cancelTask(task)}
+                onEditReplan={(task) => void editAndReplan(task)}
+              />
+            </div>
 
-          <div className="composer-wrap">
-            <form className="composer" onSubmit={submitTask}>
+            <div className="composer-wrap">
+              <form className="composer" onSubmit={submitTask}>
               <textarea
                 rows={2}
                 value={prompt}
@@ -1883,6 +1884,7 @@ export function App() {
                 )}
               </div>
             </form>
+            </div>
           </div>
         </div>
 
