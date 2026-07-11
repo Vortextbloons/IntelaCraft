@@ -1,5 +1,14 @@
+import type { ReactNode } from "react";
 import type { MessagePart, ToolRun } from "../types";
-import { formatInspectResult } from "../utils/format";
+import {
+  extractToolResultFacts,
+  formatCoord,
+  formatInspectResult,
+  parseToolResultText,
+  shortDimension,
+  type ToolResultFacts,
+} from "../utils/format";
+import { HighlightedJson } from "./HighlightedJson";
 
 type ToolPart = Extract<MessagePart, { type: "tool_call" }>;
 
@@ -33,6 +42,9 @@ export function ToolCallCard({
   const argsSummary = part?.argsSummary;
   const showResult = Boolean(errorText || (resultText && done));
 
+  const parsed = !errorText && resultText ? parseDisplayResult(resultText, run?.result) : null;
+  const facts = parsed?.data ? extractToolResultFacts(parsed.data) : null;
+
   return (
     <div className={`tool-card compact phase-${phase ?? "plan"} state-${state}`}>
       <div className="tool-card-head">
@@ -53,8 +65,129 @@ export function ToolCallCard({
           <span style={{ width: `${pct}%` }} />
         </div>
       )}
-      {showResult && (
-        <pre className="tool-result">{errorText ? `Failed: ${errorText}` : resultText}</pre>
+      {showResult &&
+        (errorText ? (
+          <pre className="tool-result tool-result-error">Failed: {errorText}</pre>
+        ) : parsed ? (
+          <ToolResultBody summary={parsed.summary} data={parsed.data} facts={facts} />
+        ) : (
+          <pre className="tool-result">{resultText}</pre>
+        ))}
+    </div>
+  );
+}
+
+function parseDisplayResult(
+  resultText: string,
+  structured?: unknown,
+): { summary: string; data?: unknown } {
+  const fromText = parseToolResultText(resultText);
+  if (fromText.data !== undefined) return fromText;
+
+  if (structured !== undefined && structured !== null && typeof structured === "object") {
+    if (extractToolResultFacts(structured)) {
+      return {
+        summary: fromText.summary || resultText.trim(),
+        data: structured,
+      };
+    }
+  }
+  return fromText;
+}
+
+function ToolResultBody({
+  summary,
+  data,
+  facts,
+}: {
+  summary: string;
+  data?: unknown;
+  facts: ToolResultFacts | null;
+}) {
+  const hasJson = data !== undefined;
+  const plainOnly = !hasJson && summary;
+
+  if (plainOnly) {
+    return <div className="tool-result-summary">{summary}</div>;
+  }
+
+  return (
+    <div className="tool-result-body">
+      {summary && <div className="tool-result-summary">{formatSummary(summary)}</div>}
+      {facts && <ResultFacts facts={facts} />}
+      {hasJson && (
+        <details className="tool-json" open={!facts}>
+          <summary>Raw JSON</summary>
+          <HighlightedJson value={data} />
+        </details>
+      )}
+    </div>
+  );
+}
+
+function formatSummary(summary: string): ReactNode {
+  const parts = summary.split(/(\d[\d,]*)/g);
+  if (parts.length === 1) return summary;
+  return parts.map((part, i) =>
+    /^\d[\d,]*$/.test(part) ? (
+      <span key={i} className="tool-result-accent">
+        {part}
+      </span>
+    ) : (
+      <span key={i}>{part}</span>
+    ),
+  );
+}
+
+function ResultFacts({ facts }: { facts: ToolResultFacts }) {
+  return (
+    <div className="tool-facts">
+      {facts.dimension && (
+        <div className="tool-fact">
+          <span className="tool-fact-label">Dimension</span>
+          <code>{shortDimension(facts.dimension)}</code>
+        </div>
+      )}
+      {facts.blockType && (
+        <div className="tool-fact">
+          <span className="tool-fact-label">Block</span>
+          <code>{shortDimension(facts.blockType)}</code>
+        </div>
+      )}
+      {facts.region && (
+        <>
+          <div className="tool-fact">
+            <span className="tool-fact-label">Min</span>
+            <code className="tool-fact-coords">{formatCoord(facts.region.min)}</code>
+          </div>
+          <div className="tool-fact">
+            <span className="tool-fact-label">Max</span>
+            <code className="tool-fact-coords">{formatCoord(facts.region.max)}</code>
+          </div>
+          {facts.layers != null && (
+            <div className="tool-fact">
+              <span className="tool-fact-label">Layers</span>
+              <code>
+                {facts.layers}{" "}
+                <span className="meta">
+                  (Y {facts.region.min.y}–{facts.region.max.y})
+                </span>
+              </code>
+            </div>
+          )}
+        </>
+      )}
+      {facts.position && !facts.region && (
+        <div className="tool-fact">
+          <span className="tool-fact-label">Position</span>
+          <code className="tool-fact-coords">{formatCoord(facts.position)}</code>
+        </div>
+      )}
+      {facts.count != null && (
+        <div className="tool-fact">
+          <span className="tool-fact-label">Count</span>
+          <code className="tool-fact-coords">{facts.count.toLocaleString()}</code>
+        </div>
       )}
     </div>
   );

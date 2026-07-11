@@ -101,6 +101,13 @@ export const PLANNER_TOOL_CATALOG = [
     returns: "{count, players[{name, id, dimension, location, permissionLevel, isOperator}]}",
   },
   {
+    toolName: "inspect.player",
+    kind: "read",
+    description: "Detailed info about a specific player: health, inventory, armor, gamemode, XP, effects, and position",
+    arguments: { name: "string" },
+    returns: "{name, id, alive, dimension, location, gameMode, health, absorption, xp, effects, inventory, armor, isOperator, tags}",
+  },
+  {
     toolName: "inspect.block",
     kind: "read",
     description: "Single block at a known coordinate — use for exact block type checks",
@@ -362,6 +369,7 @@ function createInspectionTools(sessionId: string) {
   return [
     createInspectionTool(sessionId, "inspect.server_status", "Player count, names, and world basics.", Type.Object({ includeDimensions: Type.Optional(Type.Boolean()) })),
     createInspectionTool(sessionId, "inspect.players", "Detailed online player info: name, id, dimension, location, permissions.", Type.Object({ nameFilter: Type.Optional(Type.String()) })),
+    createInspectionTool(sessionId, "inspect.player", "Inspect detailed info about a specific online player.", Type.Object({ name: Type.String() })),
     createInspectionTool(sessionId, "inspect.block", "Single block at a known coordinate — returns typeId, isAir, isLiquid.", Type.Object({ dimension: dimensionSchema, position: positionSchema })),
     createInspectionTool(sessionId, "inspect.region", "Block type counts in a bounded region (max 32^3).", Type.Object({ dimension: dimensionSchema, region: regionSchema })),
     createInspectionTool(sessionId, "inspect.world_state", "World time, weather, and game rules in one call.", Type.Object({

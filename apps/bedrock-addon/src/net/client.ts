@@ -37,7 +37,9 @@ export class ControllerClient {
         parsed &&
         typeof parsed === "object" &&
         "error" in parsed &&
-        (parsed as { error?: { message?: string; code?: string } }).error;
+        (parsed as { error?: { message?: string; code?: string } }).error
+          ? (parsed as { error?: { message?: string; code?: string } }).error
+          : undefined;
       const message =
         err && typeof err.message === "string"
           ? err.message

@@ -3,12 +3,14 @@ import { api, ensureEnv, printBanner } from "./lib.mjs";
 
 const TOOL_ALIASES = {
   players: "inspect.players",
+  player: "inspect.player",
   status: "inspect.server_status",
   server: "inspect.server_status",
-  time: "inspect.time",
-  weather: "inspect.weather",
-  rules: "inspect.game_rules",
-  gamerules: "inspect.game_rules",
+  world: "inspect.world_state",
+  time: "inspect.world_state",
+  weather: "inspect.world_state",
+  rules: "inspect.world_state",
+  gamerules: "inspect.world_state",
   block: "inspect.block",
   region: "inspect.region",
   entities: "inspect.entities",
@@ -22,10 +24,9 @@ function usage() {
 
   Tools:
     players              list online players
+    player               detailed info for one player (needs name)
     status               server status
-    time                 world time
-    weather              weather
-    rules                selected game rules
+    world                time, weather, and game rules
     entities             entities in a dimension (needs dimension)
     scoreboard           scoreboard objectives
     tags                 tags for a player/entity (needs target)

@@ -93,6 +93,7 @@ var PERMISSION_MODES = [
 var READ_TOOLS = [
   "inspect.server_status",
   "inspect.players",
+  "inspect.player",
   "inspect.block",
   "inspect.region",
   "inspect.world_state",
@@ -396,6 +397,8 @@ function validateToolArguments(toolName, args) {
       return asArgs(validateInspectServerStatus(args));
     case "inspect.players":
       return asArgs(validateInspectPlayers(args));
+    case "inspect.player":
+      return asArgs(validateInspectPlayer(args));
     case "inspect.block":
       return asArgs(validateInspectBlock(args));
     case "inspect.region":
@@ -448,6 +451,12 @@ function validateInspectPlayers(args) {
   return ok({
     nameFilter: typeof args.nameFilter === "string" ? args.nameFilter : void 0
   });
+}
+function validateInspectPlayer(args) {
+  if (!isNonEmptyString(args.name)) {
+    return fail("INVALID_ARGS", "name is required");
+  }
+  return ok({ name: args.name });
 }
 function validateInspectBlock(args) {
   if (!isDimensionId(args.dimension)) {
@@ -590,7 +599,7 @@ function newId(prefix = "id") {
 }
 
 // src/tools/inspect/index.ts
-import { PlayerPermissionLevel as PlayerPermissionLevel2, world as world2 } from "@minecraft/server";
+import { EquipmentSlot, PlayerPermissionLevel as PlayerPermissionLevel2, world as world2 } from "@minecraft/server";
 var DEFAULT_GAME_RULE_KEYS = [
   "doDayLightCycle",
   "doMobSpawning",
@@ -612,6 +621,8 @@ function executeInspectTool(action) {
         return inspectServerStatus(action.arguments);
       case "inspect.players":
         return inspectPlayers(action.arguments);
+      case "inspect.player":
+        return inspectPlayer(action.arguments);
       case "inspect.block":
         return inspectBlock(action.arguments);
       case "inspect.region":
@@ -682,6 +693,73 @@ function inspectPlayers(args) {
     completedWork: players.length,
     totalEstimatedWork: players.length,
     message: `Found ${players.length} player(s)`
+  };
+}
+function inspectPlayer(args) {
+  const player = world2.getPlayers().find((candidate) => candidate.name === args.name);
+  if (!player) {
+    return {
+      ok: false,
+      code: "PLAYER_NOT_FOUND",
+      message: `No online player matched '${args.name}'`
+    };
+  }
+  const health = player.getComponent("minecraft:health");
+  const absorption = player.getComponent("minecraft:absorption");
+  const inventoryComponent = player.getComponent("minecraft:inventory");
+  const equippable = player.getComponent("minecraft:equippable");
+  const inventory = [];
+  const container = inventoryComponent?.container;
+  if (container?.isValid) {
+    for (let slot = 0; slot < container.size; slot++) {
+      const item = container.getItem(slot);
+      if (item) inventory.push({ slot, typeId: item.typeId, amount: item.amount });
+    }
+  }
+  const itemDetails = (slot) => {
+    const item = equippable?.getEquipment(slot);
+    return item ? { typeId: item.typeId, amount: item.amount } : null;
+  };
+  const location = player.location;
+  const effects = player.getEffects().map((effect) => ({
+    id: effect.typeId,
+    amplifier: effect.amplifier,
+    duration: effect.duration
+  }));
+  return {
+    ok: true,
+    result: {
+      name: player.name,
+      id: player.id,
+      alive: player.isValid,
+      dimension: player.dimension.id,
+      location: {
+        x: Math.floor(location.x),
+        y: Math.floor(location.y),
+        z: Math.floor(location.z)
+      },
+      gameMode: player.getGameMode(),
+      health: health ? { current: health.currentValue, max: health.effectiveMax } : null,
+      absorption: absorption?.currentValue ?? null,
+      xp: {
+        level: player.level,
+        total: player.getTotalXp(),
+        atCurrentLevel: player.xpEarnedAtCurrentLevel
+      },
+      effects,
+      inventory,
+      armor: {
+        head: itemDetails(EquipmentSlot.Head),
+        chest: itemDetails(EquipmentSlot.Chest),
+        legs: itemDetails(EquipmentSlot.Legs),
+        feet: itemDetails(EquipmentSlot.Feet)
+      },
+      isOperator: player.playerPermissionLevel === PlayerPermissionLevel2.Operator,
+      tags: player.getTags()
+    },
+    completedWork: 1,
+    totalEstimatedWork: 1,
+    message: `Detailed info collected for ${player.name}`
   };
 }
 function inspectBlock(args) {
@@ -1119,7 +1197,7 @@ var ControllerClient = class {
       }
     }
     if (response.status < 200 || response.status >= 300) {
-      const err = parsed && typeof parsed === "object" && "error" in parsed && parsed.error;
+      const err = parsed && typeof parsed === "object" && "error" in parsed && parsed.error ? parsed.error : void 0;
       const message = err && typeof err.message === "string" ? err.message : `HTTP ${response.status}`;
       throw new Error(message);
     }

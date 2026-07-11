@@ -489,36 +489,36 @@ export class AgentRuntime {
       );
     }
     let lastError: string | undefined = opts.validationError;
-    try {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const plan = await planWithPiSession(sessionId, request, world, mcp, {
-          ...opts,
-          validationError: lastError,
+    // Pi may finish the prompt before its queued tool callback is dispatched.
+    // Keep the bridge bound to this Pi session until a later planning turn
+    // replaces it; clearing it here caused those callbacks to fail before an
+    // inspection action could be sent to BDS.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const plan = await planWithPiSession(sessionId, request, world, mcp, {
+        ...opts,
+        validationError: lastError,
+      });
+      try {
+        this.validatePlanTools(plan);
+        // Dry-run materialize to catch arg errors before applying.
+        for (const step of plan.inspection) this.materializeAction(step, input, true);
+        for (const step of plan.actions) this.materializeAction(step, input, false);
+        for (const step of plan.verification) this.materializeAction(step, input, true);
+        return plan;
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : "Invalid plan";
+        task.metrics = {
+          ...(task.metrics ?? {}),
+          validationRetries: (task.metrics?.validationRetries ?? 0) + 1,
+        };
+        if (attempt === 1) throw e;
+        opts.onEvent?.({
+          type: "tool",
+          name: "validate_plan",
+          phase: "start",
+          detail: lastError,
         });
-        try {
-          this.validatePlanTools(plan);
-          // Dry-run materialize to catch arg errors before applying.
-          for (const step of plan.inspection) this.materializeAction(step, input, true);
-          for (const step of plan.actions) this.materializeAction(step, input, false);
-          for (const step of plan.verification) this.materializeAction(step, input, true);
-          return plan;
-        } catch (e) {
-          lastError = e instanceof Error ? e.message : "Invalid plan";
-          task.metrics = {
-            ...(task.metrics ?? {}),
-            validationRetries: (task.metrics?.validationRetries ?? 0) + 1,
-          };
-          if (attempt === 1) throw e;
-          opts.onEvent?.({
-            type: "tool",
-            name: "validate_plan",
-            phase: "start",
-            detail: lastError,
-          });
-        }
       }
-    } finally {
-      setPiInspectionExecutor(sessionId);
     }
     throw new Error(lastError ?? "Planning failed");
   }

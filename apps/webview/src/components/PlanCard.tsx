@@ -1,6 +1,7 @@
 import type { Task } from "../types";
 import { taskNeedsApproval } from "../types";
 import { estimateFillBlocks, summarizeArgs } from "../utils/format";
+import { HighlightedJson } from "./HighlightedJson";
 
 export function PlanCard({
   task,
@@ -92,7 +93,7 @@ export function PlanCard({
                 </div>
                 <details className="plan-args">
                   <summary>Arguments</summary>
-                  <pre>{JSON.stringify(a.arguments, null, 2)}</pre>
+                  <HighlightedJson value={a.arguments} />
                 </details>
               </div>
             );

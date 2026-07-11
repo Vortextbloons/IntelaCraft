@@ -1,3 +1,19 @@
+export type Vec3 = { x: number; y: number; z: number };
+
+export type ParsedToolResult = {
+  summary: string;
+  data?: unknown;
+};
+
+export type ToolResultFacts = {
+  dimension?: string;
+  region?: { min: Vec3; max: Vec3 };
+  position?: Vec3;
+  blockType?: string;
+  count?: number;
+  layers?: number;
+};
+
 export function formatInspectResult(message: string, result: unknown): string {
   if (result && typeof result === "object") {
     const r = result as {
@@ -31,6 +47,71 @@ export function formatInspectResult(message: string, result: unknown): string {
     return `${message}\n${JSON.stringify(result, null, 2)}`;
   }
   return message;
+}
+
+/** Split a tool result blob into a human summary line + optional JSON payload. */
+export function parseToolResultText(text: string): ParsedToolResult {
+  const trimmed = text.trim();
+  if (!trimmed) return { summary: "" };
+
+  const jsonStart = trimmed.search(/[\[{]/);
+  if (jsonStart === -1) return { summary: trimmed };
+
+  const maybeJson = trimmed.slice(jsonStart);
+  try {
+    const data = JSON.parse(maybeJson) as unknown;
+    const summary = trimmed.slice(0, jsonStart).trim();
+    return { summary, data };
+  } catch {
+    return { summary: trimmed };
+  }
+}
+
+export function extractToolResultFacts(data: unknown): ToolResultFacts | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const r = data as Record<string, unknown>;
+  const facts: ToolResultFacts = {};
+
+  if (typeof r.dimension === "string") facts.dimension = r.dimension;
+  if (typeof r.blockType === "string") facts.blockType = r.blockType;
+  if (typeof r.count === "number") facts.count = r.count;
+  if (typeof r.changed === "number") facts.count = r.changed;
+  if (typeof r.blocksChanged === "number") facts.count = r.blocksChanged;
+
+  const pos = r.position as Vec3 | undefined;
+  if (pos && typeof pos.x === "number" && typeof pos.y === "number" && typeof pos.z === "number") {
+    facts.position = pos;
+  }
+
+  const region = r.region as { min?: Vec3; max?: Vec3 } | undefined;
+  if (
+    region?.min &&
+    region?.max &&
+    typeof region.min.x === "number" &&
+    typeof region.max.x === "number"
+  ) {
+    facts.region = { min: region.min, max: region.max };
+    facts.layers = Math.abs(region.max.y - region.min.y) + 1;
+  }
+
+  if (
+    !facts.dimension &&
+    !facts.region &&
+    !facts.position &&
+    !facts.blockType &&
+    facts.count === undefined
+  ) {
+    return null;
+  }
+  return facts;
+}
+
+export function formatCoord(v: Vec3): string {
+  return `${v.x}, ${v.y}, ${v.z}`;
+}
+
+export function shortDimension(dim: string): string {
+  return dim.replace(/^minecraft:/, "");
 }
 
 export function summarizeArgs(args: Record<string, unknown> | undefined): string {

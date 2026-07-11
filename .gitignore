@@ -10,3 +10,4 @@ services/controller/data/
 AGENTS.md
 spec/
 docs/All.md
+.env

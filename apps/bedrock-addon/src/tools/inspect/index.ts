@@ -1,4 +1,4 @@
-import { PlayerPermissionLevel, world } from "@minecraft/server";
+import { EquipmentSlot, PlayerPermissionLevel, world } from "@minecraft/server";
 import {
   MAX_REGION_VOLUME,
   regionVolume,
@@ -6,6 +6,7 @@ import {
   type DimensionId,
   type InspectBlockArgs,
   type InspectEntitiesArgs,
+  type InspectPlayerArgs,
   type InspectPlayersArgs,
   type InspectRegionArgs,
   type InspectScoreboardArgs,
@@ -55,6 +56,8 @@ export function executeInspectTool(action: ActionRequestMessage): ToolResult {
         return inspectServerStatus(action.arguments as unknown as InspectServerStatusArgs);
       case "inspect.players":
         return inspectPlayers(action.arguments as unknown as InspectPlayersArgs);
+      case "inspect.player":
+        return inspectPlayer(action.arguments as unknown as InspectPlayerArgs);
       case "inspect.block":
         return inspectBlock(action.arguments as unknown as InspectBlockArgs);
       case "inspect.region":
@@ -127,6 +130,82 @@ function inspectPlayers(args: InspectPlayersArgs): ToolResult {
     completedWork: players.length,
     totalEstimatedWork: players.length,
     message: `Found ${players.length} player(s)`,
+  };
+}
+
+function inspectPlayer(args: InspectPlayerArgs): ToolResult {
+  const player = world.getPlayers().find((candidate) => candidate.name === args.name);
+  if (!player) {
+    return {
+      ok: false,
+      code: "PLAYER_NOT_FOUND",
+      message: `No online player matched '${args.name}'`,
+    };
+  }
+
+  const health = player.getComponent("minecraft:health");
+  // Absorption is not typed by every supported Script API release. Keep it
+  // nullable so a missing runtime component is not misreported as zero.
+  const absorption = player.getComponent("minecraft:absorption") as
+    | { currentValue?: number }
+    | undefined;
+  const inventoryComponent = player.getComponent("minecraft:inventory");
+  const equippable = player.getComponent("minecraft:equippable");
+  const inventory = [];
+  const container = inventoryComponent?.container;
+  if (container?.isValid) {
+    for (let slot = 0; slot < container.size; slot++) {
+      const item = container.getItem(slot);
+      if (item) inventory.push({ slot, typeId: item.typeId, amount: item.amount });
+    }
+  }
+  const itemDetails = (slot: EquipmentSlot) => {
+    const item = equippable?.getEquipment(slot);
+    return item ? { typeId: item.typeId, amount: item.amount } : null;
+  };
+  const location = player.location;
+  const effects = player.getEffects().map((effect) => ({
+    id: effect.typeId,
+    amplifier: effect.amplifier,
+    duration: effect.duration,
+  }));
+
+  return {
+    ok: true,
+    result: {
+      name: player.name,
+      id: player.id,
+      alive: player.isValid,
+      dimension: player.dimension.id,
+      location: {
+        x: Math.floor(location.x),
+        y: Math.floor(location.y),
+        z: Math.floor(location.z),
+      },
+      gameMode: player.getGameMode(),
+      health: health
+        ? { current: health.currentValue, max: health.effectiveMax }
+        : null,
+      absorption: absorption?.currentValue ?? null,
+      xp: {
+        level: player.level,
+        total: player.getTotalXp(),
+        atCurrentLevel: player.xpEarnedAtCurrentLevel,
+      },
+      effects,
+      inventory,
+      armor: {
+        head: itemDetails(EquipmentSlot.Head),
+        chest: itemDetails(EquipmentSlot.Chest),
+        legs: itemDetails(EquipmentSlot.Legs),
+        feet: itemDetails(EquipmentSlot.Feet),
+      },
+      isOperator: player.playerPermissionLevel === PlayerPermissionLevel.Operator,
+      tags: player.getTags(),
+    },
+    completedWork: 1,
+    totalEstimatedWork: 1,
+    message: `Detailed info collected for ${player.name}`,
   };
 }
 

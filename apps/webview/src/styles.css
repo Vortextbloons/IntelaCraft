@@ -35,6 +35,7 @@ body {
   font-family: var(--font-ui);
   color: var(--text);
   background: var(--bg);
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -1062,7 +1063,8 @@ body > grammarly-desktop-integration,
 }
 
 .tool-result,
-.plan-args pre {
+.plan-args pre,
+.json-hl {
   margin: 0;
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -1070,6 +1072,150 @@ body > grammarly-desktop-integration,
   color: var(--muted);
   max-height: 180px;
   overflow: auto;
+}
+
+.tool-result-error {
+  color: #ffb4b0;
+}
+
+.tool-result-body {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.1rem;
+}
+
+.tool-result-summary {
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.tool-result-accent {
+  color: var(--ok);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-card.phase-mutate .tool-result-accent,
+.tool-card.phase-mutate .tool-fact-coords {
+  color: #e0c36a;
+}
+
+.tool-card.phase-verify .tool-result-accent,
+.tool-card.phase-verify .tool-fact-coords {
+  color: #8eb4d4;
+}
+
+.tool-card.phase-inspect .tool-result-accent,
+.tool-card.phase-inspect .tool-fact-coords {
+  color: #8fbf96;
+}
+
+.tool-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.3rem 0.65rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.tool-fact {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.tool-fact-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tool-fact code {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.tool-fact-coords {
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-json,
+.plan-args {
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  padding: 0.2rem 0.45rem 0.35rem;
+}
+
+.tool-json summary,
+.plan-args summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.2rem 0;
+  user-select: none;
+  list-style: none;
+}
+
+.tool-json summary::-webkit-details-marker,
+.plan-args summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-json summary::before,
+.plan-args summary::before {
+  content: "?";
+  display: inline-block;
+  margin-right: 0.35rem;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+
+.tool-json[open] summary::before,
+.plan-args[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.tool-json .json-hl,
+.plan-args .json-hl {
+  margin-top: 0.2rem;
+  padding: 0.35rem 0.15rem 0.15rem;
+  max-height: 220px;
+  border-top: 1px solid var(--border);
+}
+
+.json-hl {
+  line-height: 1.45;
+  color: #c8c8ce;
+}
+
+.json-key {
+  color: #9ec3e6;
+}
+
+.json-string {
+  color: #8fbf96;
+}
+
+.json-number {
+  color: #e0c36a;
+}
+
+.json-literal {
+  color: #c9a0dc;
+}
+
+.json-punct {
+  color: #6e6e76;
 }
 
 .plan-section {
@@ -1110,12 +1256,6 @@ body > grammarly-desktop-integration,
 .plan-facts code {
   font-family: var(--font-mono);
   color: var(--text);
-}
-
-.plan-args summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 0.75rem;
 }
 
 .jump-latest {

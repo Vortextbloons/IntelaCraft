@@ -47,6 +47,7 @@ export type OperationState = (typeof OPERATION_STATES)[number];
 export const READ_TOOLS = [
   "inspect.server_status",
   "inspect.players",
+  "inspect.player",
   "inspect.block",
   "inspect.region",
   "inspect.world_state",

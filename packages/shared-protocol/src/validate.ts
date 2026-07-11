@@ -30,6 +30,7 @@ import type {
   HandshakeMessage,
   HeartbeatMessage,
   InspectBlockArgs,
+  InspectPlayerArgs,
   InspectPlayersArgs,
   InspectRegionArgs,
   InspectServerStatusArgs,
@@ -430,6 +431,8 @@ export function validateToolArguments(
       return asArgs(validateInspectServerStatus(args));
     case "inspect.players":
       return asArgs(validateInspectPlayers(args));
+    case "inspect.player":
+      return asArgs(validateInspectPlayer(args));
     case "inspect.block":
       return asArgs(validateInspectBlock(args));
     case "inspect.region":
@@ -491,6 +494,15 @@ function validateInspectPlayers(
   return ok({
     nameFilter: typeof args.nameFilter === "string" ? args.nameFilter : undefined,
   });
+}
+
+function validateInspectPlayer(
+  args: Record<string, unknown>,
+): ValidateResult<InspectPlayerArgs> {
+  if (!isNonEmptyString(args.name)) {
+    return fail("INVALID_ARGS", "name is required");
+  }
+  return ok({ name: args.name });
 }
 
 function validateInspectBlock(args: Record<string, unknown>): ValidateResult<InspectBlockArgs> {

@@ -110,6 +110,11 @@ describe("action request", () => {
     assert.equal(result.ok, true);
   });
 
+  it("accepts inspect.player with a non-empty name", () => {
+    assert.equal(validateToolArguments("inspect.player", { name: "Steve" }).ok, true);
+    assert.equal(validateToolArguments("inspect.player", { name: "" }).ok, false);
+  });
+
   it("rejects unknown tools", () => {
     const msg = createActionRequest({
       sessionId: "s1",

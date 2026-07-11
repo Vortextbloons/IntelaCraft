@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ensureEnv, printBanner, REPO_ROOT, runNpm } from "./lib.mjs";
 
@@ -8,11 +7,15 @@ printBanner("IntelaCraft controller");
 
 const { port, token, baseUrl } = ensureEnv();
 
-if (!existsSync(join(REPO_ROOT, "services", "controller", "dist", "index.js"))) {
-  console.log("  Building controller...");
-  runNpm(["run", "build", "-w", "@intelacraft/shared-protocol"]);
-  runNpm(["run", "build", "-w", "@intelacraft/controller"]);
-}
+// Workspace packages are executed from dist/. Always rebuild the controller
+// bridge and its runtime dependencies so `npm run dev` cannot start stale code
+// after an add-on or inspection-tool change.
+console.log("  Building controller bridge...");
+runNpm(["run", "build", "-w", "@intelacraft/shared-protocol"]);
+runNpm(["run", "build", "-w", "@intelacraft/prompts"]);
+runNpm(["run", "build", "-w", "@intelacraft/pi-extension"]);
+runNpm(["run", "build", "-w", "@intelacraft/mcp-connection"]);
+runNpm(["run", "build", "-w", "@intelacraft/controller"]);
 
 const vitePort = 5173;
 

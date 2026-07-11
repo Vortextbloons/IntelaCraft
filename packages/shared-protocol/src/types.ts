@@ -141,6 +141,11 @@ export interface InspectPlayersArgs {
   nameFilter?: string;
 }
 
+export interface InspectPlayerArgs {
+  /** Exact gamertag of an online player. */
+  name: string;
+}
+
 export interface InspectWorldStateArgs {
   /** Dimension for time and weather queries (defaults to overworld). */
   dimension?: DimensionId;
