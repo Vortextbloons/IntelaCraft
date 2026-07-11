@@ -3,9 +3,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 export function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     req.on("data", (chunk: Buffer) => {
       chunks.push(chunk);
-      if (chunks.reduce((n, c) => n + c.length, 0) > 1_000_000) {
+      totalBytes += chunk.length;
+      if (totalBytes > 1_000_000) {
         reject(new Error("Body too large"));
         req.destroy();
       }

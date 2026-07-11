@@ -3,6 +3,7 @@ import type {
   HeartbeatMessage,
   OperationEventMessage,
   PermissionMode,
+  ThinkingLevel,
 } from "@intelacraft/shared-protocol";
 import { isExpired } from "@intelacraft/shared-protocol";
 
@@ -19,6 +20,7 @@ export class SessionStore {
   private sessions = new Map<string, BdsSession>();
   private sessionsByServer = new Map<string, string>();
   private queues = new Map<string, ActionRequestMessage[]>();
+  private queueHeads = new Map<string, number>();
   private seenIdempotency = new Map<string, string>();
   private emergencyDisabled = new Set<string>();
 
@@ -37,11 +39,13 @@ export class SessionStore {
     if (existingSessionId && existingSessionId !== session.sessionId) {
       this.sessions.delete(existingSessionId);
       this.queues.delete(existingSessionId);
+      this.queueHeads.delete(existingSessionId);
     }
     this.sessions.set(session.sessionId, session);
     this.sessionsByServer.set(session.serverId, session.sessionId);
     if (!this.queues.has(session.sessionId)) {
       this.queues.set(session.sessionId, []);
+      this.queueHeads.set(session.sessionId, 0);
     }
   }
 
@@ -90,14 +94,30 @@ export class SessionStore {
   dequeue(sessionId: string): ActionRequestMessage | null {
     const queue = this.queues.get(sessionId);
     if (!queue || queue.length === 0) return null;
-    while (queue.length > 0) {
-      const next = queue.shift()!;
+    let head = this.queueHeads.get(sessionId) ?? 0;
+    while (head < queue.length) {
+      const next = queue[head++];
       if (this.isEmergencyDisabled(sessionId) && next.risk !== "read") continue;
       if (!isExpired(next.expiresAt)) {
+        this.compactQueue(sessionId, queue, head);
         return next;
       }
     }
+    queue.length = 0;
+    this.queueHeads.set(sessionId, 0);
     return null;
+  }
+
+  private compactQueue(sessionId: string, queue: ActionRequestMessage[], head: number): void {
+    if (head >= queue.length) {
+      queue.length = 0;
+      this.queueHeads.set(sessionId, 0);
+    } else if (head > 256 && head * 2 >= queue.length) {
+      queue.splice(0, head);
+      this.queueHeads.set(sessionId, 0);
+    } else {
+      this.queueHeads.set(sessionId, head);
+    }
   }
 
   listSessions(): BdsSession[] {
@@ -145,22 +165,32 @@ export class EventStore {
 }
 
 export class SettingsStore {
-  // Enable the smallest supported reasoning stream by default. Users can still
-  // turn it off, and providers without reasoning support simply omit deltas.
-  private thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" = "minimal";
+  private permissionMode: PermissionMode;
+  private preferredThinkingLevel: ThinkingLevel = "minimal";
+  private effectiveThinkingLevel: ThinkingLevel = "minimal";
 
-  constructor(private permissionMode: PermissionMode) {}
+  constructor(permissionMode: PermissionMode) {
+    this.permissionMode = permissionMode;
+  }
 
   get() {
-    return { permissionMode: this.permissionMode, thinkingLevel: this.thinkingLevel };
+    return {
+      permissionMode: this.permissionMode,
+      thinkingLevel: this.effectiveThinkingLevel,
+      preferredThinkingLevel: this.preferredThinkingLevel,
+    };
   }
 
   patch(input: {
     permissionMode?: PermissionMode;
-    thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
+    thinkingLevel?: ThinkingLevel;
   }) {
     if (input.permissionMode) this.permissionMode = input.permissionMode;
-    if (input.thinkingLevel) this.thinkingLevel = input.thinkingLevel;
+    if (input.thinkingLevel) this.preferredThinkingLevel = input.thinkingLevel;
     return this.get();
+  }
+
+  setEffective(level: ThinkingLevel) {
+    this.effectiveThinkingLevel = level;
   }
 }

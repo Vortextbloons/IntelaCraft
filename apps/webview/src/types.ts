@@ -12,7 +12,7 @@ export type Health = {
       tick?: number;
     } | null;
   }>;
-  settings?: { permissionMode: string; thinkingLevel?: string };
+  settings?: { permissionMode: string; thinkingLevel?: string; preferredThinkingLevel?: string };
   agent?: {
     pi: boolean;
     sessions: number;
@@ -120,7 +120,40 @@ export type ChatMsg = {
   streaming?: boolean;
 };
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export const THINKING_LEVELS: readonly ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
+  off: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Very High",
+  max: "Maximum",
+};
+
+export interface ReasoningCapabilities {
+  supported: boolean;
+  levels: ThinkingLevel[];
+  preferredLevel: ThinkingLevel;
+  source: "provider" | "pi" | "override" | "unknown";
+}
+
+export interface DiscoveredModel {
+  id: string;
+  name: string;
+  reasoning: ReasoningCapabilities;
+}
 
 export function taskNeedsPlanCard(task: Task): boolean {
   const hasSteps =

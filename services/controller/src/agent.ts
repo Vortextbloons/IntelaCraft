@@ -22,6 +22,7 @@ import {
   testProvider,
   type AgentPlan,
   type ChatTurn,
+  type DiscoveredModel,
   type PiSession,
   type PlanStreamEvent,
   type ProviderProfile,
@@ -31,7 +32,7 @@ import {
 import { AdvisoryMcpClient } from "@intelacraft/mcp-connection";
 import type { ControllerConfig } from "./config.js";
 import { classify, payloadHash } from "./policy.js";
-import type { SessionStore } from "./store.js";
+import type { SessionStore, SettingsStore } from "./store.js";
 import type { AuditLog } from "./audit.js";
 
 export type AgentTaskState =
@@ -110,10 +111,13 @@ export class AgentRuntime {
   private activeProviderId = "";
   private pi = new Map<string, PiSession>();
   private tasks = new Map<string, AgentTask>();
+  private settingsRef?: SettingsStore;
   /** Multi-turn chat memory keyed by Pi session id. */
   private chatHistory = new Map<string, ChatTurn[]>();
   /** Serialize operation events per task so observations cannot race replanning. */
   private operationEventQueues = new Map<string, Promise<void>>();
+  /** Verified tool-call support, keyed by the concrete provider/model endpoint. */
+  private toolCallingSupport = new Map<string, boolean>();
   private inspectionWaiters = new Map<
     string,
     {
@@ -138,6 +142,10 @@ export class AgentRuntime {
         model: config.providerModel,
       });
     }
+  }
+
+  bindSettings(settings: SettingsStore) {
+    this.settingsRef = settings;
   }
 
   private loadTasks() {
@@ -272,8 +280,29 @@ export class AgentRuntime {
 
   async createSession(providerId: string) {
     const p = this.needProvider(providerId);
+    const supportKey = `${p.baseUrl}\u0000${p.model}`;
+    let supportsTools = this.toolCallingSupport.get(supportKey);
+    if (supportsTools === undefined) {
+      supportsTools = (await testProvider(p)).toolCalling;
+      this.toolCallingSupport.set(supportKey, supportsTools);
+    }
+    if (!supportsTools) {
+      throw Object.assign(
+        new Error(
+          `Model ${p.model} does not support the function calls IntelaCraft requires. Select a tool-capable model (for Groq, llama-3.3-70b-versatile is verified).`,
+        ),
+        { code: "MODEL_TOOL_CALLING_UNSUPPORTED", status: 400 },
+      );
+    }
     const s = createPiSession(resolve(this.config.piStoragePath), p);
     await initializePiSession(s, p, this.thinkingLevel);
+    const effective = s.thinkingLevel ?? this.thinkingLevel;
+    if (effective !== "off" && this.thinkingLevel === "off") {
+      this.thinkingLevel = effective as ThinkingLevel;
+    }
+    if (this.settingsRef) {
+      this.settingsRef.setEffective(effective);
+    }
     this.pi.set(s.id, s);
     return s;
   }

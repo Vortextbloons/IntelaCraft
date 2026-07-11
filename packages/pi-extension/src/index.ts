@@ -11,7 +11,17 @@ import {
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { adminAllowlistSection, wrapUntrusted } from "@intelacraft/prompts";
+import {
+  THINKING_LEVELS,
+  type DiscoveredModel,
+  type ReasoningCapabilities,
+  type ThinkingLevel,
+} from "@intelacraft/shared-protocol";
 import { Type } from "typebox";
+import { MODEL_OVERRIDES } from "./model-overrides.js";
+
+export type { ThinkingLevel, DiscoveredModel, ReasoningCapabilities } from "@intelacraft/shared-protocol";
+export { THINKING_LEVELS } from "@intelacraft/shared-protocol";
 
 export interface ProviderProfile {
   id: string;
@@ -44,7 +54,104 @@ export interface ChatTurn {
   content: string;
 }
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
+const ALL_LEVELS: readonly ThinkingLevel[] = THINKING_LEVELS;
+
+const DEFAULT_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
+
+export function getReasoningCapabilities(
+  modelId: string,
+  modelMeta?: { reasoning?: boolean; thinkingLevelMap?: Record<string, string | null> },
+  provider?: Pick<ProviderProfile, "id" | "baseUrl">,
+): ReasoningCapabilities {
+  const override = MODEL_OVERRIDES[modelId];
+  if (override) {
+    return {
+      supported: override.supported,
+      levels: [...override.levels],
+      preferredLevel: override.preferredLevel,
+      source: "override",
+    };
+  }
+
+  if (modelMeta?.thinkingLevelMap) {
+    const levels: ThinkingLevel[] = [];
+    for (const level of ALL_LEVELS) {
+      const mapped = modelMeta.thinkingLevelMap[level];
+      if (mapped !== null && mapped !== undefined) {
+        levels.push(level);
+      } else if (mapped === undefined && DEFAULT_LEVELS.includes(level)) {
+        levels.push(level);
+      }
+    }
+    if (levels.length === 0) levels.push("off");
+    const supported = modelMeta.reasoning !== false && levels.some((l) => l !== "off");
+    return {
+      supported,
+      levels,
+      preferredLevel: supported ? "medium" : "off",
+      source: "pi",
+    };
+  }
+
+  if (modelMeta?.reasoning) {
+    return {
+      supported: true,
+      levels: [...DEFAULT_LEVELS],
+      preferredLevel: "medium",
+      source: "pi",
+    };
+  }
+
+  // Groq's broadly available Llama models accept OpenAI-compatible chat and
+  // tools, but do not accept a `reasoning_effort` setting. Their catalog does
+  // not advertise that distinction, so avoid applying the generic fallback.
+  if (
+    provider &&
+    (provider.id === "groq" || /(?:^|\/\/)api\.groq\.com(?:\/|$)/i.test(provider.baseUrl))
+  ) {
+    return {
+      supported: false,
+      levels: ["off"],
+      preferredLevel: "off",
+      source: "provider",
+    };
+  }
+
+  return {
+    // OpenAI-compatible catalogs commonly return only an id.  Absence of
+    // metadata is not evidence that a model cannot reason (notably OpenCode
+    // Zen models); expose the portable effort levels until a provider tells us
+    // otherwise.
+    supported: true,
+    levels: [...DEFAULT_LEVELS],
+    preferredLevel: "medium",
+    source: "unknown",
+  };
+}
+
+export function clampThinkingLevel(
+  modelId: string,
+  requested: ThinkingLevel,
+  modelMeta?: { reasoning?: boolean; thinkingLevelMap?: Record<string, string | null> },
+  provider?: Pick<ProviderProfile, "id" | "baseUrl">,
+): ThinkingLevel {
+  const caps = getReasoningCapabilities(modelId, modelMeta, provider);
+  if (caps.levels.includes(requested)) return requested;
+  if (requested === "off" || caps.levels.length === 0) return "off";
+  const rank = (l: ThinkingLevel) => ALL_LEVELS.indexOf(l);
+  const target = rank(requested);
+  let best: ThinkingLevel = "off";
+  let bestDist = Infinity;
+  for (const level of caps.levels) {
+    if (level === "off") continue;
+    const dist = Math.abs(rank(level) - target);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = level;
+    }
+  }
+  return best;
+}
 
 /** Streaming events from a planning turn. */
 export type PlanStreamEvent =
@@ -250,8 +357,43 @@ function writeModelsJson(
   piProvider: string,
   provider: ProviderProfile,
   thinkingLevel: ThinkingLevel = "off",
+  builtinModel?: {
+    reasoning?: boolean;
+    thinkingLevelMap?: Record<string, string | null>;
+    input?: ("text" | "image")[];
+    contextWindow?: number;
+    maxTokens?: number;
+    cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  },
 ): void {
-  const reasoning = thinkingLevel !== "off";
+  const reasoning = builtinModel?.reasoning ?? (thinkingLevel !== "off");
+
+  // Prefer Pi's built-in model metadata over our overrides
+  let thinkingLevelMap: Record<string, string | null> | undefined;
+  if (builtinModel?.thinkingLevelMap) {
+    thinkingLevelMap = builtinModel.thinkingLevelMap;
+  } else {
+    const caps = getReasoningCapabilities(provider.model, undefined, provider);
+    if (caps.source === "override" && caps.levels.length > 1) {
+      thinkingLevelMap = Object.fromEntries(
+        ALL_LEVELS.map((l) => [l, caps.levels.includes(l) ? l : null]),
+      );
+    }
+  }
+
+  const modelEntry: Record<string, unknown> = {
+    id: provider.model,
+    name: provider.model,
+    reasoning,
+    input: builtinModel?.input ?? ["text"],
+    contextWindow: builtinModel?.contextWindow ?? 128000,
+    maxTokens: builtinModel?.maxTokens ?? 8192,
+    cost: builtinModel?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  };
+  if (thinkingLevelMap) {
+    modelEntry.thinkingLevelMap = thinkingLevelMap;
+  }
+
   const payload = {
     providers: {
       [piProvider]: {
@@ -262,17 +404,7 @@ function writeModelsJson(
           supportsDeveloperRole: false,
           supportsReasoningEffort: reasoning,
         },
-        models: [
-          {
-            id: provider.model,
-            name: provider.model,
-            reasoning,
-            input: ["text"],
-            contextWindow: 128000,
-            maxTokens: 8192,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          },
-        ],
+        models: [modelEntry],
       },
     },
   };
@@ -469,12 +601,30 @@ async function request(profile: ProviderProfile, path: string, init: RequestInit
   return data;
 }
 
-export async function discoverModels(profile: ProviderProfile): Promise<string[]> {
+export async function discoverModels(profile: ProviderProfile): Promise<DiscoveredModel[]> {
   const data = await request(profile, "/models");
   const rows = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
   const ids = rows
     .map((x: any) => (typeof x === "string" ? x : x?.id))
     .filter((x: any) => typeof x === "string" && x.length > 0);
+  const unique = [...new Set(ids as string[])];
+
+  // Look up Pi's built-in catalog for real capabilities
+  let builtinModels: Map<string, { reasoning?: boolean; thinkingLevelMap?: Record<string, string | null> }> | undefined;
+  try {
+    const auth = AuthStorage.inMemory();
+    const registry = ModelRegistry.inMemory(auth);
+    registry.refresh();
+    const allBuiltin = registry.getAll();
+    builtinModels = new Map();
+    for (const id of unique) {
+      const m = allBuiltin.find((bm) => bm.id === id);
+      if (m) builtinModels.set(id, { reasoning: m.reasoning, thinkingLevelMap: m.thinkingLevelMap });
+    }
+  } catch {
+    /* best-effort */
+  }
+
   const rank = (id: string) => {
     const s = id.toLowerCase();
     if (s.includes("codex")) return 0;
@@ -482,13 +632,18 @@ export async function discoverModels(profile: ProviderProfile): Promise<string[]
     if (s.includes("mini") || s.includes("flash") || s.includes("haiku")) return 2;
     return 3;
   };
-  return [...new Set(ids as string[])].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  unique.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return unique.map((id) => ({
+    id,
+    name: id,
+    reasoning: getReasoningCapabilities(id, builtinModels?.get(id), profile),
+  }));
 }
 
 export async function testProvider(
   profile: ProviderProfile,
-): Promise<{ ok: true; model: string; toolCalling: boolean; models: string[] }> {
-  let models: string[] = [];
+): Promise<{ ok: true; model: string; toolCalling: boolean; models: DiscoveredModel[] }> {
+  let models: DiscoveredModel[] = [];
   try {
     models = await discoverModels(profile);
   } catch {
@@ -578,12 +733,26 @@ export async function initializePiSession(
   disposePiSession(info.id);
   const piProvider = info.piProvider ?? sanitizeProviderId(provider.id);
   info.piProvider = piProvider;
-  info.thinkingLevel = thinkingLevel;
-  writeModelsJson(info.storagePath, piProvider, provider, thinkingLevel);
 
   const auth = AuthStorage.create(resolve(info.storagePath, "auth.json"));
   auth.set(piProvider, { type: "api_key", key: provider.apiKey });
   auth.setRuntimeApiKey(piProvider, provider.apiKey);
+
+  // Look up Pi's built-in catalog for real model capabilities
+  const builtinRegistry = ModelRegistry.inMemory(auth);
+  builtinRegistry.refresh();
+  // Search across all providers since our sanitized ID won't match built-in provider names
+  const builtinModel = builtinRegistry.getAll().find((m) => m.id === provider.model);
+
+  // Clamp using built-in metadata when available. `off` is intentional and
+  // must never be promoted to a model default: callers use it to disable
+  // reasoning for the next turn.
+  const clamped = builtinModel
+    ? clampThinkingLevel(provider.model, thinkingLevel, builtinModel, provider)
+    : clampThinkingLevel(provider.model, thinkingLevel, undefined, provider);
+  info.thinkingLevel = clamped;
+
+  writeModelsJson(info.storagePath, piProvider, provider, clamped, builtinModel ?? undefined);
 
   const modelRegistry = ModelRegistry.create(auth, resolve(info.storagePath, "models.json"));
   modelRegistry.refresh();
@@ -628,7 +797,7 @@ export async function initializePiSession(
     cwd: info.storagePath,
     agentDir: info.storagePath,
     model,
-    thinkingLevel,
+    thinkingLevel: clamped,
     authStorage: auth,
     modelRegistry,
     noTools: "builtin",

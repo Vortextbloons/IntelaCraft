@@ -304,6 +304,37 @@ describe("phase 4 activity and admin", () => {
       body: JSON.stringify({ permissionMode: "confirm_every_change" }),
     });
   });
+
+  it("accepts all valid thinking levels including xhigh and max", async () => {
+    for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+      const r = await api("/v1/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ thinkingLevel: level }),
+      });
+      assert.equal(r.status, 200, `Expected 200 for thinkingLevel=${level}`);
+      assert.equal(r.json.preferredThinkingLevel, level);
+    }
+  });
+
+  it("rejects invalid thinking levels", async () => {
+    const r = await api("/v1/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ thinkingLevel: "invalid" }),
+    });
+    assert.equal(r.status, 400);
+    assert.equal(r.json.error.code, "BAD_REQUEST");
+  });
+
+  it("returns preferredThinkingLevel in settings response", async () => {
+    await api("/v1/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ thinkingLevel: "high" }),
+    });
+    const r = await api("/v1/settings");
+    assert.equal(r.status, 200);
+    assert.equal(r.json.preferredThinkingLevel, "high");
+    assert.ok(r.json.thinkingLevel);
+  });
 });
 
 void createServer;

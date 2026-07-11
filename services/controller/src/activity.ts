@@ -62,15 +62,18 @@ export class ActivityStore {
   query(q: ActivityQuery = {}): ActivityRecord[] {
     const limit = Math.min(Math.max(q.limit ?? 100, 1), 500);
     const sinceMs = q.since ? Date.parse(q.since) : NaN;
-    const filtered = this.records.filter((r) => {
-      if (q.taskId && r.taskId !== q.taskId) return false;
-      if (q.actionId && r.actionId !== q.actionId) return false;
-      if (q.operationId && r.operationId !== q.operationId) return false;
-      if (q.type && r.type !== q.type) return false;
-      if (!Number.isNaN(sinceMs) && Date.parse(r.loggedAt) < sinceMs) return false;
-      return true;
-    });
-    return filtered.slice(-limit);
+    const filtered: ActivityRecord[] = [];
+    for (let i = this.records.length - 1; i >= 0 && filtered.length < limit; i--) {
+      const r = this.records[i];
+      if (q.taskId && r.taskId !== q.taskId) continue;
+      if (q.actionId && r.actionId !== q.actionId) continue;
+      if (q.operationId && r.operationId !== q.operationId) continue;
+      if (q.type && r.type !== q.type) continue;
+      if (!Number.isNaN(sinceMs) && Date.parse(r.loggedAt) < sinceMs) continue;
+      filtered.push(r);
+    }
+    filtered.reverse();
+    return filtered;
   }
 
   purge(): { removed: number } {

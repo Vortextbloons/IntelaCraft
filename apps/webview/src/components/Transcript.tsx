@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useMemo, type RefObject } from "react";
 import type { ChatMsg, Task, ToolRun } from "../types";
 import { taskNeedsPlanCard } from "../types";
 import { MarkdownText } from "./MarkdownText";
@@ -31,11 +31,21 @@ export function Transcript({
   onCancel: (task: Task) => void;
   onEditReplan: (task: Task) => void;
 }) {
+  const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const latestMessageByTask = useMemo(() => {
+    const latest = new Map<string, number>();
+    for (let i = 0; i < chat.length; i++) {
+      const taskId = chat[i].taskId;
+      if (taskId) latest.set(taskId, i);
+    }
+    return latest;
+  }, [chat]);
+
   return (
     <div className="transcript" aria-live="polite">
       <div className="transcript-inner">
         {chat.map((m, index) => {
-          const task = m.taskId ? tasks.find((t) => t.id === m.taskId) : undefined;
+          const task = m.taskId ? tasksById.get(m.taskId) : undefined;
           const liveProgress = m.taskId ? progressByTask[m.taskId] : undefined;
           const toolRuns = m.toolRuns?.length
             ? m.toolRuns
@@ -50,15 +60,7 @@ export function Transcript({
           const bodyText =
             textParts.map((p) => (p.type === "text" ? p.text : "")).join("") || m.text;
           // Only the newest turn for a task owns the Plan card (avoids jump-up on continue).
-          let latestIndexForTask = -1;
-          if (m.taskId) {
-            for (let i = chat.length - 1; i >= 0; i--) {
-              if (chat[i].taskId === m.taskId) {
-                latestIndexForTask = i;
-                break;
-              }
-            }
-          }
+          const latestIndexForTask = m.taskId ? latestMessageByTask.get(m.taskId) : undefined;
           const isLatestForTask = !m.taskId || latestIndexForTask === index;
           const showPlan = Boolean(task && taskNeedsPlanCard(task) && isLatestForTask);
 

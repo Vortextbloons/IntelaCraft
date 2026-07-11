@@ -14,11 +14,15 @@ import {
 import {
   isReadOnlyPlan,
   taskNeedsPlanCard,
+  THINKING_LEVELS,
+  THINKING_LEVEL_LABELS,
   type ActivityRecord,
   type ChatMsg,
+  type DiscoveredModel,
   type Health,
   type MessagePart,
   type Provider,
+  type ReasoningCapabilities,
   type Task,
   type ThinkingLevel,
   type ToolRun,
@@ -108,7 +112,7 @@ export function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [activeProviderId, setActiveProviderId] = useState<string>("");
   const [piSessionId, setPiSessionIdState] = useState<string | null>(getPiSessionId);
-  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, DiscoveredModel[]>>({});
   const [modelsLoading, setModelsLoading] = useState(false);
   const [browseProviderId, setBrowseProviderId] = useState("opencode-zen");
   const [connectKey, setConnectKey] = useState("");
@@ -123,12 +127,20 @@ export function App() {
   const [drawer, setDrawer] = useState<"none" | "safety" | "activity">("none");
   const [busy, setBusy] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("minimal");
+  const [modelCapabilities, setModelCapabilities] = useState<ReasoningCapabilities>({
+    supported: false,
+    levels: ["off"],
+    preferredLevel: "off",
+    source: "unknown",
+  });
   const [stickToBottom, setStickToBottom] = useState(true);
   const [showJump, setShowJump] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const operationRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reasoningModelRef = useRef<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const tasksRef = useRef<Task[]>([]);
   const chatRef = useRef<ChatMsg[]>(chat);
@@ -207,6 +219,61 @@ export function App() {
     [providers, activeProviderId],
   );
 
+  useEffect(() => {
+    if (!activeProvider) {
+      setModelCapabilities({ supported: false, levels: ["off"], preferredLevel: "off", source: "unknown" });
+      return;
+    }
+    const catalog = modelsByProvider[activeProvider.id] ?? [];
+    const model = catalog.find((m) => m.id === activeProvider.model);
+    if (model?.reasoning) {
+      setModelCapabilities(model.reasoning);
+    } else {
+      setModelCapabilities({ supported: false, levels: ["off"], preferredLevel: "off", source: "unknown" });
+    }
+  }, [activeProvider, modelsByProvider]);
+
+  // Capability data is needed for the safety drawer as well as the model picker.
+  // Fetch it lazily for the active provider so a page reload does not leave the
+  // reasoning selector with stale or generic options.
+  useEffect(() => {
+    if (!authed || !activeProvider?.apiKeyConfigured || modelsByProvider[activeProvider.id]) return;
+    void fetchProviderCatalog(activeProvider.id, { trackLoading: false }).catch(() => {
+      // The model picker can still explicitly retry a failed catalog request.
+    });
+  }, [authed, activeProvider, modelsByProvider]);
+
+  useEffect(() => {
+    if (modelCapabilities.levels.includes(thinkingLevel)) return;
+    const level = modelCapabilities.preferredLevel;
+    setThinkingLevel(level);
+    void api("/v1/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ thinkingLevel: level }),
+    }).catch(() => {
+      // Keep the selector accurate even if the settings request is retried later.
+    });
+  }, [modelCapabilities, thinkingLevel]);
+
+  useEffect(() => {
+    if (!activeProvider) return;
+    const selected = (modelsByProvider[activeProvider.id] ?? []).find(
+      (model) => model.id === activeProvider.model,
+    );
+    if (!selected) return;
+    const key = `${activeProvider.id}:${selected.id}`;
+    if (reasoningModelRef.current === key) return;
+    reasoningModelRef.current = key;
+    const level = selected.reasoning.preferredLevel;
+    setThinkingLevel(level);
+    void api("/v1/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ thinkingLevel: level }),
+    }).catch(() => {
+      // Selecting a model remains usable if the controller reconnects.
+    });
+  }, [activeProvider, modelsByProvider]);
+
   const refresh = useCallback(async () => {
     try {
       const [h, t, p, a, s] = await Promise.all([
@@ -217,16 +284,23 @@ export function App() {
           activeProviderId: "",
         })),
         api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
-        api<{ permissionMode: string; thinkingLevel?: ThinkingLevel }>("/v1/settings"),
+        api<{ permissionMode: string; thinkingLevel?: ThinkingLevel; preferredThinkingLevel?: ThinkingLevel }>("/v1/settings"),
       ]);
       setHealth(h);
       setTasks(t.tasks);
       setProviders(p.providers);
       setActivity([...a.records].reverse());
       setPermissionMode(s.permissionMode);
-      if (s.thinkingLevel) setThinkingLevel(s.thinkingLevel);
+      // `thinkingLevel` is the last session's effective (possibly clamped)
+      // value. The selector represents the user's requested preference.
+      if (s.preferredThinkingLevel) setThinkingLevel(s.preferredThinkingLevel);
+      else if (s.thinkingLevel) setThinkingLevel(s.thinkingLevel);
       if (h.settings?.permissionMode) setPermissionMode(h.settings.permissionMode);
-      if (h.settings?.thinkingLevel) setThinkingLevel(h.settings.thinkingLevel as ThinkingLevel);
+      if (h.settings?.preferredThinkingLevel) {
+        setThinkingLevel(h.settings.preferredThinkingLevel as ThinkingLevel);
+      } else if (h.settings?.thinkingLevel) {
+        setThinkingLevel(h.settings.thinkingLevel as ThinkingLevel);
+      }
       setActiveProviderId((prev) => {
         if (p.activeProviderId && p.providers.some((x) => x.id === p.activeProviderId)) {
           return p.activeProviderId;
@@ -244,10 +318,19 @@ export function App() {
     }
   }, []);
 
+  const refreshOperationalData = useCallback(async () => {
+    const [t, a] = await Promise.all([
+      api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
+      api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
+    ]);
+    setTasks(t.tasks);
+    setActivity([...a.records].reverse());
+  }, []);
+
   useEffect(() => {
     if (!authed) return;
     void refresh();
-    const id = setInterval(() => void refresh(), 4000);
+    const id = setInterval(() => void refresh(), 10_000);
     return () => clearInterval(id);
   }, [authed, refresh]);
 
@@ -291,17 +374,34 @@ export function App() {
             c.map((m) => {
               if (m.taskId !== taskId) return m;
               const rest = (m.toolRuns ?? []).filter((r) => r.actionId !== e.actionId);
-              return { ...m, toolRuns: [...rest, run] };
+              const terminalStates = ["completed", "failed", "partially_completed", "cancelled"];
+              let parts = m.parts;
+              if (terminalStates.includes(e.state)) {
+                parts = (m.parts ?? []).map((p) =>
+                  p.type === "tool_call" && p.state === "running" && p.name === (run.toolName ?? e.actionId)
+                    ? { ...p, state: e.state as any, progress: p.progress ? { completed: p.progress.total, total: p.progress.total } : undefined }
+                    : p,
+                );
+              }
+              return { ...m, toolRuns: [...rest, run], parts };
             }),
           );
         }
-        void refresh();
+        if (operationRefreshRef.current) clearTimeout(operationRefreshRef.current);
+        operationRefreshRef.current = setTimeout(() => {
+          operationRefreshRef.current = null;
+          void refreshOperationalData();
+        }, 250);
       } catch {
         // ignore
       }
     });
-    return () => es.close();
-  }, [authed, refresh]);
+    return () => {
+      es.close();
+      if (operationRefreshRef.current) clearTimeout(operationRefreshRef.current);
+      operationRefreshRef.current = null;
+    };
+  }, [authed, refreshOperationalData]);
 
   useEffect(() => {
     if (!stickToBottom) {
@@ -384,13 +484,13 @@ export function App() {
   }
 
   function catalogFor(providerId: string) {
-    return modelsByProvider[providerId] ?? [];
+    return (modelsByProvider[providerId] ?? []).map((m) => m.id);
   }
 
   async function fetchProviderCatalog(providerId: string, opts?: { preferModel?: string; trackLoading?: boolean }) {
     if (opts?.trackLoading !== false) setModelsLoading(true);
     try {
-      const res = await api<{ models: string[] }>(
+      const res = await api<{ models: DiscoveredModel[] }>(
         `/v1/providers/${encodeURIComponent(providerId)}/models`,
         { method: "POST", body: "{}" },
       );
@@ -474,14 +574,16 @@ export function App() {
       setConnectKey("");
       setShowKeyUpdate(false);
       setBrowseProviderId(provider.id);
-      let list: string[] = [];
+      let catalog: DiscoveredModel[] = [];
       try {
-        list = await fetchProviderCatalog(provider.id, { preferModel: provider.model });
+        catalog = await fetchProviderCatalog(provider.id, { preferModel: provider.model });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not pull provider models");
       }
       const chosen =
-        (list.includes(provider.model) && provider.model) || list[0] || provider.model;
+        (catalog.some((entry) => entry.id === provider.model) && provider.model) ||
+        catalog[0]?.id ||
+        provider.model;
       if (chosen !== provider.model) {
         await upsertProvider({
           id: provider.id,
@@ -490,14 +592,21 @@ export function App() {
           model: chosen,
         });
       }
+      const selected = catalog.find((entry) => entry.id === chosen);
+      const level = selected?.reasoning?.preferredLevel ?? "off";
+      await api("/v1/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ thinkingLevel: level }),
+      });
+      setThinkingLevel(level);
       await ensurePiSession(provider.id);
       setChat((c) => [
         ...c,
         {
           id: uid(),
           role: "system",
-          text: list.length
-            ? `Connected ${provider.name} — ${list.length} models loaded · using ${chosen}`
+          text: catalog.length
+            ? `Connected ${provider.name} — ${catalog.length} models loaded · using ${chosen}`
             : `Connected ${provider.name} · ${chosen}`,
         },
       ]);
@@ -516,6 +625,16 @@ export function App() {
     setBusy(true);
     setError(null);
     try {
+      const selected = (modelsByProvider[providerId] ?? []).find((entry) => entry.id === model);
+      // Persist the selected model's effective level before creating its session.
+      // Pi reads this level during session initialization, so doing this after
+      // ensurePiSession leaves the new session using the previous model's level.
+      const level = selected?.reasoning?.preferredLevel ?? "off";
+      await api("/v1/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ thinkingLevel: level }),
+      });
+      setThinkingLevel(level);
       const updated = await upsertProvider({
         id: providerId,
         name: provider?.name ?? preset!.name,
@@ -597,7 +716,7 @@ export function App() {
     setBusy(true);
     setError(null);
     try {
-      const result = await api<{ ok: boolean; model: string; models?: string[] }>(
+      const result = await api<{ ok: boolean; model: string; models?: DiscoveredModel[] }>(
         `/v1/providers/${encodeURIComponent(id)}/test`,
         { method: "POST", body: "{}" },
       );
@@ -1118,11 +1237,11 @@ export function App() {
   async function patchThinking(level: ThinkingLevel) {
     setBusy(true);
     try {
-      await api("/v1/settings", {
+      const res = await api<{ permissionMode: string; thinkingLevel: ThinkingLevel; preferredThinkingLevel: ThinkingLevel }>("/v1/settings", {
         method: "PATCH",
         body: JSON.stringify({ thinkingLevel: level }),
       });
-      setThinkingLevel(level);
+      setThinkingLevel(res.preferredThinkingLevel ?? level);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Thinking setting failed");
     } finally {
@@ -1359,6 +1478,21 @@ export function App() {
                       ▾
                     </span>
                   </button>
+                  <label className="reasoning-selector" title="Reasoning effort for the selected model">
+                    <span>Reasoning</span>
+                    <select
+                      value={thinkingLevel}
+                      disabled={!modelCapabilities.supported || busy}
+                      onChange={(e) => void patchThinking(e.target.value as ThinkingLevel)}
+                      aria-label="Reasoning effort"
+                    >
+                      {modelCapabilities.levels.map((level) => (
+                        <option key={level} value={level}>
+                          {THINKING_LEVEL_LABELS[level] ?? level}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
                   {pickerPanel === "providers" && (
                     <div className="model-popover" role="dialog" aria-label="Connect providers">
@@ -1614,12 +1748,18 @@ export function App() {
                     value={thinkingLevel}
                     onChange={(e) => void patchThinking(e.target.value as ThinkingLevel)}
                   >
-                    {(["off", "minimal", "low", "medium", "high"] as const).map((m) => (
+                    {(modelCapabilities.levels.length > 0 ? modelCapabilities.levels : THINKING_LEVELS).map((m) => (
                       <option key={m} value={m}>
-                        {m}
+                        {THINKING_LEVEL_LABELS[m] ?? m}
                       </option>
                     ))}
                   </select>
+                  {modelCapabilities.source !== "unknown" && (
+                    <span className="hint">
+                      {modelCapabilities.supported ? "Reasoning supported" : "No reasoning support"}
+                      {modelCapabilities.source === "override" ? " (known model)" : ""}
+                    </span>
+                  )}
                 </label>
                 <div className="row">
                   <button className="danger" type="button" disabled={busy} onClick={() => void emergency(true)}>

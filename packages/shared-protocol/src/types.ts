@@ -4,6 +4,7 @@ import type {
   OperationState,
   PermissionMode,
   RiskClass,
+  ThinkingLevel,
   ToolName,
 } from "./constants.js";
 
@@ -182,4 +183,17 @@ export interface AdminRunCommandArgs {
   commandId: string;
   /** Resolved by the controller from the allowlist before enqueue; revalidated by the add-on. */
   command?: string;
+}
+
+export interface ReasoningCapabilities {
+  supported: boolean;
+  levels: ThinkingLevel[];
+  preferredLevel: ThinkingLevel;
+  source: "provider" | "pi" | "override" | "unknown";
+}
+
+export interface DiscoveredModel {
+  id: string;
+  name: string;
+  reasoning: ReasoningCapabilities;
 }

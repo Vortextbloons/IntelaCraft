@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   PROTOCOL_VERSION,
   PERMISSION_MODES,
+  THINKING_LEVELS,
   createEnvelope,
   isProtocolCompatible,
   newId,
@@ -12,6 +13,7 @@ import {
   validatePoll,
   type ActionRequestMessage,
   type PermissionMode,
+  type ThinkingLevel,
 } from "@intelacraft/shared-protocol";
 import type { ActivityStore } from "./activity.js";
 import type { AuditLog } from "./audit.js";
@@ -129,23 +131,16 @@ async function handleRequest(
       sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid permissionMode" } });
       return;
     }
-    const thinkingLevels = ["off", "minimal", "low", "medium", "high"] as const;
-    if (body.thinkingLevel && !(thinkingLevels as readonly string[]).includes(body.thinkingLevel)) {
+    if (body.thinkingLevel && !(THINKING_LEVELS as readonly string[]).includes(body.thinkingLevel)) {
       sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid thinkingLevel" } });
       return;
     }
     const next = ctx.settings.patch({
       permissionMode: body.permissionMode as PermissionMode | undefined,
-      thinkingLevel: body.thinkingLevel as
-        | "off"
-        | "minimal"
-        | "low"
-        | "medium"
-        | "high"
-        | undefined,
+      thinkingLevel: body.thinkingLevel as ThinkingLevel | undefined,
     });
-    if (next.thinkingLevel && ctx.agent) {
-      ctx.agent.setThinkingLevel(next.thinkingLevel);
+    if (body.thinkingLevel && ctx.agent) {
+      ctx.agent.setThinkingLevel(body.thinkingLevel as ThinkingLevel);
     }
     ctx.audit.append({ type: "settings_updated", ...next });
     sendJson(res, 200, next);

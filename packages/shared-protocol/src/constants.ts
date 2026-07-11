@@ -73,3 +73,6 @@ export const DIMENSION_IDS = [
 ] as const;
 
 export type DimensionId = (typeof DIMENSION_IDS)[number];
+
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
