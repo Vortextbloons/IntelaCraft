@@ -4,8 +4,8 @@ import {
   readFileSync,
   renameSync,
   writeFileSync,
-  appendFileSync,
 } from "node:fs";
+import { appendFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { redactSecrets } from "@intelacraft/shared-protocol";
 
@@ -33,6 +33,7 @@ export interface ActivityQuery {
 
 export class ActivityStore {
   private records: ActivityRecord[] = [];
+  private writeQueue = Promise.resolve();
   private readonly maxInMemory: number;
 
   constructor(
@@ -51,7 +52,10 @@ export class ActivityStore {
       ...redactSecrets(entry),
       loggedAt: new Date().toISOString(),
     } as ActivityRecord;
-    appendFileSync(this.path, `${JSON.stringify(record)}\n`, "utf8");
+    const line = `${JSON.stringify(record)}\n`;
+    this.writeQueue = this.writeQueue
+      .then(() => appendFile(this.path, line, "utf8"))
+      .catch((err) => console.error("Failed to append activity record:", err));
     this.records.push(record);
     if (this.records.length > this.maxInMemory) {
       this.records.splice(0, this.records.length - this.maxInMemory);
@@ -79,7 +83,9 @@ export class ActivityStore {
   purge(): { removed: number } {
     const removed = this.records.length;
     this.records = [];
-    writeFileSync(this.path, "", "utf8");
+    this.writeQueue = this.writeQueue
+      .then(() => writeFile(this.path, "", "utf8"))
+      .catch((err) => console.error("Failed to purge activity log:", err));
     return { removed };
   }
 

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   createActionRequest,
@@ -116,6 +117,9 @@ export class AgentRuntime {
   private activeProviderId = "";
   private pi = new Map<string, PiSession>();
   private tasks = new Map<string, AgentTask>();
+  private taskPersistenceTimer?: ReturnType<typeof setTimeout>;
+  private taskPersistencePending = false;
+  private taskPersistenceInFlight?: Promise<void>;
   private settingsRef?: SettingsStore;
   /** Multi-turn chat memory keyed by Pi session id. */
   private chatHistory = new Map<string, ChatTurn[]>();
@@ -136,6 +140,8 @@ export class AgentRuntime {
 
   constructor(private config: ControllerConfig) {
     this.mcp = new AdvisoryMcpClient(config.mcpUrl, config.mcpToken);
+    mkdirSync(dirname(config.providersPath), { recursive: true });
+    mkdirSync(dirname(config.tasksPath ?? resolve(dirname(config.providersPath), "tasks.json")), { recursive: true });
     this.loadProviders();
     this.loadTasks();
     if (config.providerBaseUrl && config.providerApiKey && config.providerModel) {
@@ -175,8 +181,18 @@ export class AgentRuntime {
 
   private persistTasks() {
     const path = this.config.tasksPath ?? resolve(dirname(this.config.providersPath), "tasks.json");
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify([...this.tasks.values()], null, 2)}\n`, "utf8");
+    this.taskPersistencePending = true;
+    if (this.taskPersistenceTimer || this.taskPersistenceInFlight) return;
+    this.taskPersistenceTimer = setTimeout(() => {
+      this.taskPersistenceTimer = undefined;
+      const payload = `${JSON.stringify([...this.tasks.values()], null, 2)}\n`;
+      this.taskPersistenceInFlight = writeFile(path, payload, "utf8")
+        .catch((err) => console.error("Failed to persist tasks:", err))
+        .finally(() => {
+          this.taskPersistenceInFlight = undefined;
+          if (this.taskPersistencePending) this.persistTasks();
+        });
+    }, 50);
   }
 
   setThinkingLevel(level: ThinkingLevel) {
@@ -224,7 +240,6 @@ export class AgentRuntime {
       activeProviderId: this.activeProviderId,
       providers: [...this.profiles.values()],
     };
-    mkdirSync(dirname(this.config.providersPath), { recursive: true });
     writeFileSync(this.config.providersPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   }
 
@@ -500,6 +515,7 @@ export class AgentRuntime {
     };
     s.mode = task.mode;
     this.tasks.set(task.id, task);
+    this.persistTasks();
     task.state = "planning";
     // Structured tool-call responses may contain no visible text deltas.
     onEvent?.({ type: "status", text: "Planning response…" });
@@ -1528,6 +1544,7 @@ export class AgentRuntime {
   deleteTask(id: string) {
     if (!this.tasks.has(id)) throw new Error("Task not found");
     this.tasks.delete(id);
+    this.persistTasks();
   }
 
   listTasks() {
@@ -1541,7 +1558,6 @@ export class AgentRuntime {
   }
 
   private publicTask(t: AgentTask) {
-    this.persistTasks();
     const clone = structuredClone(t);
     delete clone.pendingReads;
     delete clone.pendingVerification;

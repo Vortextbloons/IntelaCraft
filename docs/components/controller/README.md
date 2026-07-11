@@ -19,8 +19,8 @@ Central HTTP server for IntelaCraft. Bridges the BDS (Bedrock Dedicated Server),
 | `src/env.ts` | ~39 | Environment variable parsing |
 | `src/store.ts` | ~196 | SessionStore, EventStore, SettingsStore |
 | `src/policy.ts` | ~121 | Risk classification and approval policy |
-| `src/audit.ts` | ~22 | Audit log (JSONL append) |
-| `src/activity.ts` | ~112 | Activity store with query/prune |
+| `src/audit.ts` | ~22 | Audit log (JSONL append, async write queue) |
+| `src/activity.ts` | ~112 | Activity store with query/prune, async write queue |
 | `src/agent.ts` | ~1564 | AI agent runtime (task lifecycle) |
 | `src/static.ts` | ~41 | Serves the React webview from `apps/webview/dist/` |
 | `src/*.test.ts` | — | Unit tests |

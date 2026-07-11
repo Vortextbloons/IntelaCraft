@@ -1,8 +1,10 @@
-import { appendFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { redactSecrets } from "@intelacraft/shared-protocol";
 import type { ActivityStore } from "./activity.js";
 
 export class AuditLog {
+  private writeQueue = Promise.resolve();
+
   constructor(
     private readonly path: string,
     private readonly activity?: ActivityStore,
@@ -17,6 +19,9 @@ export class AuditLog {
       ...redactSecrets(entry),
       loggedAt: new Date().toISOString(),
     };
-    appendFileSync(this.path, `${JSON.stringify(record)}\n`, "utf8");
+    const line = `${JSON.stringify(record)}\n`;
+    this.writeQueue = this.writeQueue
+      .then(() => appendFile(this.path, line, "utf8"))
+      .catch((err) => console.error("Failed to append audit record:", err));
   }
 }

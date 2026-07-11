@@ -42,7 +42,12 @@ export function createApp(ctx: AppContext) {
       await handleRequest(ctx, req, res);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Internal error";
+      const errorDetails = err && typeof err === "object" ? (err as { status?: unknown; code?: unknown }) : {};
+      const requestedStatus = typeof errorDetails.status === "number" ? errorDetails.status : undefined;
+      const status = requestedStatus && requestedStatus >= 400 && requestedStatus < 600 ? requestedStatus : undefined;
+      const code = typeof errorDetails.code === "string" ? errorDetails.code : undefined;
       if (
+        status ||
         message === "Invalid JSON" ||
         message === "Body too large" ||
         message.includes("required") ||
@@ -52,7 +57,7 @@ export function createApp(ctx: AppContext) {
         message.includes("invalid") ||
         message.includes("API key")
       ) {
-        sendJson(res, 400, { error: { code: "BAD_REQUEST", message } });
+        sendJson(res, status ?? 400, { error: { code: code ?? "BAD_REQUEST", message } });
         return;
       }
       console.error(err);

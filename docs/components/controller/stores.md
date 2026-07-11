@@ -53,6 +53,7 @@ JSONL-backed append-only activity log (`src/activity.ts`).
 - **Queries**: by `taskId`, `actionId`, `operationId`, `type`, or `since` timestamp
 - **Auto-pruning**: based on `INTELACRAFT_AUDIT_RETENTION_DAYS` (default 30)
 - **Purge**: `purgeAll()` clears the entire log
+- **Async writes**: File appends and purges use a serialized write queue (`writeQueue`) backed by `fs/promises` to avoid blocking the event loop. Errors are logged to console but do not crash the process.
 
 ## AuditLog
 
@@ -60,6 +61,7 @@ Thin wrapper (`src/audit.ts`) that appends JSONL entries.
 
 - Delegates to `ActivityStore` when available
 - All entries are run through `redactSecrets` from `shared-protocol` to strip API keys and tokens
+- **Async writes**: Uses a serialized write queue (`writeQueue`) backed by `fs/promises` for non-blocking JSONL appends. Errors are logged to console but do not crash the process.
 
 ## Provider Persistence
 

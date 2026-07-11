@@ -916,6 +916,8 @@ All error responses follow this format:
 }
 ```
 
+Handlers may throw errors with custom `status` (400–599) and `code` properties. The error handler extracts these when present, falling back to `400` / `BAD_REQUEST` for standard validation errors.
+
 | Status | Error Code | Description |
 |--------|------------|-------------|
 | 400 | `BAD_REQUEST` | Invalid request body or parameters |

@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { after, describe, it } from "node:test";
 import {
   clampThinkingLevel,
+  buildSystemPrompt,
   discoverModels,
   getReasoningCapabilities,
   normalizePlan,
@@ -86,6 +87,37 @@ describe("IntelaCraft Pi extension", () => {
     assert.equal(result.ok, true);
     assert.equal(result.toolCalling, false);
   });
+  it("falls back to auto tool choice when a gateway rejects forced calls", async () => {
+    const requests: unknown[] = [];
+    const gateway = createServer(async (req, res) => {
+      if (req.url === "/models") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const parsed = JSON.parse(body);
+      requests.push(parsed.tool_choice);
+      res.setHeader("Content-Type", "application/json");
+      if (parsed.tool_choice !== "auto") {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: { message: "forced calls unsupported" } }));
+        return;
+      }
+      res.end(JSON.stringify({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name: "ping", arguments: "{}" } }] } }] }));
+    });
+    await new Promise<void>((resolve) => gateway.listen(0, resolve));
+    const address = gateway.address();
+    assert.ok(address && typeof address === "object");
+    try {
+      const result = await testProvider({ ...p, baseUrl: `http://127.0.0.1:${address.port}`, model: "gateway-model" });
+      assert.equal(result.toolCalling, true);
+      assert.deepEqual(requests, [{ type: "function", function: { name: "ping" } }, "auto"]);
+    } finally {
+      await new Promise<void>((resolve, reject) => gateway.close((error) => error ? reject(error) : resolve()));
+    }
+  });
   it("getReasoningCapabilities returns override for known models", () => {
     const caps = getReasoningCapabilities("o3");
     assert.equal(caps.supported, true);
@@ -133,5 +165,24 @@ describe("IntelaCraft Pi extension", () => {
     assert.deepEqual(plan.inspection, []);
     assert.deepEqual(plan.actions, []);
     assert.deepEqual(plan.verification, []);
+  });
+  it("accepts direct mutation metadata and normalizes native inspection aliases", () => {
+    const plan = normalizePlan({
+      summary: "Build and verify",
+      actions: [{ id: "details", toolName: "world.place_blocks", summary: "Place details", dependsOn: ["walls"], arguments: {
+        dimension: "minecraft:overworld", captureRollback: true,
+        blocks: [{ position: { x: 0, y: 64, z: 0 }, blockType: "minecraft:torch" }],
+      } }],
+      verification: [{ toolName: "inspect_region", summary: "Verify", arguments: { dimension: "minecraft:overworld" } }],
+    }, "build a house");
+    assert.equal(plan.actions[0].id, "details");
+    assert.deepEqual(plan.actions[0].dependsOn, ["walls"]);
+    assert.equal(plan.verification[0].toolName, "inspect.region");
+  });
+  it("requires structured native tool calls and anchors Agent builds to inspection results", () => {
+    const prompt = buildSystemPrompt();
+    assert.match(prompt, /Always finish every turn by calling the submit_plan tool exactly once/);
+    assert.match(prompt, /Never write XML, tags such as <tool_call>/);
+    assert.match(prompt, /use those exact integer coordinates as the build anchor/);
   });
 });

@@ -78,6 +78,7 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 - **Persistence**: `providers.json` file
 - **`sanitizeApiKey`**: strips `Bearer` prefix, rejects browser extension error messages, validates printable ASCII only
 - **Hot-swap**: `refreshPiSessionProvider()` swaps the active provider on a live session without restart
+- **Constructor**: Creates provider and task directories (`mkdirSync`) on startup if they don't exist
 
 ## Session Management
 
@@ -96,6 +97,18 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 7. `planWithValidationRetry` (up to 2 attempts)
 8. `applyPlanToTask` — materialize actions, set state
 9. Enqueue pending reads (inspection actions)
+
+## Task Persistence
+
+Tasks are persisted to a `tasks.json` file using **debounced async writes**:
+
+- **Debounce**: 50ms timer batches rapid changes (e.g. multiple state transitions) into a single write
+- **Async**: Uses `fs/promises` `writeFile` to avoid blocking the event loop
+- **In-flight guard**: If a write is already in progress, the next write is queued and will execute after the current one completes
+- **Error handling**: Write failures are logged to console but do not crash the process
+- **Triggers**: Tasks are persisted on creation (`createTaskInternal`), deletion (`deleteTask`), and state changes via `publicTask`
+
+This replaces the previous synchronous `writeFileSync` approach which could block the event loop during concurrent task operations.
 
 ## Planning with Validation Retry
 
