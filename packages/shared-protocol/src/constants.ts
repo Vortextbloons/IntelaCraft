@@ -37,6 +37,10 @@ export const PERMISSION_MODES = [
 ] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
+/** AI capability boundary; independent from permission mode. */
+export const AI_MODES = ["ask", "agent"] as const;
+export type AiMode = (typeof AI_MODES)[number];
+
 export const OPERATION_STATES = [
   "running",
   "completed",

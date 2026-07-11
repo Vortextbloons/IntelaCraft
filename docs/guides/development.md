@@ -70,6 +70,14 @@ Each workspace has its own `package.json` and `tsconfig.json`.
 
 - `dev.ps1` - PowerShell launcher for all commands
 - `scripts/*.mjs` - Shared CLI tools
+  - `setup.mjs` - Install deps, build, create `.env`
+  - `dev.mjs` - Start controller + Vite dev server
+  - `deploy.mjs` - Build and deploy Bedrock packs
+  - `health.mjs` - Check controller + BDS connection
+  - `inspect.mjs` - CLI tool to run inspect queries against a connected BDS
+  - `configure-bds.mjs` - Write BDS config files
+  - `load-smoke.mjs` - Concurrent poll/enqueue smoke test
+  - `combine-docs.mjs` - Combine all docs into a single markdown file
 
 ## Environment Setup
 
@@ -92,7 +100,12 @@ apps/bedrock-addon/config/permissions.json
 At minimum, set these in `.env`:
 
 ```
-INTELACRAFT_BDS_TOKEN=sk-your-secret-token
+INTELACRAFT_BDS_TOKEN=dev-change-me
+```
+
+Provider settings can be configured later via the webview Settings → Providers page, or set upfront:
+
+```
 INTELACRAFT_PROVIDER_BASE_URL=https://api.openai.com/v1
 INTELACRAFT_PROVIDER_API_KEY=sk-...
 INTELACRAFT_PROVIDER_MODEL=gpt-4o

@@ -24,7 +24,11 @@ The `SYSTEM` constant (~226 lines) instructs the model:
 - Mutations require explicit user approval
 - Always finish every turn by calling `submit_plan` exactly once
 
-**Output contract** — the plan has four arrays:
+**Output contract** — the plan has these fields:
+- `summary` — short plain-language reply the user will see
+- `outcome` — `respond` | `propose` | `complete` | `blocked`
+- `successCriteria` — observable conditions that define success
+- `evidence` — observed facts supporting completion
 - `inspection[]` — auto-run read-only pre-checks (no approval needed)
 - `actions[]` — mutations needing user approval
 - `verification[]` — post-mutation read-only checks
@@ -73,7 +77,10 @@ The `SYSTEM` constant (~226 lines) instructs the model:
 
 Created by `createSubmitPlanTool(onPlan)`:
 
-- **Parameters**: `summary`, `inspection[]`, `actions[]`, `verification[]`, `notes[]`
+- **Parameters**: `summary`, `outcome`, `successCriteria`, `evidence`, `inspection[]`, `actions[]`, `verification[]`, `notes[]`
+- `outcome`: `respond` | `propose` | `complete` | `blocked`
+- `successCriteria`: observable conditions that define success
+- `evidence`: observed facts supporting completion
 - Each step has: `id?`, `toolName`, `arguments`, `summary`, `dependsOn?`
 - Semantic build steps (`build.*`) are automatically extracted into `plan.build` metadata
 - Calls `normalizePlan()` to coerce messy output
@@ -137,9 +144,11 @@ planWithPiSession(sessionId, userRequest, worldContext, mcpAdvice, onEvent?, opt
    {
      "request": "<user's natural language>",
      "adminCommandIds": ["..."],
-     "reminder": "Use live inspect_* tools now..."
+     "reminder": "Current mode is Ask/Agent: ..."
    }
    ```
+   - In **ask** mode: reminder instructs the model to answer/read-only inspect only, with empty actions and verification
+   - In **agent** mode: reminder instructs the model to use live tools and call submit_plan with successCriteria/evidence
 6. Wrap context in trusted/untrusted tags:
    - `worldContext` → `<untrusted_world_context>`
    - `mcpAdvice` → `<untrusted_mcp_advice>`
@@ -156,7 +165,7 @@ planWithPiSession(sessionId, userRequest, worldContext, mcpAdvice, onEvent?, opt
 - Generates unique ID: `pi_<timestamp_base36>_<random_6>`
 - Creates storage directory
 - Sanitizes provider ID for config files
-- Returns `PiSession` metadata
+- Returns `PiSession` metadata with `mode: "ask"` (default)
 
 ### initializePiSession(info, provider, thinkingLevel)
 
@@ -169,7 +178,7 @@ The heavy initialization:
 5. Create `SettingsManager` (in-memory, compaction enabled)
 6. Create `EmbeddedPi` box with session, provider, lastPlan
 7. Create `submit_plan` tool with callback
-8. Create 10 inspection tools for this session
+8. Create 13 inspection tools for this session
 9. Create `DefaultResourceLoader` with overrides:
    - `noExtensions`, `noSkills`, `noPromptTemplates`, `noThemes`, `noContextFiles`
    - `systemPromptOverride: () => buildSystemPrompt()`
@@ -206,6 +215,26 @@ For casual greetings with no actions, adds a helpful note.
 
 ## Provider HTTP Layer
 
+### Model Overrides (`model-overrides.ts`)
+
+The `MODEL_OVERRIDES` map provides hardcoded reasoning capabilities for specific models:
+
+| Model | Supported | Levels | Preferred |
+|-------|-----------|--------|-----------|
+| `nemotron-3-ultra-free` | no | off | off |
+| `o3` | yes | off, low, medium, high, xhigh, max | high |
+| `o3-mini` | yes | off, low, medium, high | medium |
+| `o3-pro` | yes | off, low, medium, high, xhigh, max | high |
+| `o4-mini` | yes | off, low, medium, high, xhigh, max | high |
+| `claude-sonnet-4-20250514` | yes | off, low, medium, high | medium |
+| `claude-opus-4-20250514` | yes | off, low, medium, high, xhigh | high |
+| `deepseek-reasoner` | yes | off, low, medium, high | medium |
+| `deepseek-r1` | yes | off, low, medium, high | medium |
+| `gemini-2.5-pro` | yes | off, low, medium, high, xhigh | high |
+| `gemini-2.5-flash` | yes | off, low, medium, high | medium |
+
+Overrides take priority over Pi's built-in model catalog when determining reasoning capabilities.
+
 ### request(profile, path, init)
 
 - Strips `Bearer` prefix, validates printable ASCII
@@ -220,7 +249,7 @@ For casual greetings with no actions, adds a helpful note.
 ### testProvider(profile)
 
 1. `discoverModels` (wrapped in try/catch)
-2. Tool-calling probe: sends `ping` tool with `tool_choice: "required"`
+2. Tool-calling probe: sends `ping` tool with `tool_choice: { type: "function", function: { name: "ping" } }`
 3. Checks for `tool_calls`, `function_call`, or `finish_reason === "tool_calls"`
 4. Fallback: plain text "Reply OK" test
 5. Returns `{ ok, model, toolCalling, models }`
@@ -239,10 +268,10 @@ Injects a world-tool result into conversation history without LLM call:
 |------|-------------|
 | `ProviderProfile` | LLM provider config: id, name, baseUrl, apiKey, model |
 | `AgentAction` | Single plan step: toolName, arguments, summary |
-| `AgentPlan` | Complete plan: summary, inspection[], actions[], verification[], notes[] |
+| `AgentPlan` | Complete plan: summary, outcome, successCriteria, evidence, inspection[], actions[], verification[], notes[] |
 | `ChatTurn` | `{ role: "user" \| "assistant", content: string }` |
-| `ThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high"` |
+| `ThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| "max"` |
 | `PlanStreamEvent` | Streaming union: delta, reasoning_delta, status, tool |
-| `PlanOptions` | Planning options: thinkingLevel, adminCommandIds, history, onEvent |
-| `PiSession` | Session metadata: id, providerId, model, storagePath |
+| `PlanOptions` | Planning options: mode, thinkingLevel, adminCommandIds, validationError, history, onEvent |
+| `PiSession` | Session metadata: id, providerId, model, storagePath, createdAt, piProvider, thinkingLevel, mode |
 | `InspectionExecutor` | `(toolName, args) => Promise<{ message, result? }>` |

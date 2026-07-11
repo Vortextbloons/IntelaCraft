@@ -4,7 +4,7 @@ All logic lives in `src/policy.ts`.
 
 ## Risk Classification
 
-The `classify(toolName, args)` function assigns a risk level to every action.
+The `classify(action, config)` function assigns a risk level to every action. It takes an object with `toolName` and `arguments`, plus a `PolicyConfig` with protected regions, builder regions, and admin commands.
 
 | Tool Pattern | Risk Level | Notes |
 |-------------|------------|-------|
@@ -31,12 +31,12 @@ The `classify(toolName, args)` function assigns a risk level to every action.
 
 ## Approval Requirements
 
-The `approvalRequired(risk, permissionMode)` function determines if user approval is needed.
+The `approvalRequired(mode, risk, action, config)` function determines if user approval is needed. It takes the permission mode, risk class, full action message, and policy config.
 
 | Permission Mode | read | normal | strong | prohibited |
 |----------------|------|--------|--------|------------|
 | `observe_only` | auto | blocked | blocked | blocked |
-| `allow_low_risk` | auto | auto (fill_blocks/place_blocks ≤ 256 blocks) | **requires approval** | blocked |
+| `allow_low_risk` | auto | auto (`world.fill_blocks` with `region` volume ≤ 256) | **requires approval** | blocked |
 | `confirm_every_change` | auto | **requires approval** | **requires approval** | blocked |
 | `builder_region` | auto | **requires approval** + region check | **requires approval** + region check | blocked |
 | `trusted_administrator` | auto | auto | auto | blocked |
@@ -45,9 +45,11 @@ The `approvalRequired(risk, permissionMode)` function determines if user approva
 - **blocked** = action is rejected outright
 - **requires approval** = action is queued, user must approve via webview
 
+Note: In `allow_low_risk` mode, auto-approval for `world.fill_blocks` requires both that the tool name matches **and** the action has a `region` field with volume ≤ 256 blocks. `world.place_blocks` in this mode always requires approval because its arguments use a `blocks` array (no `region` field).
+
 ## Permission Mode Enforcement
 
-The `enforceMode(toolName, args, permissionMode)` function applies mode-specific restrictions.
+The `enforceMode(mode, action, config)` function applies mode-specific restrictions. It takes the permission mode, full action message, and policy config.
 
 - **`observe_only`**: Blocks all non-read mutations entirely
 - **`builder_region`**: Restricts builds to configured builder regions, blocks all admin commands

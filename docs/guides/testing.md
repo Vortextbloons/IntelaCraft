@@ -43,7 +43,12 @@ Pi extension tests. Covers prompt construction, plan normalization (converting r
 Route and policy tests. Covers HTTP endpoint handlers, request validation, permission mode behavior, and admin command allowlist logic. Uses mock config objects and verifies response shapes.
 
 ### `services/controller/src/agent.test.ts`
-Agent runtime tests. Covers task lifecycle (create → plan → approve → execute → complete), action queuing, error handling, and provider interaction. Uses mock HTTP servers and mock config.
+Agent runtime tests. Covers Ask/Agent mode validation, read-only inspect auto-run, semantic build preflight, inspection budgeting, verification scheduling, and corrective mutation approval. Key test cases:
+- **Ask mode default**: Pi sessions start in read-only Ask mode; mutations and verification steps are rejected.
+- **Agent mode approval**: Agent mode allows bounded mutations, queues them after approval, and enforces Ask mode restrictions when switched back.
+- **Semantic builds**: `build.wall` triggers preflight collision inspection and materializes `world.place_blocks` before approval.
+- **Inspection reuse**: Identical inspection calls are cached; a per-turn budget (8 calls) is enforced.
+- **Verification**: One agent verification turn is scheduled after mutation completion; corrective mutations require fresh approval.
 
 ### `services/controller/src/e2e.test.ts`
 End-to-end mock BDS tests. Simulates a full BDS lifecycle: handshake → poll → execute → events. Uses a mock BDS HTTP server and verifies the complete flow from task creation to action execution.
@@ -180,5 +185,9 @@ describe('Example', () => {
 - Protocol validation (shared-protocol)
 - Route handlers (controller)
 - Policy engine (controller)
-- Agent runtime (controller)
+- Ask/Agent mode restrictions (agent runtime)
+- Read-only inspect auto-run and inspection budgeting (agent runtime)
+- Semantic build preflight and materialization (agent runtime)
+- Verification scheduling and corrective mutation approval (agent runtime)
 - Plan normalization (pi-extension)
+- Thinking level clamping and model overrides (pi-extension)

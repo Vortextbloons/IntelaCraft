@@ -40,6 +40,7 @@ All IntelaCraft-specific variables are prefixed with `INTELACRAFT_`. Set these i
 | Variable | Description | Default | Type | Example |
 |----------|-------------|---------|------|---------|
 | `INTELACRAFT_PI_STORAGE_PATH` | Directory for Pi session data | `./data/pi` | file path | `/var/lib/intelacraft/pi` |
+| `INTELACRAFT_TASKS_PATH` | Path to persisted tasks JSON file | `./data/tasks.json` | file path | `/var/lib/intelacraft/tasks.json` |
 
 ### MCP (Optional)
 

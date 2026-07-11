@@ -96,6 +96,22 @@ function uid(prefix = "msg") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function getAiMode(): "ask" | "agent" {
+  try {
+    return localStorage.getItem("intelacraft_ai_mode") === "agent" ? "agent" : "ask";
+  } catch {
+    return "ask";
+  }
+}
+
+function saveAiMode(mode: "ask" | "agent") {
+  try {
+    localStorage.setItem("intelacraft_ai_mode", mode);
+  } catch {
+    // Private browsing can deny storage; the active in-memory selection still works.
+  }
+}
+
 function welcomeMsg(): ChatMsg {
   return { id: "welcome", role: "system", text: WELCOME_TEXT };
 }
@@ -123,6 +139,7 @@ export function App() {
   const [activityFilter, setActivityFilter] = useState("");
   const [progressByTask, setProgressByTask] = useState<Record<string, ToolRun>>({});
   const [permissionMode, setPermissionMode] = useState("confirm_every_change");
+  const [aiMode, setAiMode] = useState<"ask" | "agent">(getAiMode);
   const [pickerPanel, setPickerPanel] = useState<"none" | "providers" | "models" | "reasoning">("none");
   const [modelFilter, setModelFilter] = useState("");
   const [drawer, setDrawer] = useState<"none" | "safety" | "activity">("none");
@@ -179,6 +196,8 @@ export function App() {
     async (taskId: string) => {
       setSelectedTaskId(taskId);
       setActiveConversationId(taskId);
+      const knownTask = tasksRef.current.find((task) => task.id === taskId);
+      if (knownTask?.mode) setAiMode(knownTask.mode);
       setPersistedActiveChatId(taskId);
       setError(null);
       setStickToBottom(true);
@@ -964,6 +983,7 @@ export function App() {
       const streamBody = isContinue
         ? JSON.stringify({
             request: text,
+            mode: aiMode,
             useMcp: true,
             worldContext,
             history: historyPayload,
@@ -971,6 +991,7 @@ export function App() {
         : JSON.stringify({
             piSessionId: session,
             request: text,
+            mode: aiMode,
             permissionMode,
             useMcp: true,
             worldContext,
@@ -1869,19 +1890,25 @@ export function App() {
                     </div>
                   )}
                 </div>
-                {busy ? (
-                  <button className="danger send" type="button" onClick={stopStreaming}>
-                    Stop
-                  </button>
-                ) : (
-                  <button
-                    className="primary send"
-                    type="submit"
-                    disabled={!prompt.trim() || !health?.bdsConnected}
-                  >
-                    Send
-                  </button>
-                )}
+                <div className="composer-actions">
+                  <div className="ai-mode" role="group" aria-label="Interaction mode">
+                    <button type="button" className={aiMode === "ask" ? "active" : ""} onClick={() => { setAiMode("ask"); saveAiMode("ask"); }}>Ask</button>
+                    <button type="button" className={aiMode === "agent" ? "active" : ""} onClick={() => { setAiMode("agent"); saveAiMode("agent"); }}>Agent</button>
+                  </div>
+                  {busy ? (
+                    <button className="danger send" type="button" onClick={stopStreaming}>
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      className="primary send"
+                      type="submit"
+                      disabled={!prompt.trim() || !health?.bdsConnected}
+                    >
+                      Send
+                    </button>
+                  )}
+                </div>
               </div>
             </form>
             </div>

@@ -100,7 +100,7 @@ Register a BDS instance and obtain a session ID.
 
 ### POST /v1/bds/poll
 
-Poll for a pending action. BDS calls this every 2 seconds (40 ticks).
+Poll for a pending action. BDS calls this every 0.5 seconds (10 ticks).
 
 **Request Body** (`PollMessage`)
 
@@ -609,7 +609,8 @@ Create a new task (non-streaming). The agent plans synchronously and returns the
   "request": "Build a 10x10 stone house at 0 64 0",
   "piSessionId": "pi-session-abc",
   "bdsSessionId": "session-abc",
-  "permissionMode": "confirm_every_change"
+  "permissionMode": "confirm_every_change",
+  "mode": "agent"
 }
 ```
 
@@ -619,6 +620,7 @@ Create a new task (non-streaming). The agent plans synchronously and returns the
 | piSessionId | string | no | Pi session to use (creates new if omitted) |
 | bdsSessionId | string | no | BDS session target (uses first active if omitted) |
 | permissionMode | string | no | Override permission mode for this task |
+| mode | string | no | `"ask"` (read-only, default) or `"agent"` (inspections + mutations) |
 
 **Response** `201 Created`
 
@@ -648,7 +650,8 @@ Create a task with SSE streaming for real-time progress.
 {
   "request": "Build a 10x10 stone house at 0 64 0",
   "piSessionId": "pi-session-abc",
-  "bdsSessionId": "session-abc"
+  "bdsSessionId": "session-abc",
+  "mode": "agent"
 }
 ```
 

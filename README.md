@@ -30,6 +30,7 @@ You: "Build a 10x10 stone house at 0,64,0"
 
 - **Natural language control** — Describe tasks in plain English, the AI figures out the Minecraft commands
 - **Human-in-the-loop** — Every world change requires your explicit approval before execution
+- **Ask / Agent modes** — Toggle between read-only Ask mode (inspections and questions only) and Agent mode (tool-using, can propose changes)
 - **Safety by default** — Protected regions, volume limits, emergency kill switch, full audit trail
 - **Live world inspection** — The AI can query players, blocks, entities, time, weather, scoreboards, and more
 - **Real-time streaming** — Watch the AI think and execute in real-time through the web panel

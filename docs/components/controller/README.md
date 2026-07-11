@@ -13,15 +13,15 @@ Central HTTP server for IntelaCraft. Bridges the BDS (Bedrock Dedicated Server),
 | File | Lines | Purpose |
 |------|-------|---------|
 | `src/index.ts` | — | Entry point, boots the server |
-| `src/app.ts` | ~833 | Route definitions (all handlers) |
+| `src/app.ts` | ~849 | Route definitions (all handlers) |
 | `src/http.ts` | ~62 | HTTP server utilities, request/response helpers |
 | `src/config.ts` | ~108 | Configuration loading and defaults |
 | `src/env.ts` | ~39 | Environment variable parsing |
-| `src/store.ts` | ~166 | SessionStore, EventStore, SettingsStore |
+| `src/store.ts` | ~196 | SessionStore, EventStore, SettingsStore |
 | `src/policy.ts` | ~121 | Risk classification and approval policy |
 | `src/audit.ts` | ~22 | Audit log (JSONL append) |
 | `src/activity.ts` | ~112 | Activity store with query/prune |
-| `src/agent.ts` | ~1287 | AI agent runtime (task lifecycle) |
+| `src/agent.ts` | ~1564 | AI agent runtime (task lifecycle) |
 | `src/static.ts` | ~41 | Serves the React webview from `apps/webview/dist/` |
 | `src/*.test.ts` | — | Unit tests |
 

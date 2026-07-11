@@ -676,6 +676,12 @@ label {
   border-top: 1px solid var(--border);
 }
 
+.ai-mode { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); }
+.ai-mode button { border: 0; border-radius: calc(var(--radius-sm) - 2px); padding: 0.3rem 0.5rem; background: transparent; color: var(--muted); font-size: 0.78rem; }
+.ai-mode button.active { background: var(--bg-hover); color: var(--text); }
+
+.composer-actions { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+
 .model-picker {
   position: relative;
   display: flex;

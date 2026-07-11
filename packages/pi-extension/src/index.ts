@@ -16,6 +16,7 @@ import {
   type DiscoveredModel,
   type ReasoningCapabilities,
   type ThinkingLevel,
+  type AiMode,
 } from "@intelacraft/shared-protocol";
 import { Type } from "typebox";
 import { MODEL_OVERRIDES } from "./model-overrides.js";
@@ -178,6 +179,7 @@ export type PlanStreamEvent =
     };
 
 export interface PlanOptions {
+  mode?: AiMode;
   thinkingLevel?: ThinkingLevel;
   adminCommandIds?: string[];
   /** When set, ask the model to fix a previous invalid plan. */
@@ -201,6 +203,8 @@ export interface PiSession {
   /** Sanitized Pi provider id used in models.json / auth.json */
   piProvider?: string;
   thinkingLevel?: ThinkingLevel;
+  /** Current conversation capability boundary, owned by the controller. */
+  mode: AiMode;
 }
 
 /** Compact tool catalog the planner must choose from. */
@@ -445,13 +449,21 @@ const planStepSchema = Type.Object({
 });
 
 const mutationStepSchema = Type.Union([
-  Type.Object({
+  ...[
+    ["build.wall", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.floor", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.roof", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }) })],
+    ["build.pillar", Type.Object({ dimension: dimensionSchema, position: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }) })],
+    ["build.doorway", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.window", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.stairs", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), width: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.room", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+    ["build.path", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^minecraft:[a-z0-9_.-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
+  ].map(([toolName, argumentSchema]) => Type.Object({
     id: Type.Optional(Type.String({ minLength: 1 })),
-    toolName: Type.Union([Type.Literal("build.wall"),Type.Literal("build.floor"),Type.Literal("build.roof"),Type.Literal("build.pillar"),Type.Literal("build.doorway"),Type.Literal("build.window"),Type.Literal("build.stairs"),Type.Literal("build.room"),Type.Literal("build.path")]),
-    arguments: Type.Object({}, { additionalProperties: true }),
-    summary: Type.String({ minLength: 1 }),
+    toolName: Type.Literal(toolName as string), arguments: argumentSchema, summary: Type.String({ minLength: 1 }),
     dependsOn: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-  }, { additionalProperties: false }),
+  }, { additionalProperties: false })),
   Type.Object(
     {
       toolName: Type.Literal("world.fill_blocks"),
@@ -713,8 +725,12 @@ export async function testProvider(
             },
           },
         ],
-        tool_choice: "required",
-        max_tokens: 64,
+        // Some OpenAI-compatible gateways (including the Nemotron NIM
+        // implementation) support a named choice or "auto", but not the
+        // newer OpenAI-only "required" shortcut. A named choice still
+        // verifies that the gateway can produce a structured tool call.
+        tool_choice: { type: "function", function: { name: "ping" } },
+        max_tokens: 256,
       }),
     });
     const choice = Array.isArray(toolProbe.choices) ? toolProbe.choices[0] : null;
@@ -759,6 +775,7 @@ export function createPiSession(root: string, provider: ProviderProfile): PiSess
     storagePath,
     createdAt: new Date().toISOString(),
     piProvider,
+    mode: "ask",
   };
 }
 
@@ -1090,7 +1107,9 @@ export async function planWithPiSession(
     request: userRequest,
     adminCommandIds: adminIds,
     reminder:
-      "Use live inspect_* tools now if world facts are needed, then call submit_plan. Always include successCriteria and evidence arrays. For greetings use empty arrays. Use tool results for follow-ups and never guess world state.",
+      options.mode === "ask"
+        ? "Current mode is Ask: answer or inspect read-only state only. actions and verification must both be empty. If the user requests a change, explain that Agent mode is required."
+        : "Current mode is Agent: use live inspect_* tools when needed, then call submit_plan. Always include successCriteria and evidence arrays. For greetings use empty arrays. Use tool results for follow-ups and never guess world state.",
   };
 
   try {

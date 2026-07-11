@@ -7,6 +7,9 @@ export interface ModelOverride {
 }
 
 export const MODEL_OVERRIDES: Record<string, ModelOverride> = {
+  // NVIDIA requires detailed thinking to be disabled when Nemotron 3 Ultra
+  // uses OpenAI-compatible tool calling.
+  "nemotron-3-ultra-free": { supported: false, levels: ["off"], preferredLevel: "off" },
   "o3": { supported: true, levels: ["off", "low", "medium", "high", "xhigh", "max"], preferredLevel: "high" },
   "o3-mini": { supported: true, levels: ["off", "low", "medium", "high"], preferredLevel: "medium" },
   "o3-pro": { supported: true, levels: ["off", "low", "medium", "high", "xhigh", "max"], preferredLevel: "high" },

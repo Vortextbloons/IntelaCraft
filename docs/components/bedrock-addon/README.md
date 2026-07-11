@@ -14,7 +14,7 @@ apps/bedrock-addon/
 │   │   └── session.ts       Session lifecycle (handshake, poll, heartbeat, action dispatch)
 │   ├── tools/
 │   │   ├── inspect/
-│   │   │   └── index.ts     14 read-only inspection tools
+│   │   │   └── index.ts     13 read-only inspection tools
 │   │   └── mutate.ts        5 mutation tools (fill, place, cancel, emergency, admin command)
 │   └── audit/
 │       └── notify.ts        Operator notification (in-game + console)

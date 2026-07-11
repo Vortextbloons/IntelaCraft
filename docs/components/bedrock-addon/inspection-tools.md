@@ -1,6 +1,6 @@
 # Inspection Tools
 
-All 14 read-only tools that query Minecraft world state. Each tool executes synchronously within a single server tick.
+All 13 read-only tools that query Minecraft world state. Each tool executes synchronously within a single server tick.
 
 ## Overview
 
@@ -95,7 +95,53 @@ Locations are floored to integers. `permissionLevel` uses the `PlayerPermissionL
 
 ---
 
-### 3. inspect.block
+### 3. inspect.player
+
+**Inspects**: Detailed info for a single online player — health, inventory, equipment, effects, tags, and XP.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | `string` | Yes | Player name (must be online) |
+
+**Minecraft API**: `world.getPlayers()`, player components (`health`, `absorption`, `inventory`, `equippable`), `player.getEffects()`, `player.getTags()`
+
+**Returns**:
+
+```json
+{
+  "name": "Alice",
+  "id": "a1b2c3d4-...",
+  "alive": true,
+  "dimension": "minecraft:overworld",
+  "location": { "x": 100, "y": 64, "z": -200 },
+  "gameMode": "survival",
+  "health": { "current": 20, "max": 20 },
+  "absorption": null,
+  "xp": { "level": 5, "total": 1280, "atCurrentLevel": 30 },
+  "effects": [
+    { "id": "minecraft:regeneration", "amplifier": 1, "duration": 200 }
+  ],
+  "inventory": [
+    { "slot": 0, "typeId": "minecraft:diamond_sword", "amount": 1 }
+  ],
+  "armor": {
+    "head": { "typeId": "minecraft:diamond_helmet", "amount": 1 },
+    "chest": null,
+    "legs": null,
+    "feet": null
+  },
+  "isOperator": false,
+  "tags": ["has_home"]
+}
+```
+
+**Error**: Returns `PLAYER_NOT_FOUND` if no online player matches the name.
+
+**Example**: *"Show me Alice's inventory and health"*
+
+---
+
+### 4. inspect.block
 
 **Inspects**: A single block at a specific position.
 
@@ -125,7 +171,7 @@ Locations are floored to integers. `permissionLevel` uses the `PlayerPermissionL
 
 ---
 
-### 4. inspect.region
+### 5. inspect.region
 
 **Inspects**: A block type histogram for a 3D region.
 
@@ -161,69 +207,18 @@ Unloaded blocks are counted in the `unloaded` field and excluded from `typeCount
 
 ---
 
-### 5. inspect.time
+### 6. inspect.world_state
 
-**Inspects**: Time of day, absolute time, and day number.
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `dimension` | `DimensionId` | No | Defaults to `"minecraft:overworld"` |
-
-**Minecraft API**: `world.getTimeOfDay()`, `world.getAbsoluteTime()`, `world.getDay()`
-
-**Returns**:
-
-```json
-{
-  "dimension": "minecraft:overworld",
-  "timeOfDay": 13000,
-  "absoluteTime": 65000,
-  "day": 5
-}
-```
-
-`timeOfDay` ranges from 0 to 24000 (Minecraft day cycle ticks).
-
-**Example**: *"What time is it in the overworld?"*
-
----
-
-### 6. inspect.weather
-
-**Inspects**: Current weather state in a dimension.
+**Inspects**: Time of day, weather, and game rules in a single call.
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | `dimension` | `DimensionId` | No | Defaults to `"minecraft:overworld"` |
+| `rules` | `string[]` | No | Specific game rules to read (defaults to 8 common rules) |
 
-**Minecraft API**: `dimension.getWeather()`
+**Minecraft API**: `world.getTimeOfDay()`, `world.getAbsoluteTime()`, `world.getDay()`, `dimension.getWeather()`, `world.gameRules`
 
-**Returns**:
-
-```json
-{
-  "dimension": "minecraft:overworld",
-  "weather": "clear"
-}
-```
-
-Possible weather values: `"clear"`, `"rain"`, `"thunder"`.
-
-**Example**: *"Is it raining?"*
-
----
-
-### 7. inspect.game_rules
-
-**Inspects**: Current game rule values.
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `names` | `string[]` | No | Specific rules to read (defaults to 8 common rules) |
-
-**Minecraft API**: `world.gameRules`
-
-**Default rules queried** (when `names` is omitted):
+**Default game rules queried** (when `rules` is omitted):
 
 1. `doDayLightCycle`
 2. `doMobSpawning`
@@ -238,6 +233,16 @@ Possible weather values: `"clear"`, `"rain"`, `"thunder"`.
 
 ```json
 {
+  "time": {
+    "dimension": "minecraft:overworld",
+    "timeOfDay": 13000,
+    "absoluteTime": 65000,
+    "day": 5
+  },
+  "weather": {
+    "dimension": "minecraft:overworld",
+    "weather": "clear"
+  },
   "rules": {
     "doDayLightCycle": true,
     "doMobSpawning": true,
@@ -247,13 +252,13 @@ Possible weather values: `"clear"`, `"rain"`, `"thunder"`.
 }
 ```
 
-Rules not found in the world return `null`.
+`timeOfDay` ranges from 0 to 24000 (Minecraft day cycle ticks). Possible weather values: `"clear"`, `"rain"`, `"thunder"`. Rules not found in the world return `null`.
 
-**Example**: *"What are the current game rules?"*
+**Example**: *"What time is it and what are the game rules?"*
 
 ---
 
-### 8. inspect.entities
+### 7. inspect.entities
 
 **Inspects**: Entity list in a dimension with type, name, and location.
 
@@ -289,7 +294,7 @@ Rules not found in the world return `null`.
 
 ---
 
-### 9. inspect.scoreboard
+### 8. inspect.scoreboard
 
 **Inspects**: Scoreboard objectives with participants and scores.
 
@@ -325,7 +330,7 @@ Each objective caps at 64 participants in the response.
 
 ---
 
-### 10. inspect.tags
+### 9. inspect.tags
 
 **Inspects**: Tags on a player or entity by name or ID.
 
@@ -369,7 +374,7 @@ Each objective caps at 64 participants in the response.
 
 ---
 
-### 11. inspect.heightmap
+### 10. inspect.heightmap
 
 **Inspects**: Terrain height samples across a region at a given resolution.
 
@@ -403,7 +408,7 @@ Each objective caps at 64 participants in the response.
 
 ---
 
-### 12. inspect.surface
+### 11. inspect.surface
 
 **Inspects**: Top solid block types for terrain columns (like heightmap but includes surface material).
 
@@ -435,7 +440,7 @@ Each objective caps at 64 participants in the response.
 
 ---
 
-### 13. inspect.build_collision
+### 12. inspect.build_collision
 
 **Inspects**: Non-air blocks and entities in a proposed build volume.
 
@@ -465,7 +470,7 @@ Each objective caps at 64 participants in the response.
 
 ---
 
-### 14. inspect.find_empty_area
+### 13. inspect.find_empty_area
 
 **Inspects**: Finds nearby rectangular areas that are mostly empty and suitable for building.
 
@@ -511,11 +516,10 @@ Candidates are sorted by score (lower = better). Up to 8 candidates are returned
 |------|-------|------------|------------|
 | `inspect.server_status` | Player count/names | Optional list | — |
 | `inspect.players` | Player details | All | Optional nameFilter |
+| `inspect.player` | Single player full state | One | PLAYER_NOT_FOUND |
 | `inspect.block` | Single block state | One | BLOCK_UNAVAILABLE on unloaded |
 | `inspect.region` | Block type histogram | One | MAX_REGION_VOLUME = 32768 |
-| `inspect.time` | Time of day | One (default overworld) | — |
-| `inspect.weather` | Weather state | One (default overworld) | — |
-| `inspect.game_rules` | Game rule values | — | Default 8 rules |
+| `inspect.world_state` | Time, weather, game rules | One (default overworld) | Default 8 rules |
 | `inspect.entities` | Entity list | One | limit default 64, max 128 |
 | `inspect.scoreboard` | Objectives + scores | — | 64 participants per objective |
 | `inspect.tags` | Tags on target | All (fallback) | Player-first search |

@@ -24,9 +24,10 @@ Controller serves webview at `/` and API at `/v1/*`.
 
 ## Pack Deployment
 
-- **Dev mode**: Copies to `development_behavior_packs/development_resource_packs`
-- **Prod mode**: Creates `.mcpack`/`.mcaddon` files
-- `apps/bedrock-addon/scripts/deploy.js` handles deployment
+`scripts/deploy.mjs` handles deployment:
+- If `BDS_PATH` is set in `.env`, runs `configure-bds` to write BDS config files (`variables.json`, `secrets.json`, `permissions.json`) and deploy packs.
+- If `DEPLOY_PATH` is set in `apps/bedrock-addon/.env`, builds the addon and copies packs to the dev path.
+- Dev mode: Copies to `development_behavior_packs/` and `development_resource_packs/`
 
 ## Environment Variables
 
@@ -61,7 +62,7 @@ After=network.target
 Type=simple
 User=minecraft
 WorkingDirectory=/opt/intelacraft
-ExecStart=/usr/bin/node --loader ts-node/esm services/controller/src/index.ts
+ExecStart=/usr/bin/node services/controller/dist/index.js
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=/opt/intelacraft/.env

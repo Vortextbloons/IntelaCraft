@@ -1,6 +1,6 @@
 # Webview Components
 
-All 8 React components that make up the IntelaCraft webview control panel.
+All 9 React components that make up the IntelaCraft webview control panel.
 
 ## Component Hierarchy
 
@@ -14,12 +14,15 @@ App.tsx
 │   ├── HighlightedJson.tsx
 │   ├── ToolCallCard.tsx
 │   └── PlanCard.tsx
-└── [Drawer — Activity Log]
+└── [Composer — inline in App.tsx]
+    ├── Model picker popovers (providers, models, reasoning)
+    ├── Ask / Agent mode toggle (ai-mode group)
+    └── Send / Stop button
 ```
 
 ---
 
-## App.tsx (~1716 lines)
+## App.tsx (~2044 lines)
 
 Root monolithic component containing all application state and logic.
 
@@ -58,6 +61,19 @@ Uses React hooks exclusively — no external state library:
 | Replan | `POST /v1/tasks/:id/replan` | Request a new plan for the same goal |
 | Delete | `DELETE /v1/tasks/:id` | Remove a completed or cancelled task |
 
+### Ask / Agent Mode
+
+A toggle in the composer bar switches between two interaction modes:
+
+| Mode | Behavior |
+|------|----------|
+| `ask` | Question-only — the agent responds without executing tools |
+| `agent` | Full agent — the agent inspects the world and proposes/executes changes |
+
+- Mode is persisted to `localStorage` under key `intelacraft_ai_mode`
+- Mode is included in both task creation (`POST /v1/tasks/stream`) and continuation (`POST /v1/tasks/:id/stream`) request bodies
+- When opening an existing task, mode is restored from the task's `mode` field
+
 ### SSE Streaming
 
 - **Task creation**: `POST /v1/tasks/stream` returns an SSE stream with real-time model tokens as they are generated
@@ -75,11 +91,20 @@ Uses React hooks exclusively — no external state library:
 │  - Settings  │  - Plan cards                   │
 │              │  - Tool call progress            │
 ├──────────────┴─────────────────────────────────┤
+│  [Composer]                                     │
+│  ┌────────────────────────────────────────────┐ │
+│  │  textarea (message input)                  │ │
+│  ├────────────────────────────────────────────┤ │
+│  │  model-picker  │  [Ask|Agent]  [Send/Stop] │ │
+│  └────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────┤
 │              Connection Strip                   │
 └────────────────────────────────────────────────┘
 ```
 
-A collapsible drawer on the right shows the activity log.
+The composer bar contains the model/provider picker on the left, an Ask/Agent mode toggle group in the center-right (`composer-actions`), and the Send/Stop button on the right.
+
+A collapsible drawer on the right shows the activity log or safety settings.
 
 ---
 

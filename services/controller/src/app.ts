@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   PROTOCOL_VERSION,
+  AI_MODES,
   PERMISSION_MODES,
   THINKING_LEVELS,
   createEnvelope,
@@ -13,6 +14,7 @@ import {
   validatePoll,
   type ActionRequestMessage,
   type PermissionMode,
+  type AiMode,
   type ThinkingLevel,
 } from "@intelacraft/shared-protocol";
 import type { ActivityStore } from "./activity.js";
@@ -222,10 +224,16 @@ async function handleRequest(
     }
     const permissionMode =
       (b.permissionMode as PermissionMode | undefined) ?? ctx.settings.get().permissionMode;
+    const mode = b.mode === undefined ? "ask" : String(b.mode);
+    if (!(AI_MODES as readonly string[]).includes(mode)) {
+      sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid mode" } });
+      return;
+    }
     const task = await ctx.agent.createTask({
       ...b,
       bdsSessionId,
       permissionMode,
+      mode: mode as AiMode,
       sessions: ctx.sessions,
       audit: ctx.audit,
     });
@@ -233,6 +241,7 @@ async function handleRequest(
       type: "task_lifecycle",
       taskId: task.id,
       state: task.state,
+      mode: task.mode,
       request: b.request,
     });
     sendJson(res, 201, { task });
@@ -249,6 +258,11 @@ async function handleRequest(
     }
     const permissionMode =
       (b.permissionMode as PermissionMode | undefined) ?? ctx.settings.get().permissionMode;
+    const mode = b.mode === undefined ? "ask" : String(b.mode);
+    if (!(AI_MODES as readonly string[]).includes(mode)) {
+      sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid mode" } });
+      return;
+    }
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
@@ -270,6 +284,7 @@ async function handleRequest(
           ...b,
           bdsSessionId,
           permissionMode,
+          mode: mode as AiMode,
           sessions: ctx.sessions,
           audit: ctx.audit,
         },
@@ -284,6 +299,7 @@ async function handleRequest(
         type: "task_lifecycle",
         taskId: task.id,
         state: task.state,
+        mode: task.mode,
         request: b.request,
       });
       writeEvent("task", { task });
@@ -353,8 +369,11 @@ async function handleRequest(
   if (ctx.agent && method === "POST" && taskStreamMatch) {
     const taskId = decodeURIComponent(taskStreamMatch[1]);
     const b = (await readJson(req)) as any;
-    const permissionMode =
-      (b.permissionMode as PermissionMode | undefined) ?? ctx.settings.get().permissionMode;
+    const mode = b.mode === undefined ? undefined : String(b.mode);
+    if (mode !== undefined && !(AI_MODES as readonly string[]).includes(mode)) {
+      sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Invalid mode" } });
+      return;
+    }
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
@@ -373,6 +392,7 @@ async function handleRequest(
         taskId,
         {
           ...b,
+          ...(mode === undefined ? {} : { mode: mode as AiMode }),
           sessions: ctx.sessions,
           audit: ctx.audit,
         },
@@ -387,6 +407,7 @@ async function handleRequest(
         type: "task_lifecycle",
         taskId: task.id,
         state: task.state,
+        mode: task.mode,
         request: b.request,
       });
       writeEvent("task", { task });

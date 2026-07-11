@@ -99,7 +99,7 @@ Acknowledges the handshake and establishes the session.
 
 **Direction:** BDS → Controller
 
-Periodic poll for pending actions. BDS sends this every 2 seconds (40 ticks).
+Periodic poll for pending actions. BDS sends this every 0.5 seconds (10 ticks).
 
 ```json
 {
@@ -684,6 +684,17 @@ PERMISSION_MODES = [
   "trusted_administrator"  // All changes trusted (use with caution)
 ]
 ```
+
+### AI Modes
+
+```typescript
+AI_MODES = ["ask", "agent"]
+```
+
+| Mode | Description |
+|------|-------------|
+| `ask` | Read-only — AI inspects the world and answers questions, but never proposes mutations (default) |
+| `agent` | Full planning — AI can inspect, propose mutations, and include verification steps |
 
 ### Operation States
 

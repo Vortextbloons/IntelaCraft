@@ -2,6 +2,13 @@
 
 IntelaCraft is an AI-assisted control system for Minecraft Bedrock Dedicated Server (BDS). A user describes work in natural language, the AI agent inspects the world and proposes a plan, the user approves changes, and a behavior pack executes them safely on the server.
 
+IntelaCraft operates in one of two **AI modes**:
+
+- **Ask** (default) — The AI can inspect the world and answer questions, but never proposes mutations or verification steps. Plans are read-only and complete without user approval.
+- **Agent** — The AI can inspect, propose mutations, and include verification steps. Mutations require user approval in the webview before the behavior pack executes them.
+
+The mode is independent from the **permission mode** (which controls what the BDS addon allows after approval).
+
 ## System Overview
 
 ```text
@@ -58,6 +65,7 @@ The central HTTP server that bridges all components. Written in TypeScript on No
 - Bearer token authentication on all API routes
 - Action queuing and idempotent delivery to the BDS addon
 - Risk classification (`policy.ts:47`) and permission mode enforcement (`policy.ts:99`)
+- AI mode enforcement (`agent.ts:704`) — rejects mutation and verification steps in Ask mode
 - SHA-256 approval binding (`policy.ts:21`)
 - Emergency disable gate (`store.ts:25`)
 - Audit log append-only persistence (`audit.ts`)
@@ -114,7 +122,7 @@ A Minecraft Bedrock Script API behavior pack that runs inside the BDS process.
 
 **Responsibilities:**
 - HTTP client to the controller using `@minecraft/server-net`
-- Periodic polling for actions (every 2 seconds / 40 ticks)
+- Periodic polling for actions (every 0.5 seconds / 10 ticks)
 - Heartbeat reporting (every 3 polls / 6 seconds)
 - Action revalidation and execution inside the Minecraft runtime
 - Read-only world inspection (players, blocks, regions, entities, time, weather, etc.)
@@ -137,7 +145,7 @@ A Minecraft Bedrock Script API behavior pack that runs inside the BDS process.
 | `src/audit/notify.ts` | In-game operator notifications |
 
 **Timing constants** (from `src/net/session.ts`):
-- Poll interval: 40 ticks (2 seconds)
+- Poll interval: 10 ticks (0.5 seconds)
 - Heartbeat: every 3rd poll (6 seconds)
 
 ### 3. `@intelacraft/webview` — apps/webview/
@@ -146,6 +154,7 @@ A React single-page application served by the controller as static files.
 
 **Responsibilities:**
 - AI chat interface with streaming token display
+- Ask/Agent mode toggle in the composer area (persisted in localStorage)
 - Plan review with action cards (targets, bounds, risk, approval)
 - Approve/reject/cancel/replan controls
 - BDS, controller, model, Pi, and MCP connection indicators
@@ -179,6 +188,7 @@ PROTOCOL_VERSION = "1.0.0"
 RISK_CLASSES = ["read", "normal", "strong", "prohibited"]
 PERMISSION_MODES = ["observe_only", "confirm_every_change", "allow_low_risk",
                     "builder_region", "trusted_administrator"]
+AI_MODES = ["ask", "agent"]
 OPERATION_STATES = ["running", "completed", "partially_completed", "failed", "cancelled"]
 ```
 
@@ -190,7 +200,8 @@ Isolated AI planning agent runtime built on `@earendil-works/pi-coding-agent`.
 - Create and manage isolated Pi sessions with their own config, auth, and storage
 - Provider profile management (save, load, test, discover models)
 - System prompt construction with IntelaCraft-specific tool catalog
-- Inspection tool registration (10 `inspect.*` tools)
+- Mode-aware prompt injection — Ask mode restricts to read-only responses; Agent mode enables full planning
+- Inspection tool registration (13 `inspect.*` tools)
 - `submit_plan` tool that produces structured `AgentPlan` objects
 - Plan normalization from messy model output (`normalizePlan`)
 - Live inspection executor bridge (controller injects this per session)
@@ -210,6 +221,10 @@ interface AgentPlan {
   notes: string[];
 }
 ```
+
+**Pi session mode:**
+
+Each Pi session stores an `AiMode` (`"ask"` or `"agent"`) that controls the system prompt injected during planning. Ask mode tells the AI to produce only read-only responses with empty `actions` and `verification` arrays. Agent mode enables the full planning pipeline.
 
 **Tool catalog** (defined in `PLANNER_TOOL_CATALOG`):
 

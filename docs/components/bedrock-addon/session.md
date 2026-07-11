@@ -71,9 +71,9 @@ class ControllerClient {
 ### Constants
 
 ```typescript
-const POLL_INTERVAL_TICKS = 40;          // ~2 seconds
-const HEARTBEAT_EVERY_N_POLLS = 3;       // heartbeat every 3 polls (~6s)
-const RECONNECT_BACKOFF_TICKS = 100;     // 5 seconds after a failed handshake
+const POLL_INTERVAL_TICKS = 10;              // 0.5 seconds
+const HEARTBEAT_INTERVAL_TICKS = 120;        // 6 seconds between heartbeats
+const RECONNECT_BACKOFF_TICKS = 100;         // 5 seconds after a failed handshake
 ```
 
 ### ControllerSession Class
@@ -84,7 +84,7 @@ class ControllerSession {
   private sessionId: string | null = null;
   private running = false;
   private busy = false;
-  private pollCount = 0;
+  private nextHeartbeatTick = 0;
   private nextHandshakeTick = 0;
   private readonly idempotency = createIdempotencyTracker();
 }
@@ -94,7 +94,7 @@ class ControllerSession {
 
 1. Guard: if `this.running` is already `true`, return immediately (double-start protection)
 2. Set `this.running = true`
-3. Register `system.runInterval()` calling `tick()` every `POLL_INTERVAL_TICKS` (40 ticks)
+3. Register `system.runInterval()` calling `tick()` every `POLL_INTERVAL_TICKS` (10 ticks)
 4. Call `handshake()` immediately (not awaited — fire-and-forget via `void`)
 
 ### handshake()
@@ -128,9 +128,9 @@ try {
   if (!sessionId)         // no session → re-handshake
     await handshake()
     return
-  pollCount++
-  if (pollCount % 3 === 0)
+  if (system.currentTick >= nextHeartbeatTick)
     await sendHeartbeat()
+    nextHeartbeatTick = system.currentTick + HEARTBEAT_INTERVAL_TICKS
   await pollOnce()
 } finally {
   busy = false
@@ -230,12 +230,12 @@ Fire-and-forget: errors in event emission are silently ignored.
                              │                                    │
                              ▼                                    │
                ┌──────────────────────────┐                      │
-               │     tick() [every 40t]   │                      │
+               │     tick() [every 10t]   │                      │
                │  ┌─────────────────────┐ │                      │
                │  │ if busy → skip      │ │                      │
                │  │ if !sessionId →     │ │                      │
                │  │   handshake()       │ │                      │
-               │  │ if pollCount%3==0 → │ │                      │
+               │  │ if tick>=heartbeat →│ │                      │
                │  │   sendHeartbeat()   │ │──POST /v1/bds/heartbeat
                │  │ pollOnce()          │ │──POST /v1/bds/poll──▶│
                │  │   └─ handleAction() │ │◀── { action? } ──────│

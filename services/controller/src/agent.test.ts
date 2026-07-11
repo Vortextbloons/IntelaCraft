@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { newId } from "@intelacraft/shared-protocol";
+import { createPiSession } from "@intelacraft/pi-extension";
 import { ActivityStore } from "./activity.js";
 import { AgentRuntime } from "./agent.js";
 import { AuditLog } from "./audit.js";
@@ -42,6 +43,71 @@ function openSession(sessions: SessionStore, sessionId: string) {
 }
 
 describe("AgentRuntime read-only inspect auto-run", () => {
+  it("creates controller sessions in Ask mode by default", () => {
+    const session = createPiSession(join(dir, "pi-session-mode"), {
+      id: "test",
+      name: "Test",
+      baseUrl: "http://127.0.0.1:1",
+      apiKey: "test-key",
+      model: "test-model",
+    });
+    assert.equal(session.mode, "ask");
+  });
+
+  it("rejects mutation and verification steps in Ask mode", () => {
+    const agent = new AgentRuntime(config());
+    const mutation = {
+      summary: "Build a platform",
+      inspection: [],
+      actions: [{ toolName: "world.fill_blocks", arguments: {}, summary: "fill" }],
+      verification: [],
+      notes: [],
+    };
+    const verification = {
+      summary: "Check result",
+      inspection: [],
+      actions: [],
+      verification: [{ toolName: "inspect.region", arguments: {}, summary: "verify" }],
+      notes: [],
+    };
+
+    assert.throws(() => (agent as any).validatePlanTools(mutation, "ask"), /Ask mode is read-only/);
+    assert.throws(() => (agent as any).validatePlanTools(verification, "ask"), /Ask mode is read-only/);
+  });
+
+  it("allows the same bounded proposal in Agent mode and queues it after approval", () => {
+    const agent = new AgentRuntime(config());
+    const sessions = new SessionStore();
+    const activity = new ActivityStore(join(dir, "audit-agent-mode.jsonl"), 30);
+    const audit = new AuditLog(join(dir, "audit-agent-mode.jsonl"), activity);
+    const sessionId = newId("session");
+    openSession(sessions, sessionId);
+    const task: any = {
+      id: newId("task"), piSessionId: "pi", request: "build a pad", mode: "agent", state: "planning",
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), bdsSessionId: sessionId,
+      actor: "pi-agent", permissionMode: "confirm_every_change",
+    };
+    (agent as any).tasks.set(task.id, task);
+    (agent as any).applyPlanToTask(task, {
+      summary: "Build a stone pad", inspection: [], verification: [], notes: [],
+      actions: [{ toolName: "world.fill_blocks", summary: "Stone pad", arguments: {
+        dimension: "minecraft:overworld", region: { min: { x: 0, y: 64, z: 0 }, max: { x: 1, y: 64, z: 1 } },
+        blockType: "minecraft:stone", captureRollback: true,
+      } }],
+    }, { bdsSessionId: sessionId, actor: "pi-agent", permissionMode: "confirm_every_change" });
+
+    assert.equal(task.state, "awaiting_approval");
+    (agent as any).approveTask(task.id, { approvedBy: "tester", sessions, audit });
+    assert.equal(task.state, "running");
+    assert.equal(sessions.dequeue(sessionId)?.toolName, "world.fill_blocks");
+
+    task.mode = "ask";
+    assert.throws(() => (agent as any).applyPlanToTask(task, {
+      summary: "Try another pad", inspection: [], verification: [], notes: [],
+      actions: [{ toolName: "world.fill_blocks", summary: "blocked", arguments: {} }],
+    }, { bdsSessionId: sessionId }), /Ask mode is read-only/);
+  });
+
   it("preflights semantic builds before approval and materializes detailed placements", () => {
     const agent = new AgentRuntime(config()); const sessions = new SessionStore(); const activity = new ActivityStore(join(dir, "audit-semantic.jsonl"), 30); const audit = new AuditLog(join(dir, "audit-semantic.jsonl"), activity); const sessionId = newId("session"); openSession(sessions, sessionId);
     const row: any = { id:newId("task"),piSessionId:"pi",request:"build wall",state:"planning",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),bdsSessionId:sessionId,actor:"pi-agent",permissionMode:"confirm_every_change" }; (agent as any).tasks.set(row.id,row);

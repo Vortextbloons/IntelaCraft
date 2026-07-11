@@ -30,7 +30,7 @@ Returns whether MCP is configured and available. Always reports `advisoryOnly: t
 ### query(question)
 
 ```typescript
-query(question: string): Promise<string | null>
+query(question: string): Promise<unknown | null>
 ```
 
 Sends a JSON-RPC 2.0 `tools/call` request to the MCP server's `search` tool.
@@ -48,7 +48,7 @@ Sends a JSON-RPC 2.0 `tools/call` request to the MCP server's `search` tool.
 }
 ```
 
-**Returns**: The text response from MCP, or `null` if:
+**Returns**: The parsed JSON response from MCP, or `null` if:
 - URL is not configured
 - Request fails (network error, timeout)
 - Response is not OK

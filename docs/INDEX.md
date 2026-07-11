@@ -18,8 +18,8 @@ The in-game execution agent that runs inside Minecraft Bedrock Dedicated Server.
 | File | Description |
 |------|-------------|
 | [components/bedrock-addon/README.md](components/bedrock-addon/README.md) | Addon overview, file structure, safety layers, BDS configuration |
-| [components/bedrock-addon/session.md](components/bedrock-addon/session.md) | Session lifecycle: handshake, poll loop (2s), heartbeat (6s), reconnection |
-| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | All 14 read-only world query tools with args, API calls, return values |
+| [components/bedrock-addon/session.md](components/bedrock-addon/session.md) | Session lifecycle: handshake, poll loop (0.5s), heartbeat (6s), reconnection |
+| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | All 13 read-only world query tools with args, API calls, return values |
 | [components/bedrock-addon/mutation-tools.md](components/bedrock-addon/mutation-tools.md) | All 5 mutation tools: fill_blocks, place_blocks, control.cancel, emergency_disable, admin.run_command |
 | [components/bedrock-addon/build-deploy.md](components/bedrock-addon/build-deploy.md) | esbuild bundling, dev/prod deployment, BDS config writing, pack manifests |
 
@@ -30,7 +30,7 @@ React control panel SPA served by the controller.
 | File | Description |
 |------|-------------|
 | [components/webview/README.md](components/webview/README.md) | Webview overview, tech stack, features, access instructions |
-| [components/webview/components.md](components/webview/components.md) | All 7 React components with props, behavior, hierarchy diagram |
+| [components/webview/components.md](components/webview/components.md) | All 9 React components with props, behavior, hierarchy diagram |
 | [components/webview/data-flow.md](components/webview/data-flow.md) | REST polling, SSE streaming, conversation persistence, provider flow |
 
 ## Components — Controller

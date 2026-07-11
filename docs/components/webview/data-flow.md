@@ -68,7 +68,15 @@ The webview uses Server-Sent Events for real-time data in three places:
 
 ```
 POST /v1/tasks/stream
-Body: { "request": "...", "piSessionId": "...", "bdsSessionId": "..." }
+Body: {
+  "piSessionId": "...",
+  "request": "...",
+  "mode": "ask" | "agent",
+  "permissionMode": "...",
+  "useMcp": true,
+  "worldContext": { ... },
+  "history": [ ... ]
+}
 ```
 
 - Returns an SSE stream of model tokens as the AI generates a response
@@ -79,7 +87,13 @@ Body: { "request": "...", "piSessionId": "...", "bdsSessionId": "..." }
 
 ```
 POST /v1/tasks/:id/stream
-Body: { "request": "...", "piSessionId": "..." }
+Body: {
+  "request": "...",
+  "mode": "ask" | "agent",
+  "useMcp": true,
+  "worldContext": { ... },
+  "history": [ ... ]
+}
 ```
 
 - Resumes a conversation on an existing task
@@ -129,6 +143,14 @@ This is a JSON object mapping task IDs to `ChatMsg[]` arrays. A separate key tra
 ```
 intelacraft_active_chat
 ```
+
+The AI mode (Ask vs Agent) is also persisted to localStorage under:
+
+```
+intelacraft_ai_mode
+```
+
+Values: `"ask"` (default) or `"agent"`.
 
 ### Reconstruction
 

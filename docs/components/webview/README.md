@@ -18,8 +18,8 @@ The IntelaCraft webview is a single-page React application that serves as the us
 ```
 apps/webview/
 ├── src/
+│   ├── App.tsx                  (~2044 lines) Root component, all state & logic
 │   ├── components/
-│   │   ├── App.tsx              (~1800 lines) Root component
 │   │   ├── Transcript.tsx       Chat message list
 │   │   ├── PlanCard.tsx         Task plan display & approval
 │   │   ├── ToolCallCard.tsx     Tool execution progress
@@ -39,6 +39,7 @@ apps/webview/
 ## Features
 
 - **Chat Interface** — Natural-language conversation with the AI agent
+- **Ask / Agent Mode Toggle** — Switch between Ask (question-only) and Agent (tool-using) modes via composer toggle; mode persists to localStorage and is sent with each request
 - **Plan Review & Approval** — Inspect, approve, reject, or edit proposed world changes
 - **Real-Time Tool Monitoring** — Watch tool executions as they happen via SSE streaming
 - **Conversation Persistence** — Transcripts saved to localStorage, keyed by task ID
@@ -54,5 +55,5 @@ apps/webview/
 
 ## Sub-Documents
 
-- [components.md](./components.md) — Detailed documentation of all 8 React components
+- [components.md](./components.md) — Detailed documentation of all 9 React components
 - [data-flow.md](./data-flow.md) — Data flow, SSE streaming, REST polling, and persistence

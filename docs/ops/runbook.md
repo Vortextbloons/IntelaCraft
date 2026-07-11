@@ -12,6 +12,17 @@ Open the webview at `http://127.0.0.1:8787/` (after build). Enter the same beare
 
 Health check: `npm run health` or `GET /v1/health`.
 
+## AI Mode Selection
+
+IntelaCraft has two AI modes independent from permission modes:
+
+- **`ask`** (default) — Read-only. The agent inspects the world and answers questions but cannot plan or execute mutations. Use for exploration, auditing, or when you want zero mutation risk.
+- **`agent`** — Full planning. The agent can inspect, plan builds, and propose mutations. Mutations still subject to permission mode and risk classification.
+
+When creating a task, pass `"mode": "agent"` in the request body (defaults to `"ask"`). Use the mode selector in the webview to switch.
+
+Switching from `ask` to `agent` mid-task is supported via the continue endpoint (`POST /v1/tasks/:id/stream`). The mode is validated at plan time — plans with mutations are rejected in `ask` mode.
+
 ## Deploy Bedrock packs
 
 Configure `apps/bedrock-addon/.env` with `DEPLOY_PATH`, then `npm run deploy`. Restart BDS after pack changes. Ensure script networking and admin modules are enabled and variables/secrets match `.env`.

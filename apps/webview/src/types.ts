@@ -38,6 +38,7 @@ export type Task = {
   id: string;
   request: string;
   state: string;
+  mode?: "ask" | "agent";
   plan?: {
     summary: string;
     outcome?: "respond" | "propose" | "complete" | "blocked";

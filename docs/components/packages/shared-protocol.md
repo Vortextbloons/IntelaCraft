@@ -28,6 +28,16 @@ The foundational shared contract for the entire IntelaCraft system. Defines the 
 | `MAX_ROLLBACK_BLOCKS` | `8,192` | Maximum rollback snapshot entries |
 | `MAX_PLACE_BLOCKS` | `8,192` | Max individually addressed blocks in one placement |
 
+## AI Modes
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `AI_MODES` | `["ask", "agent"]` | AI capability boundary; independent from permission mode |
+
+```typescript
+type AiMode = "ask" | "agent";
+```
+
 ## Enumerated Types
 
 | Tuple | Values |
@@ -35,6 +45,7 @@ The foundational shared contract for the entire IntelaCraft system. Defines the 
 | `MESSAGE_TYPES` | `handshake`, `handshake_ack`, `poll`, `poll_response`, `action_request`, `operation_event`, `heartbeat`, `error` |
 | `RISK_CLASSES` | `read`, `normal`, `strong`, `prohibited` |
 | `PERMISSION_MODES` | `observe_only`, `confirm_every_change`, `allow_low_risk`, `builder_region`, `trusted_administrator` |
+| `AI_MODES` | `ask`, `agent` |
 | `OPERATION_STATES` | `running`, `completed`, `partially_completed`, `failed`, `cancelled` |
 | `READ_TOOLS` | `inspect.server_status`, `inspect.players`, `inspect.player`, `inspect.block`, `inspect.region`, `inspect.world_state`, `inspect.entities`, `inspect.scoreboard`, `inspect.tags`, `inspect.heightmap`, `inspect.surface`, `inspect.build_collision`, `inspect.find_empty_area` |
 | `MUTATION_TOOLS` | `world.fill_blocks`, `world.place_blocks`, `control.cancel`, `control.emergency_disable`, `admin.run_command` |
@@ -60,10 +71,10 @@ interface MessageEnvelope {
 | Type | Purpose | Key Fields |
 |------|---------|------------|
 | `HandshakeMessage` | BDS registers with controller | `serverId`, `clientProtocolVersion`, `capabilities` |
-| `HandshakeAckMessage` | Controller accepts/rejects | `acceptedProtocolVersion`, `ok`, `error` |
+| `HandshakeAckMessage` | Controller accepts/rejects | `acceptedProtocolVersion`, `serverId`, `ok`, `error` |
 | `PollMessage` | BDS polls for actions | (bare envelope) |
 | `PollResponseMessage` | Controller returns action or null | `action: ActionRequestMessage \| null` |
-| `ActionRequestMessage` | Action for BDS to execute | `actionId`, `idempotencyKey`, `toolName`, `arguments`, `risk`, `approval`, `expiresAt` |
+| `ActionRequestMessage` | Action for BDS to execute | `actionId`, `idempotencyKey`, `toolName`, `arguments`, `actor`, `permissionMode`, `risk`, `approval`, `noApprovalReason`, `expiresAt` |
 | `OperationEventMessage` | BDS reports result | `operationId`, `actionId`, `state`, `completedWork`, `totalEstimatedWork` |
 | `HeartbeatMessage` | BDS health update | `serverId`, `health: { ok, playerCount, tick, emergencyDisabled }` |
 | `ErrorMessage` | Error notification | `error: { code, message, details }` |
@@ -74,6 +85,7 @@ interface MessageEnvelope {
 |----------|---------|
 | `parseProtocolVersion(v)` | Parse semver string, return `{ major, minor, patch }` or null |
 | `isProtocolCompatible(v)` | Check major version matches (fail-closed) |
+| `currentProtocolVersion()` | Return the current protocol version string |
 | `parseVec3i(v)` | Validate integer 3D coordinate |
 | `normalizeRegion(a, b)` | Produce inclusive min/max from two corners |
 | `parseRegion(v)` | Validate region bounds (accepts `min/max` or `from/to`) |

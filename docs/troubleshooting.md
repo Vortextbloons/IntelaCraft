@@ -62,6 +62,13 @@ Check the webview connection strip. Disable via:
 POST /v1/emergency-disable  (set enabled: false)
 ```
 
+### AI mode is "ask" (read-only)
+If the AI agent is in `ask` mode, it cannot plan or execute any mutations — only inspect. The controller rejects plans with actions:
+```
+Ask mode is read-only: actions and verification must be empty
+```
+Switch to `agent` mode when creating the task, or use the mode selector in the webview. The default mode for new tasks is `ask`.
+
 ### Permission mode too restrictive
 Switch to `allow_low_risk` or `trusted_administrator` in webview settings.
 
@@ -134,6 +141,7 @@ Tests use mock HTTP servers. Check for port conflicts or leftover processes.
 | `Protected region` | Target blocks are in a protected region |
 | `Emergency disable active` | Emergency stop is toggled on |
 | `Approval required` | Permission mode requires user approval |
+| `Ask mode is read-only` | AI agent is in ask mode; switch to agent mode to plan mutations |
 
 ## 9. Logging and Diagnostics
 

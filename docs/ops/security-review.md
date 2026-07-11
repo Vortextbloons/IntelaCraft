@@ -27,6 +27,17 @@
 - Task approve endpoint re-hashes proposed actions and rejects mismatch/stale approvals.
 - Emergency disable rejects new mutations independently on controller and add-on.
 
+## AI Modes Detail
+
+AI mode is a capability boundary independent from permission mode. It controls whether the AI agent can propose mutations at all.
+
+| Mode | Behavior | Security Implication |
+|------|----------|----------------------|
+| `ask` | Read-only. The agent inspects the world and answers questions but cannot plan or execute any mutations. Plans with actions or verification steps are rejected at validation. | Safest mode. Use for exploration, auditing, or when you want zero mutation risk. Default mode for new tasks. |
+| `agent` | Full planning. The agent can inspect, plan mutations, and propose builds or admin commands. Mutations still subject to permission mode and risk classification. | Standard operating mode. Mutations require approval unless permission mode auto-approves them. |
+
+AI mode is enforced at plan validation (`validatePlanTools`) — the controller rejects any plan containing actions or verification steps when in `ask` mode. The default for new tasks is `ask`.
+
 ## Permission Modes Detail
 
 | Mode | Behavior |
@@ -43,7 +54,7 @@
 |------|----------|----------|
 | `read` | Inspection tools (inspect, query) | Always safe, never blocked |
 | `normal` | Small fills, allowed admin commands | Auto-approved in `allow_low_risk` mode |
-| `strong` | Large fills (>4096 blocks), emergency disable, mutations near protected regions | Requires approval in all modes except `trusted_administrator` |
+| `strong` | Large fills (>4096 blocks), emergency disable, air fills in any region | Requires approval in all modes except `trusted_administrator` |
 | `prohibited` | Fills exceeding 32,768 blocks, overlapping protected regions, unknown admin commands | Never allowed regardless of mode |
 
 ## Safety Mechanisms
@@ -64,6 +75,7 @@
 | Localhost-only | Controller binds to `127.0.0.1`; not network-exposed | No additional network controls in Phase 4 |
 | Shared bearer token | Full admin access on localhost | Token shared between BDS, CLI, and webview; no role separation |
 | AI agent | Semi-trusted; can inspect freely, needs approval for mutations | Risk classification + approval binding enforce human-in-the-loop |
+| AI mode (`ask`) | Read-only boundary; agent cannot plan or execute mutations | Plan validation rejects any plan with actions/verification when in ask mode |
 | MCP advisory | Untrusted; can suggest plans but cannot bypass tool restrictions | Plans validated before execution |
 | No rate limiting | Open to abuse if token is compromised | Not yet addressed (open decision) |
 | JSONL audit | Not tamper-evident; append-only file | Copy before purging; consider integrity hashing for production |

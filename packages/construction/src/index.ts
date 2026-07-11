@@ -24,7 +24,7 @@ function isVec(value: unknown): value is Vec3i { return !!value && typeof value 
 export function validateSemanticArguments(tool: SemanticToolName, args: Record<string, unknown>): string[] {
   const errors:string[]=[]; if(!["minecraft:overworld","minecraft:nether","minecraft:the_end"].includes(String(args.dimension))) errors.push("dimension must be a supported Minecraft dimension"); if(typeof args.blockType!=="string"||!BLOCK_ID.test(args.blockType))errors.push("blockType must be a namespaced Minecraft block id");
   if(tool==="build.pillar") { if(!isVec(args.position))errors.push("position must be integer x,y,z"); } else { if(!isVec(args.from)||!isVec(args.to))errors.push("from and to must be integer x,y,z"); }
-  if(["build.wall","build.pillar","build.room","build.doorway","build.window"].includes(tool) && (!Number.isInteger(args.height)||Number(args.height)<1)) errors.push("height must be a positive integer");
+  if(["build.wall","build.pillar","build.room","build.doorway","build.window","build.stairs"].includes(tool) && (!Number.isInteger(args.height)||Number(args.height)<1)) errors.push("height must be a positive integer");
   if(args.thickness!==undefined&&(!Number.isInteger(args.thickness)||Number(args.thickness)<1))errors.push("thickness must be a positive integer"); if(args.width!==undefined&&(!Number.isInteger(args.width)||Number(args.width)<1))errors.push("width must be a positive integer"); return errors;
 }
 /** One pure dispatch point shared by preview and controller execution. */

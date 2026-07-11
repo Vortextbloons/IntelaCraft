@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildWall, generateSemantic, previewPlacements, validateBuildPlan } from "./index.js";
+import { buildWall, generateSemantic, previewPlacements, validateBuildPlan, validateSemanticArguments } from "./index.js";
 
 test("wall geometry is deterministic and inclusive", () => {
   const wall=buildWall({dimension:"minecraft:overworld",from:{x:0,y:64,z:0},to:{x:2,y:64,z:0},height:2,blockType:"minecraft:stone"});
@@ -8,6 +8,9 @@ test("wall geometry is deterministic and inclusive", () => {
 });
 test("semantic validation rejects invalid blocks", () => {
   assert.throws(()=>generateSemantic("build.pillar",{dimension:"minecraft:overworld",position:{x:0,y:64,z:0},height:2,blockType:"stone"}));
+});
+test("stairs require a positive integer height before generation", () => {
+  assert.deepEqual(validateSemanticArguments("build.stairs", {dimension:"minecraft:overworld",from:{x:0,y:64,z:0},to:{x:1,y:64,z:0},blockType:"minecraft:stone"}), ["height must be a positive integer"]);
 });
 test("build plan detects cyclic dependencies", () => {
   const result=validateBuildPlan({summary:"x",palette:[],steps:[{id:"a",summary:"a",toolName:"build.pillar",arguments:{dimension:"minecraft:overworld",position:{x:0,y:64,z:0},height:1,blockType:"minecraft:stone"},dependsOn:["b"]},{id:"b",summary:"b",toolName:"build.pillar",arguments:{dimension:"minecraft:overworld",position:{x:1,y:64,z:0},height:1,blockType:"minecraft:stone"},dependsOn:["a"]}],verification:[],estimates:{blocksChanged:2,operations:2},warnings:[]});

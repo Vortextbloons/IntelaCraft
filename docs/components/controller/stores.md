@@ -8,16 +8,20 @@ Manages BDS server sessions. One active session per `serverId`.
 
 ### Key Methods
 
-- **`handshakeUpsert(serverId, meta)`** — Creates or updates a session on handshake. Returns the session.
-- **`heartbeat(serverId, patch)`** — Updates player count, tick, emergency status, and `lastSeen` timestamp.
-- **`isExpired(session)`** — Returns true if the session has not received a heartbeat within the TTL.
-- **`enqueueAction(sessionId, action)`** — Adds an action to the session's queue. Deduplicates by `idempotencyKey`.
-- **`dequeueAction(sessionId, actionId)`** — Removes a completed action from the queue.
+- **`upsertSession(session)`** — Creates or updates a BdsSession on handshake. Replaces any existing session for the same `serverId`.
+- **`touchHeartbeat(sessionId, health)`** — Updates `lastHeartbeatAt` and `lastHealth` from a BDS heartbeat. Returns false if session unknown.
+- **`getSession(sessionId)`** — Returns the session by ID.
+- **`getSessionByServer(serverId)`** — Returns the session for a given server ID.
+- **`enqueue(sessionId, action)`** — Adds an action to the session's queue. Deduplicates by `idempotencyKey`. Rejects expired actions.
+- **`dequeue(sessionId)`** — Returns the next non-expired, non-emergency-blocked action from the queue. Skips mutations when emergency is disabled.
+- **`setEmergencyDisabled(sessionId, value)`** — Toggles the emergency disable flag for a session.
+- **`isEmergencyDisabled(sessionId)`** — Returns true if the session has emergency disable active.
+- **`listSessions()`** — Returns all active sessions.
 
 ### Properties
 
-- `sessions: Map<sessionId, Session>`
-- `serverToSession: Map<serverId, sessionId>` — Enforces one-session-per-server
+- `sessions: Map<string, BdsSession>` — keyed by sessionId
+- `sessionsByServer: Map<string, string>` — serverId → sessionId, enforces one-session-per-server
 - Max sessions: unbounded (one per BDS server)
 - Emergency disable flag: per-session boolean that halts all mutations
 
@@ -37,9 +41,9 @@ Simple key-value store for runtime settings.
 | Setting | Values | Effect |
 |---------|--------|--------|
 | `permissionMode` | `observe_only`, `allow_low_risk`, `confirm_every_change`, `builder_region`, `trusted_administrator` | Controls approval requirements |
-| `thinkingLevel` | `off`, `minimal`, `low`, `medium`, `high` | Controls AI agent reasoning depth |
+| `thinkingLevel` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Controls AI agent reasoning depth |
 
-Changes take effect immediately — no restart required.
+The store exposes `preferredThinkingLevel` (user-set) and `thinkingLevel` (effective, may differ if Pi SDK overrides). Changes take effect immediately — no restart required.
 
 ## ActivityStore
 

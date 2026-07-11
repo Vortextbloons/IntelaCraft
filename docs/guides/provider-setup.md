@@ -110,7 +110,7 @@ curl -X POST http://127.0.0.1:8787/v1/providers/active \
 |-------|-------|
 | baseUrl | `https://openrouter.ai/api/v1` |
 | apiKey | Get from https://openrouter.ai/keys |
-| model | `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514`, `meta-llama/llama-3.3-70b-instruct` |
+| model | `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514`, `meta-llama/llama-3.3-70b-instruct`, `nvidia/nemotron-3-ultra-free` |
 
 **Steps:**
 
@@ -126,6 +126,18 @@ curl -X POST http://127.0.0.1:8787/v1/providers/active \
 - Compare models at https://openrouter.ai/models
 - Pricing varies by model
 - OpenAI-compatible API format
+
+#### NVIDIA Nemotron 3 Ultra Free
+
+| Field | Value |
+|-------|-------|
+| baseUrl | `https://openrouter.ai/api/v1` |
+| model | `nvidia/nemotron-3-ultra-free` |
+
+**Notes:**
+
+- Reasoning/thinking is **disabled** for this model (forced to `off`). The Nemotron NIM implementation does not support OpenAI-compatible reasoning tokens.
+- Provider connectivity testing uses a named `tool_choice` function call (not `"required"`) because the NIM gateway does not support the `"required"` shortcut. This is handled automatically by IntelaCraft.
 
 ### Custom OpenAI-Compatible
 
@@ -204,13 +216,14 @@ The `thinkingLevel` parameter controls how much reasoning effort the AI applies 
 
 **Model support:**
 
-- **OpenAI o3/o4 models**: Full support (maps to reasoning effort)
-- **Claude Sonnet/Opus 4**: Full support via override mappings
+- **OpenAI o3/o3-mini/o3-pro/o4-mini**: Full support (maps to reasoning effort)
+- **Claude Sonnet 4 / Opus 4**: Full support via override mappings
 - **DeepSeek R1**: Supported
 - **Gemini 2.5 Pro/Flash**: Supported
-- **OpenAI GPT-4o**: Maps to reasoning effort parameter
-- **Groq Llama**: Reasoning levels are excluded (Groq doesn't support `reasoning_effort`)
+- **NVIDIA Nemotron 3 Ultra Free**: Disabled (forced to `off`)
+- **Groq Llama**: Reasoning levels are excluded entirely (Groq doesn't support `reasoning_effort`)
 - **Ollama**: Limited (depends on model size)
+- **Other OpenAI-compatible**: Defaults to supported with levels `off`/`minimal`/`low`/`medium`/`high`
 
 Set the default thinking level in webview settings or override per task:
 

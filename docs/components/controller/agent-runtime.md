@@ -1,37 +1,58 @@
 # Agent Runtime
 
-The AI agent runtime (`src/agent.ts`, ~1,287 lines) is the most complex component. It manages the full task lifecycle from natural language input to world mutation.
+The AI agent runtime (`src/agent.ts`, ~1,564 lines) is the most complex component. It manages the full task lifecycle from natural language input to world mutation.
 
 ## Overview
 
-1. User submits a natural language task
+1. User submits a natural language task (in Ask or Agent mode)
 2. Agent builds world context and chat history
 3. AI model plans a sequence of tool calls
-4. Inspection wave runs (reads world state via BDS)
-5. Model replans with fresh inspection results
-6. User approves the final mutation plan
-7. Mutations execute on BDS
-8. Verification wave confirms results
+4. In **Agent mode**: inspection wave runs, model replans, user approves mutations, mutations execute, verification confirms
+5. In **Ask mode**: only inspection (read-only) actions are allowed; mutations and verification are rejected by `validatePlanTools()`
+
+## Ask vs Agent Mode
+
+Every task has a `mode` field (`AiMode` from `shared-protocol`) that controls what the agent is allowed to plan:
+
+| Mode | Allowed | Use Case |
+|------|---------|----------|
+| `ask` (default) | Read-only inspections only | Questions, world queries, planning previews |
+| `agent` | Inspections + mutations + verification | Building, editing, world changes |
+
+### Enforcement
+
+- `validatePlanTools(plan, mode)` in `agent.ts` rejects plans containing `actions` or `verification` steps when `mode === "ask"`
+- The mode is passed through to all planning calls (`planWithValidationRetry`, `continueTask`, `replanAfterInspection`)
+- Pi sessions are tagged with `s.mode = task.mode` so the model knows the constraint
+- The webview/task API accepts `mode` on `POST /v1/tasks`, `POST /v1/tasks/stream`, and `POST /v1/tasks/:id/stream`
+
+### Default
+
+Mode defaults to `"ask"` when not specified by the client. This ensures new tasks are read-only unless explicitly opted into mutation mode.
 
 ## AgentTask Interface
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique task identifier |
-| `state` | TaskState | Current lifecycle state |
-| `input` | string | Original user prompt |
-| `serverId` | string | Target BDS server |
-| `sessionId` | string | Active session ID |
-| `actions` | Action[] | Materialized actions to execute |
-| `pendingActions` | Action[] | Actions awaiting approval |
-| `completedActionIds` | Set<string> | Dedup set for completed actions |
-| `approvalRecord` | ApprovalRecord \| null | SHA-256 approval binding |
-| `history` | ChatMessage[] | Conversation history |
-| `error` | string \| null | Error message if failed |
-| `createdAt` | number | Creation timestamp |
-| `updatedAt` | number | Last update timestamp |
-| `preview` | BuildPreview \| null | Construction preview (blocks, batches, materials, warnings) |
-| `worldSnapshot` | WorldSnapshot \| null | Live collision data from inspect.build_collision |
+| `state` | AgentTaskState | Current lifecycle state |
+| `request` | string | Original user prompt |
+| `bdsSessionId` | string | Target BDS session |
+| `piSessionId` | string | Active Pi session ID |
+| `mode` | AiMode | `"ask"` or `"agent"` — controls allowed plan actions |
+| `proposedActions` | ActionRequestMessage[] | Mutations awaiting approval (or inspect-only actions once materialized) |
+| `pendingReads` | ActionRequestMessage[] | Read-only inspection actions auto-enqueued without approval |
+| `pendingVerification` | ActionRequestMessage[] | Verification reads to run after mutations |
+| `completedActionIds` | string[] | Dedup set for completed actions |
+| `plan` | AgentPlan \| undefined | The current or last plan |
+| `preview` | BuildPreview \| undefined | Construction preview (blocks, batches, materials, warnings) |
+| `worldSnapshot` | WorldSnapshot \| undefined | Live collision data from inspect.build_collision |
+| `error` | string \| undefined | Error message if failed |
+| `createdAt` | string | Creation timestamp (ISO 8601) |
+| `updatedAt` | string | Last update timestamp (ISO 8601) |
+| `metrics` | object \| undefined | Plan latency, validation retries, inspection stats |
+| `awaitingInspectReplan` | boolean \| undefined | True when mutations deferred until inspect completes + replan |
+| `agentVerificationStarted` | boolean \| undefined | Guards the single post-mutation agent verification turn |
 
 ## Task State Machine
 
@@ -45,6 +66,7 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 - `failed` — unrecoverable error
 - `cancelled` — user or system cancelled
 - `rejected` — user rejected the plan
+- `partial` — task ended with some actions incomplete (e.g. controller restart, verification without evidence)
 
 ### Key Transition
 
@@ -65,20 +87,23 @@ submitted → planning → inspecting → awaiting_approval → planned → runn
 
 ## Task Creation Flow (`createTaskInternal`)
 
-1. Create `AgentTask` with state `submitted`
-2. MCP advisory query (optional, untrusted context injection)
-3. Provider hot-swap if the user changed providers
-4. Build world context: server health, player count, admin command IDs
-5. Resolve chat history: stored turns + client-provided context
-6. `planWithValidationRetry` (up to 2 attempts)
-7. `applyPlanToTask` — materialize actions, set state
-8. Enqueue pending reads (inspection actions)
+1. Create `AgentTask` with state `submitted`, `mode` defaults to `"ask"`
+2. Tag Pi session with `s.mode = task.mode`
+3. MCP advisory query (optional, untrusted context injection)
+4. Provider hot-swap if the user changed providers
+5. Build world context: server health, player count, admin command IDs
+6. Resolve chat history: stored turns + client-provided context
+7. `planWithValidationRetry` (up to 2 attempts)
+8. `applyPlanToTask` — materialize actions, set state
+9. Enqueue pending reads (inspection actions)
 
 ## Planning with Validation Retry
 
 1. Bind `InspectionExecutor` for live BDS bridge
 2. Call `planWithPiSession` (pi-extension's main planning function)
-3. `validatePlanTools` — all inspection/verification actions must use `inspect.*` tools
+3. `validatePlanTools(plan, mode)` — enforces mode constraints:
+   - In **Ask mode**: rejects any plan with non-empty `actions` or `verification` arrays
+   - In all modes: all inspection/verification steps must use `inspect.*` tools
 4. **Build validation** — semantic build steps (`build.*`) are validated via `validateBuildPlan()` from the construction package (checks step IDs, dependencies, circular refs, geometry, volume limits, protected regions)
 5. Dry-run `materializeAction` to validate arguments
 6. **Retry once** on validation failure with error context injected into the next attempt

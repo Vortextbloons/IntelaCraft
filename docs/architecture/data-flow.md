@@ -4,7 +4,12 @@ This document describes the message flows, protocol details, and timing for Inte
 
 ## Primary Workflow
 
-The complete flow from a user's natural-language request to world mutation:
+The complete flow from a user's natural-language request to world mutation. The flow varies by **AI mode**:
+
+- **Ask mode** (default): Steps 6–7 run (inspection), then the AI produces a read-only plan. No approval or execution occurs — the plan completes immediately as a chat response.
+- **Agent mode**: All 17 steps execute. Mutations in the plan require user approval before the BDS addon executes them.
+
+The diagram below shows the full Agent mode flow:
 
 ```text
  ┌─────────┐    ┌───────────┐    ┌────────────┐    ┌──────────┐    ┌─────────┐
@@ -86,18 +91,20 @@ The complete flow from a user's natural-language request to world mutation:
 ### Step-by-step breakdown
 
 1. **User types request** in the webview chat input (natural language)
-2. **Webview sends SSE request** to `POST /v1/tasks/stream` with `{ request, piSessionId, bdsSessionId }`
+2. **Webview sends SSE request** to `POST /v1/tasks/stream` with `{ request, piSessionId, bdsSessionId, mode }` — mode is `"ask"` or `"agent"` (persisted in the webview's localStorage)
 3. **Controller queries MCP** for advisory Bedrock API guidance (optional, 15s timeout)
 4. **MCP returns advice** (or null if unconfigured/unreachable)
-5. **Controller sends prompt** to Pi agent with user request, world context, MCP advice, and chat history
+5. **Controller sends prompt** to Pi agent with user request, world context, MCP advice, chat history, and a **mode-specific reminder**:
+   - Ask: *"answer or inspect read-only state only. actions and verification must both be empty."*
+   - Agent: *"use live inspect_* tools when needed, then call submit_plan."*
 6. **AI calls inspection tools** — Pi invokes `inspect.*` tools which are bridged to the BDS addon via the controller's session store queue
 7. **BDS returns world state** — addon executes the read-only tool and emits an operation event
 8. **AI produces plan** via `submit_plan` tool call — controller streams deltas to the webview via SSE
 9. **User sees the plan** with action cards showing targets, bounds, risk, and approval requirements
-10. **User approves** the plan in the webview
+10. **User approves** the plan in the webview (Agent mode only — Ask mode plans have no mutations)
 11. **Webview sends approval** to `POST /v1/tasks/:id/approve`
 12. **Controller validates and enqueues** — policy check, SHA-256 approval binding, emergency disable gate, then queues the action for BDS pickup
-13. **BDS polls** `POST /v1/bds/poll` every 2 seconds
+13. **BDS polls** `POST /v1/bds/poll` every 0.5 seconds
 14. **Controller returns action** from the session queue (or null if empty)
 15. **BDS executes** the action in configurable batch sizes (default 512 blocks/tick)
 16. **BDS reports results** via `POST /v1/bds/events` with operation state
@@ -162,7 +169,7 @@ HTTP/1.1 200 OK
 
 ### Poll
 
-**Direction:** BDS Addon → Controller (every 2 seconds)
+**Direction:** BDS Addon → Controller (every 0.5 seconds)
 
 ```text
 POST /v1/bds/poll
@@ -312,7 +319,7 @@ Authorization: Bearer <token>
 
 **Endpoint:** `POST /v1/tasks/stream`
 
-The webview opens an SSE connection when creating a task. The controller streams real-time events as the AI plans:
+The webview opens an SSE connection when creating a task. The request body includes a `mode` field (`"ask"` or `"agent"`, defaults to `"ask"`) which is validated against `AI_MODES`. The controller streams real-time events as the AI plans:
 
 ```text
 HTTP/1.1 200 OK
@@ -374,7 +381,7 @@ data: {"name":"submit_plan","phase":"end","toolCallId":"tc_002"}
 
 **Endpoint:** `POST /v1/tasks/:id/stream`
 
-Same SSE format as the initial task stream. Used for follow-up messages in the same conversation. The controller calls `agent.continueTask()` which sends the follow-up to the same Pi session with prior chat history.
+Same SSE format as the initial task stream. Used for follow-up messages in the same conversation. The controller calls `agent.continueTask()` which sends the follow-up to the same Pi session with prior chat history. The `mode` field is optional on follow-ups — if omitted, the task retains its original mode.
 
 ### Event Stream
 
@@ -446,6 +453,17 @@ The `enforceMode()` function in `policy.ts:99` gates mutations:
 | `allow_low_risk` | Permit `world.fill_blocks` with volume ≤ 256 without approval; confirm others |
 | `builder_region` | Deny `admin.run_command`; require builds to be inside assigned regions |
 | `trusted_administrator` | Permit normal-risk mutations without approval; retain strong/prohibited gates |
+
+### AI Mode Enforcement
+
+The `validatePlanTools()` function in `agent.ts:704` enforces the AI capability boundary:
+
+| Mode | Behavior |
+|------|----------|
+| `ask` (default) | Plan must have empty `actions` and `verification` arrays. Inspection-only plans complete immediately as chat responses. |
+| `agent` | Full planning pipeline. Mutations require user approval. Verification steps run after mutations. |
+
+Mode is set at task creation and cannot be changed mid-task. The controller validates the plan after the AI produces it — if Ask mode produces a plan with mutations, the plan is rejected and the AI is asked to retry (up to 2 attempts with validation feedback).
 
 ### Approval Binding
 
@@ -582,20 +600,23 @@ The AI agent queries the world through a bridge that connects Pi's inspection to
 - The resolved result is injected into Pi's chat history via `injectPiToolResult()`
 - If the timeout fires, the inspection is rejected with an error
 
-**Available inspection tools** (10 total):
+**Available inspection tools** (13 total):
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
 | `inspect.server_status` | `{ includeDimensions? }` | TPS, player count, tick, dimensions |
 | `inspect.players` | `{ nameFilter? }` | Array of online player objects |
+| `inspect.player` | `{ name }` | Detailed info for a single player |
 | `inspect.block` | `{ dimension, position }` | Block type and state at position |
 | `inspect.region` | `{ dimension, region, countsOnly? }` | Block type counts in region |
-| `inspect.time` | `{ dimension? }` | World time and day |
-| `inspect.weather` | `{ dimension? }` | Current weather type |
-| `inspect.game_rules` | `{ names? }` | Game rule values |
+| `inspect.world_state` | `{ dimension?, rules? }` | Time, weather, game rules |
 | `inspect.entities` | `{ dimension, typeFilter?, limit? }` | Entity list with positions |
 | `inspect.scoreboard` | `{ objective? }` | Scoreboard objectives and scores |
 | `inspect.tags` | `{ target, player? }` | Tags on a player or entity |
+| `inspect.heightmap` | `{ dimension, region, resolution? }` | Terrain heights across a region |
+| `inspect.surface` | `{ dimension, region }` | Top solid block types |
+| `inspect.build_collision` | `{ dimension, region }` | Blocks in a proposed build volume |
+| `inspect.find_empty_area` | `{ dimension, origin, requiredSize, radius? }` | Find empty build areas near origin |
 
 ## Task Lifecycle State Machine
 
@@ -640,6 +661,11 @@ The AI agent queries the world through a bridge that connects Pi's inspection to
 
    At any non-terminal state: ──> cancelled (via cancel task)
 ```
+
+**Mode effects on transitions:**
+
+- **Ask mode**: Plans always produce empty `actions` and `verification` arrays. The task transitions `planning` → `completed` (chat-only) or `planning` → `inspecting` → `completed` (if inspection steps are present). No `awaiting_approval`, `running`, or `verifying` states are reached.
+- **Agent mode**: All transitions are available as shown above.
 
 **State transitions:**
 

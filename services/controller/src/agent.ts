@@ -6,6 +6,7 @@ import {
   validateToolArguments,
   type ActionRequestMessage,
   type PermissionMode,
+  type AiMode,
   type RiskClass,
   type ToolName,
 } from "@intelacraft/shared-protocol";
@@ -80,6 +81,7 @@ export interface AgentTask {
   bdsSessionId?: string;
   actor?: string;
   permissionMode?: PermissionMode;
+  mode: AiMode;
   metrics?: {
     planLatencyMs?: number;
     validationRetries?: number;
@@ -320,6 +322,7 @@ export class AgentRuntime {
     worldContext?: unknown;
     useMcp?: boolean;
     permissionMode?: PermissionMode;
+    mode?: AiMode;
     bdsSessionId: string;
     actor?: string;
     sessions?: SessionStore;
@@ -337,6 +340,7 @@ export class AgentRuntime {
       worldContext?: unknown;
       useMcp?: boolean;
       permissionMode?: PermissionMode;
+      mode?: AiMode;
       bdsSessionId: string;
       actor?: string;
       sessions?: SessionStore;
@@ -355,6 +359,7 @@ export class AgentRuntime {
       request: string;
       worldContext?: unknown;
       useMcp?: boolean;
+      mode?: AiMode;
       sessions?: SessionStore;
       audit?: AuditLog;
       history?: ChatTurn[];
@@ -371,6 +376,8 @@ export class AgentRuntime {
     }
     const s = this.pi.get(task.piSessionId);
     if (!s) throw new Error("Pi session missing for task");
+    task.mode = input.mode ?? task.mode ?? "ask";
+    s.mode = task.mode;
     task.state = "planning";
     task.error = undefined;
     task.proposedActions = [];
@@ -401,6 +408,7 @@ export class AgentRuntime {
         mcp,
         {
           thinkingLevel: this.thinkingLevel,
+          mode: task.mode,
           adminCommandIds,
           history,
           onEvent,
@@ -465,6 +473,7 @@ export class AgentRuntime {
       worldContext?: unknown;
       useMcp?: boolean;
       permissionMode?: PermissionMode;
+      mode?: AiMode;
       bdsSessionId: string;
       actor?: string;
       sessions?: SessionStore;
@@ -485,9 +494,11 @@ export class AgentRuntime {
       bdsSessionId: input.bdsSessionId,
       actor: input.actor ?? "pi-agent",
       permissionMode: input.permissionMode ?? this.config.defaultPermissionMode,
+      mode: input.mode ?? "ask",
       completedActionIds: [],
       metrics: { validationRetries: 0 },
     };
+    s.mode = task.mode;
     this.tasks.set(task.id, task);
     task.state = "planning";
     // Structured tool-call responses may contain no visible text deltas.
@@ -509,6 +520,7 @@ export class AgentRuntime {
         mcp,
         {
           thinkingLevel: this.thinkingLevel,
+          mode: task.mode,
           adminCommandIds,
           history,
           onEvent,
@@ -545,6 +557,7 @@ export class AgentRuntime {
     mcp: unknown,
     opts: {
       thinkingLevel?: ThinkingLevel;
+      mode?: AiMode;
       adminCommandIds?: string[];
       history?: ChatTurn[];
       onEvent?: (event: PlanStreamEvent) => void;
@@ -582,7 +595,7 @@ export class AgentRuntime {
         validationError: lastError,
       });
       try {
-        this.validatePlanTools(plan);
+        this.validatePlanTools(plan, opts.mode ?? task.mode);
         // Dry-run materialize to catch arg errors before applying.
         for (const step of plan.inspection) this.materializeAction(step, input, true);
         for (const step of plan.actions) this.materializeAction(step, input, false);
@@ -688,7 +701,10 @@ export class AgentRuntime {
     });
   }
 
-  private validatePlanTools(plan: AgentPlan) {
+  private validatePlanTools(plan: AgentPlan, mode: AiMode = "agent") {
+    if (mode === "ask" && (plan.actions.length > 0 || plan.verification.length > 0)) {
+      throw new Error("Ask mode is read-only: actions and verification must be empty");
+    }
     for (const step of [...plan.inspection, ...plan.verification]) {
       if (!step.toolName.startsWith("inspect.")) {
         throw new Error("Inspection and verification steps must be read-only");
@@ -795,7 +811,7 @@ export class AgentRuntime {
     plan: AgentPlan,
     input: { bdsSessionId: string; actor?: string; permissionMode?: PermissionMode },
   ) {
-    this.validatePlanTools(plan);
+    this.validatePlanTools(plan, task.mode);
     for (const step of [...plan.inspection, ...plan.verification]) {
       const v = validateToolArguments(step.toolName as ToolName, step.arguments);
       if (!v.ok) throw new Error(`Invalid ${step.toolName}: ${v.error.message}`);
@@ -985,6 +1001,7 @@ export class AgentRuntime {
         undefined,
         {
           thinkingLevel: this.thinkingLevel,
+          mode: task.mode,
           adminCommandIds: Object.keys(this.config.adminCommands),
           history,
         },
@@ -1071,6 +1088,7 @@ export class AgentRuntime {
         undefined,
         {
           thinkingLevel: this.thinkingLevel,
+          mode: task.mode,
           adminCommandIds: Object.keys(this.config.adminCommands),
           history,
           onEvent,
