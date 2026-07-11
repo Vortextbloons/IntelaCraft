@@ -1,7 +1,7 @@
-// src/main.ts
+// apps/bedrock-addon/src/main.ts
 import { system as system3 } from "@minecraft/server";
 
-// src/audit/notify.ts
+// apps/bedrock-addon/src/audit/notify.ts
 import { PlayerPermissionLevel, world } from "@minecraft/server";
 function notifyOperators(message) {
   try {
@@ -15,7 +15,7 @@ function notifyOperators(message) {
   console.warn(`[IntelaCraft] ${message}`);
 }
 
-// src/config.ts
+// apps/bedrock-addon/src/config.ts
 import { secrets, variables } from "@minecraft/server-admin";
 var CONTROLLER_URL_VAR = "intelacraft:controller_url";
 var BDS_TOKEN_SECRET = "intelacraft:bds_token";
@@ -62,10 +62,10 @@ function loadConfig() {
   };
 }
 
-// src/net/session.ts
-import { system as system2, world as world4 } from "@minecraft/server";
+// apps/bedrock-addon/src/net/session.ts
+import { system as system2, world as world7 } from "@minecraft/server";
 
-// ../../packages/shared-protocol/src/constants.ts
+// packages/shared-protocol/src/constants.ts
 var PROTOCOL_VERSION = "1.0.0";
 var PROTOCOL_MAJOR = 1;
 var MAX_REGION_VOLUME = 32 * 32 * 32;
@@ -119,7 +119,7 @@ var DIMENSION_IDS = [
   "minecraft:the_end"
 ];
 
-// ../../packages/shared-protocol/src/helpers.ts
+// packages/shared-protocol/src/helpers.ts
 function parseProtocolVersion(version) {
   if (typeof version !== "string") return null;
   const parts = version.trim().split(".");
@@ -212,12 +212,16 @@ function createIdempotencyTracker(maxEntries = 2048) {
   };
 }
 
-// ../../packages/shared-protocol/src/validate.ts
+// packages/shared-protocol/src/validate/common.ts
 function fail(code, message, details) {
   return { ok: false, error: { code, message, details } };
 }
 function ok(value) {
   return { ok: true, value };
+}
+function asArgs(result) {
+  if (!result.ok) return result;
+  return ok(result.value);
 }
 function isMessageType(value) {
   return typeof value === "string" && MESSAGE_TYPES.includes(value);
@@ -236,6 +240,16 @@ function isTool(value) {
 }
 function isDimensionId(value) {
   return typeof value === "string" && DIMENSION_IDS.includes(value);
+}
+function validateErrorBody(raw) {
+  if (!isRecord(raw)) return fail("INVALID_ERROR", "error must be an object");
+  if (!isNonEmptyString(raw.code)) return fail("INVALID_ERROR", "error.code is required");
+  if (!isNonEmptyString(raw.message)) return fail("INVALID_ERROR", "error.message is required");
+  return ok({
+    code: raw.code,
+    message: raw.message,
+    details: raw.details
+  });
 }
 function validateEnvelope(raw) {
   if (!isRecord(raw)) {
@@ -274,179 +288,16 @@ function validateEnvelope(raw) {
     timestamp: raw.timestamp
   });
 }
-function validateErrorBody(raw) {
-  if (!isRecord(raw)) return fail("INVALID_ERROR", "error must be an object");
-  if (!isNonEmptyString(raw.code)) return fail("INVALID_ERROR", "error.code is required");
-  if (!isNonEmptyString(raw.message)) return fail("INVALID_ERROR", "error.message is required");
-  return ok({
-    code: raw.code,
-    message: raw.message,
-    details: raw.details
-  });
-}
-function validateHandshakeAck(raw) {
-  const env = validateEnvelope(raw);
-  if (!env.ok) return env;
-  if (env.value.messageType !== "handshake_ack") {
-    return fail("INVALID_MESSAGE", "Expected handshake_ack");
-  }
-  if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid handshake_ack");
-  if (!isNonEmptyString(raw.acceptedProtocolVersion)) {
-    return fail("INVALID_HANDSHAKE_ACK", "acceptedProtocolVersion is required");
-  }
-  if (!isNonEmptyString(raw.serverId)) {
-    return fail("INVALID_HANDSHAKE_ACK", "serverId is required");
-  }
-  if (typeof raw.ok !== "boolean") {
-    return fail("INVALID_HANDSHAKE_ACK", "ok must be boolean");
-  }
-  let error;
-  if (raw.error !== void 0) {
-    const err = validateErrorBody(raw.error);
-    if (!err.ok) return err;
-    error = err.value;
-  }
-  return ok({
-    ...env.value,
-    messageType: "handshake_ack",
-    acceptedProtocolVersion: raw.acceptedProtocolVersion,
-    serverId: raw.serverId,
-    ok: raw.ok,
-    error
-  });
-}
-function validateActionRequest(raw) {
-  const env = validateEnvelope(raw);
-  if (!env.ok) return env;
-  if (env.value.messageType !== "action_request") {
-    return fail("INVALID_MESSAGE", "Expected action_request");
-  }
-  if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid action_request");
-  if (!isNonEmptyString(raw.actionId)) {
-    return fail("INVALID_ACTION", "actionId is required");
-  }
-  if (!isNonEmptyString(raw.idempotencyKey)) {
-    return fail("INVALID_ACTION", "idempotencyKey is required");
-  }
-  if (!isTool(raw.toolName)) {
-    return fail("UNKNOWN_TOOL", `Unknown or unsupported tool '${String(raw.toolName)}'`);
-  }
-  if (!isRecord(raw.arguments)) {
-    return fail("INVALID_ACTION", "arguments must be an object");
-  }
-  const argsCheck = validateToolArguments(raw.toolName, raw.arguments);
-  if (!argsCheck.ok) return argsCheck;
-  if (!isNonEmptyString(raw.actor)) {
-    return fail("INVALID_ACTION", "actor is required");
-  }
-  if (!isPermissionMode(raw.permissionMode)) {
-    return fail("INVALID_ACTION", "permissionMode is invalid");
-  }
-  if (!isRisk(raw.risk)) {
-    return fail("INVALID_ACTION", "risk is invalid");
-  }
-  if (isReadTool(raw.toolName) && raw.risk !== "read") return fail("INVALID_RISK", "Inspection tools require read risk");
-  if (!isReadTool(raw.toolName) && !["normal", "strong"].includes(raw.risk)) return fail("INVALID_RISK", "Mutation requires normal or strong risk");
-  if (!isNonEmptyString(raw.expiresAt) || Number.isNaN(Date.parse(raw.expiresAt))) {
-    return fail("INVALID_ACTION", "expiresAt must be ISO-8601");
-  }
-  if (raw.approval === void 0 && !isNonEmptyString(raw.noApprovalReason)) {
-    return fail("INVALID_ACTION", "approval or noApprovalReason is required");
-  }
-  let approval;
-  if (raw.approval !== void 0) {
-    if (!isRecord(raw.approval)) {
-      return fail("INVALID_ACTION", "approval must be an object");
-    }
-    if (!isNonEmptyString(raw.approval.approvalId) || !isNonEmptyString(raw.approval.approvedAt) || !isNonEmptyString(raw.approval.approvedBy) || !isNonEmptyString(raw.approval.payloadHash)) {
-      return fail("INVALID_ACTION", "approval fields are incomplete");
-    }
-    approval = {
-      approvalId: raw.approval.approvalId,
-      approvedAt: raw.approval.approvedAt,
-      approvedBy: raw.approval.approvedBy,
-      payloadHash: raw.approval.payloadHash
-    };
-  }
-  return ok({
-    ...env.value,
-    messageType: "action_request",
-    actionId: raw.actionId,
-    idempotencyKey: raw.idempotencyKey,
-    toolName: raw.toolName,
-    arguments: argsCheck.value,
-    actor: raw.actor,
-    permissionMode: raw.permissionMode,
-    risk: raw.risk,
-    approval,
-    noApprovalReason: typeof raw.noApprovalReason === "string" ? raw.noApprovalReason : void 0,
-    expiresAt: raw.expiresAt
-  });
-}
-function validatePollResponse(raw) {
-  const env = validateEnvelope(raw);
-  if (!env.ok) return env;
-  if (env.value.messageType !== "poll_response") {
-    return fail("INVALID_MESSAGE", "Expected poll_response");
-  }
-  if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid poll_response");
-  if (raw.action === null) {
-    return ok({ ...env.value, messageType: "poll_response", action: null });
-  }
-  const action = validateActionRequest(raw.action);
-  if (!action.ok) return action;
-  return ok({ ...env.value, messageType: "poll_response", action: action.value });
-}
-function validateToolArguments(toolName, args) {
-  switch (toolName) {
-    case "inspect.server_status":
-      return asArgs(validateInspectServerStatus(args));
-    case "inspect.players":
-      return asArgs(validateInspectPlayers(args));
-    case "inspect.player":
-      return asArgs(validateInspectPlayer(args));
-    case "inspect.block":
-      return asArgs(validateInspectBlock(args));
-    case "inspect.region":
-      return asArgs(validateInspectRegion(args));
-    case "inspect.world_state":
-      return asArgs(validateInspectWorldState(args));
-    case "inspect.entities":
-      return asArgs(validateInspectEntities(args));
-    case "inspect.scoreboard":
-      return asArgs(validateInspectScoreboard(args));
-    case "inspect.tags":
-      return asArgs(validateInspectTags(args));
-    case "inspect.heightmap":
-      return asArgs(validateHeightmap(args));
-    case "inspect.surface":
-      return asArgs(validateHeightmap(args));
-    case "inspect.build_collision":
-      return asArgs(validateBuildCollision(args));
-    case "inspect.find_empty_area":
-      return asArgs(validateFindEmptyArea(args));
-    case "world.fill_blocks":
-      return asArgs(validateFillBlocks(args));
-    case "world.place_blocks":
-      return asArgs(validatePlaceBlocks(args));
-    case "control.cancel":
-      if (!isNonEmptyString(args.actionId)) return fail("INVALID_ARGS", "actionId is required");
-      return ok({ actionId: args.actionId });
-    case "control.emergency_disable":
-      if (typeof args.disabled !== "boolean") return fail("INVALID_ARGS", "disabled must be boolean");
-      return ok({ disabled: args.disabled });
-    case "admin.run_command":
-      return asArgs(validateAdminRunCommand(args));
-    default:
-      return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
-  }
-}
+
+// packages/shared-protocol/src/validate/tools-inspect.ts
 function validateHeightmap(args) {
   if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
   const region = parseRegion(args.region);
   if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
   const resolution = args.resolution ?? 1;
-  if (resolution !== 1 && resolution !== 2 && resolution !== 4) return fail("INVALID_ARGS", "resolution must be 1, 2, or 4");
+  if (resolution !== 1 && resolution !== 2 && resolution !== 4) {
+    return fail("INVALID_ARGS", "resolution must be 1, 2, or 4");
+  }
   return ok({ dimension: args.dimension, region, resolution });
 }
 function validateBuildCollision(args) {
@@ -457,44 +308,24 @@ function validateBuildCollision(args) {
 }
 function validateFindEmptyArea(args) {
   if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
-  const origin = parseVec3i(args.origin), requiredSize = parseVec3i(args.requiredSize);
-  if (!origin || !requiredSize || requiredSize.x < 1 || requiredSize.y < 1 || requiredSize.z < 1) return fail("INVALID_ARGS", "origin and positive requiredSize are required");
-  if (!Number.isInteger(args.radius) || args.radius < 0 || args.radius > 128) return fail("INVALID_ARGS", "radius must be an integer 0-128");
-  if (args.maxSlope !== void 0 && (!Number.isFinite(args.maxSlope) || Number(args.maxSlope) < 0)) return fail("INVALID_ARGS", "maxSlope must be non-negative");
-  return ok({ dimension: args.dimension, origin, requiredSize, radius: args.radius, maxSlope: typeof args.maxSlope === "number" ? args.maxSlope : void 0 });
-}
-function validatePlaceBlocks(args) {
-  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
-  if (!Array.isArray(args.blocks) || args.blocks.length < 1 || args.blocks.length > MAX_PLACE_BLOCKS) return fail("INVALID_ARGS", `blocks must contain 1-${MAX_PLACE_BLOCKS} entries`);
-  const seen = /* @__PURE__ */ new Set();
-  const blocks = [];
-  for (const entry of args.blocks) {
-    if (!isRecord(entry)) return fail("INVALID_ARGS", "each block must be an object");
-    const position = parseVec3i(entry.position);
-    if (!position || !isNonEmptyString(entry.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(entry.blockType)) return fail("INVALID_ARGS", "each block needs integer position and namespaced blockType");
-    const key = `${position.x},${position.y},${position.z}`;
-    if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
-    seen.add(key);
-    blocks.push({ position, blockType: entry.blockType });
+  const origin = parseVec3i(args.origin);
+  const requiredSize = parseVec3i(args.requiredSize);
+  if (!origin || !requiredSize || requiredSize.x < 1 || requiredSize.y < 1 || requiredSize.z < 1) {
+    return fail("INVALID_ARGS", "origin and positive requiredSize are required");
   }
-  const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
-  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
-  return ok({ dimension: args.dimension, blocks, batchSize, captureRollback: args.captureRollback === true });
-}
-function validateFillBlocks(args) {
-  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
-  const region = parseRegion(args.region);
-  if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
-  const volume = (region.max.x - region.min.x + 1) * (region.max.y - region.min.y + 1) * (region.max.z - region.min.z + 1);
-  if (volume > MAX_BUILD_VOLUME) return fail("REGION_TOO_LARGE", `Build volume ${volume} exceeds max ${MAX_BUILD_VOLUME}`);
-  if (!isNonEmptyString(args.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(args.blockType)) return fail("INVALID_ARGS", "blockType must be a namespaced Minecraft block id");
-  const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
-  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
-  return ok({ dimension: args.dimension, region, blockType: args.blockType, batchSize, captureRollback: args.captureRollback === true });
-}
-function asArgs(result) {
-  if (!result.ok) return result;
-  return ok(result.value);
+  if (!Number.isInteger(args.radius) || args.radius < 0 || args.radius > 128) {
+    return fail("INVALID_ARGS", "radius must be an integer 0-128");
+  }
+  if (args.maxSlope !== void 0 && (!Number.isFinite(args.maxSlope) || Number(args.maxSlope) < 0)) {
+    return fail("INVALID_ARGS", "maxSlope must be non-negative");
+  }
+  return ok({
+    dimension: args.dimension,
+    origin,
+    requiredSize,
+    radius: args.radius,
+    maxSlope: typeof args.maxSlope === "number" ? args.maxSlope : void 0
+  });
 }
 function validateInspectServerStatus(args) {
   const includeDimensions = args.includeDimensions === void 0 ? void 0 : Boolean(args.includeDimensions);
@@ -585,6 +416,61 @@ function validateInspectTags(args) {
     player: args.player === void 0 ? true : Boolean(args.player)
   });
 }
+
+// packages/shared-protocol/src/validate/tools-mutate.ts
+function validatePlaceBlocks(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  if (!Array.isArray(args.blocks) || args.blocks.length < 1 || args.blocks.length > MAX_PLACE_BLOCKS) {
+    return fail("INVALID_ARGS", `blocks must contain 1-${MAX_PLACE_BLOCKS} entries`);
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const blocks = [];
+  for (const entry of args.blocks) {
+    if (!entry || typeof entry !== "object") return fail("INVALID_ARGS", "each block must be an object");
+    const position = parseVec3i(entry.position);
+    const blockType = entry.blockType;
+    if (!position || !isNonEmptyString(blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(blockType)) {
+      return fail("INVALID_ARGS", "each block needs integer position and namespaced blockType");
+    }
+    const key = `${position.x},${position.y},${position.z}`;
+    if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
+    seen.add(key);
+    blocks.push({ position, blockType });
+  }
+  const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) {
+    return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
+  }
+  return ok({
+    dimension: args.dimension,
+    blocks,
+    batchSize,
+    captureRollback: args.captureRollback === true
+  });
+}
+function validateFillBlocks(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const region = parseRegion(args.region);
+  if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
+  const volume = (region.max.x - region.min.x + 1) * (region.max.y - region.min.y + 1) * (region.max.z - region.min.z + 1);
+  if (volume > MAX_BUILD_VOLUME) {
+    return fail("REGION_TOO_LARGE", `Build volume ${volume} exceeds max ${MAX_BUILD_VOLUME}`);
+  }
+  if (!isNonEmptyString(args.blockType) || !/^minecraft:[a-z0-9_.-]+$/.test(args.blockType)) {
+    return fail("INVALID_ARGS", "blockType must be a namespaced Minecraft block id");
+  }
+  const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) {
+    return fail("INVALID_ARGS", `batchSize must be 1-${DEFAULT_BATCH_SIZE}`);
+  }
+  return ok({
+    dimension: args.dimension,
+    region,
+    blockType: args.blockType,
+    batchSize,
+    captureRollback: args.captureRollback === true
+  });
+}
 function validateAdminRunCommand(args) {
   if (!isNonEmptyString(args.commandId)) {
     return fail("INVALID_ARGS", "commandId is required");
@@ -598,7 +484,172 @@ function validateAdminRunCommand(args) {
   });
 }
 
-// ../../packages/shared-protocol/src/factory.ts
+// packages/shared-protocol/src/validate/tools.ts
+function validateToolArguments(toolName, args) {
+  switch (toolName) {
+    case "inspect.server_status":
+      return asArgs(validateInspectServerStatus(args));
+    case "inspect.players":
+      return asArgs(validateInspectPlayers(args));
+    case "inspect.player":
+      return asArgs(validateInspectPlayer(args));
+    case "inspect.block":
+      return asArgs(validateInspectBlock(args));
+    case "inspect.region":
+      return asArgs(validateInspectRegion(args));
+    case "inspect.world_state":
+      return asArgs(validateInspectWorldState(args));
+    case "inspect.entities":
+      return asArgs(validateInspectEntities(args));
+    case "inspect.scoreboard":
+      return asArgs(validateInspectScoreboard(args));
+    case "inspect.tags":
+      return asArgs(validateInspectTags(args));
+    case "inspect.heightmap":
+      return asArgs(validateHeightmap(args));
+    case "inspect.surface":
+      return asArgs(validateHeightmap(args));
+    case "inspect.build_collision":
+      return asArgs(validateBuildCollision(args));
+    case "inspect.find_empty_area":
+      return asArgs(validateFindEmptyArea(args));
+    case "world.fill_blocks":
+      return asArgs(validateFillBlocks(args));
+    case "world.place_blocks":
+      return asArgs(validatePlaceBlocks(args));
+    case "control.cancel":
+      if (!isNonEmptyString(args.actionId)) return fail("INVALID_ARGS", "actionId is required");
+      return ok({ actionId: args.actionId });
+    case "control.emergency_disable":
+      if (typeof args.disabled !== "boolean") return fail("INVALID_ARGS", "disabled must be boolean");
+      return ok({ disabled: args.disabled });
+    case "admin.run_command":
+      return asArgs(validateAdminRunCommand(args));
+    default:
+      return fail("UNKNOWN_TOOL", `Unknown tool '${toolName}'`);
+  }
+}
+
+// packages/shared-protocol/src/validate/messages.ts
+function validateHandshakeAck(raw) {
+  const env = validateEnvelope(raw);
+  if (!env.ok) return env;
+  if (env.value.messageType !== "handshake_ack") {
+    return fail("INVALID_MESSAGE", "Expected handshake_ack");
+  }
+  if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid handshake_ack");
+  if (!isNonEmptyString(raw.acceptedProtocolVersion)) {
+    return fail("INVALID_HANDSHAKE_ACK", "acceptedProtocolVersion is required");
+  }
+  if (!isNonEmptyString(raw.serverId)) {
+    return fail("INVALID_HANDSHAKE_ACK", "serverId is required");
+  }
+  if (typeof raw.ok !== "boolean") {
+    return fail("INVALID_HANDSHAKE_ACK", "ok must be boolean");
+  }
+  let error;
+  if (raw.error !== void 0) {
+    const err = validateErrorBody(raw.error);
+    if (!err.ok) return err;
+    error = err.value;
+  }
+  return ok({
+    ...env.value,
+    messageType: "handshake_ack",
+    acceptedProtocolVersion: raw.acceptedProtocolVersion,
+    serverId: raw.serverId,
+    ok: raw.ok,
+    error
+  });
+}
+function validateActionRequest(raw) {
+  const env = validateEnvelope(raw);
+  if (!env.ok) return env;
+  if (env.value.messageType !== "action_request") {
+    return fail("INVALID_MESSAGE", "Expected action_request");
+  }
+  if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid action_request");
+  if (!isNonEmptyString(raw.actionId)) {
+    return fail("INVALID_ACTION", "actionId is required");
+  }
+  if (!isNonEmptyString(raw.idempotencyKey)) {
+    return fail("INVALID_ACTION", "idempotencyKey is required");
+  }
+  if (!isTool(raw.toolName)) {
+    return fail("UNKNOWN_TOOL", `Unknown or unsupported tool '${String(raw.toolName)}'`);
+  }
+  if (!isRecord(raw.arguments)) {
+    return fail("INVALID_ACTION", "arguments must be an object");
+  }
+  const argsCheck = validateToolArguments(raw.toolName, raw.arguments);
+  if (!argsCheck.ok) return argsCheck;
+  if (!isNonEmptyString(raw.actor)) {
+    return fail("INVALID_ACTION", "actor is required");
+  }
+  if (!isPermissionMode(raw.permissionMode)) {
+    return fail("INVALID_ACTION", "permissionMode is invalid");
+  }
+  if (!isRisk(raw.risk)) {
+    return fail("INVALID_ACTION", "risk is invalid");
+  }
+  if (isReadTool(raw.toolName) && raw.risk !== "read") {
+    return fail("INVALID_RISK", "Inspection tools require read risk");
+  }
+  if (!isReadTool(raw.toolName) && !["normal", "strong"].includes(raw.risk)) {
+    return fail("INVALID_RISK", "Mutation requires normal or strong risk");
+  }
+  if (!isNonEmptyString(raw.expiresAt) || Number.isNaN(Date.parse(raw.expiresAt))) {
+    return fail("INVALID_ACTION", "expiresAt must be ISO-8601");
+  }
+  if (raw.approval === void 0 && !isNonEmptyString(raw.noApprovalReason)) {
+    return fail("INVALID_ACTION", "approval or noApprovalReason is required");
+  }
+  let approval;
+  if (raw.approval !== void 0) {
+    if (!isRecord(raw.approval)) {
+      return fail("INVALID_ACTION", "approval must be an object");
+    }
+    if (!isNonEmptyString(raw.approval.approvalId) || !isNonEmptyString(raw.approval.approvedAt) || !isNonEmptyString(raw.approval.approvedBy) || !isNonEmptyString(raw.approval.payloadHash)) {
+      return fail("INVALID_ACTION", "approval fields are incomplete");
+    }
+    approval = {
+      approvalId: raw.approval.approvalId,
+      approvedAt: raw.approval.approvedAt,
+      approvedBy: raw.approval.approvedBy,
+      payloadHash: raw.approval.payloadHash
+    };
+  }
+  return ok({
+    ...env.value,
+    messageType: "action_request",
+    actionId: raw.actionId,
+    idempotencyKey: raw.idempotencyKey,
+    toolName: raw.toolName,
+    arguments: argsCheck.value,
+    actor: raw.actor,
+    permissionMode: raw.permissionMode,
+    risk: raw.risk,
+    approval,
+    noApprovalReason: typeof raw.noApprovalReason === "string" ? raw.noApprovalReason : void 0,
+    expiresAt: raw.expiresAt
+  });
+}
+function validatePollResponse(raw) {
+  const env = validateEnvelope(raw);
+  if (!env.ok) return env;
+  if (env.value.messageType !== "poll_response") {
+    return fail("INVALID_MESSAGE", "Expected poll_response");
+  }
+  if (!isRecord(raw)) return fail("INVALID_MESSAGE", "Invalid poll_response");
+  if (raw.action === null) {
+    return ok({ ...env.value, messageType: "poll_response", action: null });
+  }
+  const action = validateActionRequest(raw.action);
+  if (!action.ok) return action;
+  return ok({ ...env.value, messageType: "poll_response", action: action.value });
+}
+
+// packages/shared-protocol/src/factory.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
@@ -654,361 +705,8 @@ function newId(prefix = "id") {
   return `${prefix}_${Date.now().toString(36)}_${seq.toString(36)}`;
 }
 
-// src/tools/inspect/index.ts
-import { EquipmentSlot, PlayerPermissionLevel as PlayerPermissionLevel2, world as world2 } from "@minecraft/server";
-var DEFAULT_GAME_RULE_KEYS = [
-  "doDayLightCycle",
-  "doMobSpawning",
-  "doWeatherCycle",
-  "keepInventory",
-  "mobGriefing",
-  "pvp",
-  "showCoordinates",
-  "tntExplodes"
-];
-function getDimension(id) {
-  return world2.getDimension(id);
-}
-function executeInspectTool(action) {
-  const toolName = action.toolName;
-  try {
-    switch (toolName) {
-      case "inspect.server_status":
-        return inspectServerStatus(action.arguments);
-      case "inspect.players":
-        return inspectPlayers(action.arguments);
-      case "inspect.player":
-        return inspectPlayer(action.arguments);
-      case "inspect.block":
-        return inspectBlock(action.arguments);
-      case "inspect.region":
-        return inspectRegion(action.arguments);
-      case "inspect.world_state":
-        return inspectWorldState(action.arguments);
-      case "inspect.entities":
-        return inspectEntities(action.arguments);
-      case "inspect.scoreboard":
-        return inspectScoreboard(action.arguments);
-      case "inspect.tags":
-        return inspectTags(action.arguments);
-      case "inspect.heightmap":
-        return inspectHeightmap(action.arguments, false);
-      case "inspect.surface":
-        return inspectHeightmap(action.arguments, true);
-      case "inspect.build_collision":
-        return inspectBuildCollision(action.arguments);
-      case "inspect.find_empty_area":
-        return inspectFindEmptyArea(action.arguments);
-      default:
-        return {
-          ok: false,
-          code: "UNKNOWN_TOOL",
-          message: `Unsupported tool '${action.toolName}'`
-        };
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Tool execution failed";
-    return { ok: false, code: "TOOL_ERROR", message };
-  }
-}
-function surfaceAt(dimension, x, z, fromY, toY) {
-  for (let y = toY; y >= fromY; y--) {
-    const block = dimension.getBlock({ x, y, z });
-    if (block?.isValid && !block.isAir && !block.isLiquid) return { y, typeId: block.typeId };
-  }
-  return null;
-}
-function inspectHeightmap(args, includeSurface) {
-  const d = getDimension(args.dimension), samples = [];
-  const r = args.region, resolution = args.resolution ?? 1;
-  for (let x = r.min.x; x <= r.max.x; x += resolution) for (let z = r.min.z; z <= r.max.z; z += resolution) {
-    const top = surfaceAt(d, x, z, r.min.y, r.max.y);
-    samples.push({ x, z, height: top?.y ?? null, ...includeSurface ? { surfaceType: top?.typeId ?? "minecraft:air" } : {} });
-  }
-  const heights = samples.map((s) => s.height).filter((h) => typeof h === "number");
-  const min = heights.length ? Math.min(...heights) : null, max = heights.length ? Math.max(...heights) : null, average = heights.length ? heights.reduce((a, b) => a + b, 0) / heights.length : null;
-  return { ok: true, result: { dimension: args.dimension, region: r, resolution, min, max, average, slope: min === null || max === null ? null : max - min, columns: samples }, completedWork: samples.length, totalEstimatedWork: samples.length, message: `Sampled ${samples.length} terrain columns` };
-}
-function inspectBuildCollision(args) {
-  const d = getDimension(args.dimension), collisions = [];
-  let checked = 0;
-  for (let x = args.region.min.x; x <= args.region.max.x; x++) for (let y = args.region.min.y; y <= args.region.max.y; y++) for (let z = args.region.min.z; z <= args.region.max.z; z++) {
-    checked++;
-    const b = d.getBlock({ x, y, z });
-    if (b?.isValid && !b.isAir) collisions.push({ position: { x, y, z }, type: "block", blockType: b.typeId });
-  }
-  const entities = d.getEntities().filter((e) => {
-    const p = e.location;
-    return p.x >= args.region.min.x && p.x <= args.region.max.x + 1 && p.y >= args.region.min.y && p.y <= args.region.max.y + 1 && p.z >= args.region.min.z && p.z <= args.region.max.z + 1;
-  }).map((e) => ({ type: "entity", id: e.id, typeId: e.typeId }));
-  return { ok: true, result: { dimension: args.dimension, region: args.region, nonAirBlocks: collisions.length, collisions: [...collisions, ...entities], worldHeightValid: args.region.min.y >= -64 && args.region.max.y <= 319 }, completedWork: checked, totalEstimatedWork: checked, message: `Found ${collisions.length + entities.length} collision(s)` };
-}
-function inspectFindEmptyArea(args) {
-  const candidates = [];
-  const d = getDimension(args.dimension), step = Math.max(1, Math.ceil(args.requiredSize.x / 2));
-  for (let dx = -args.radius; dx <= args.radius; dx += step) for (let dz = -args.radius; dz <= args.radius; dz += step) {
-    const min = { x: args.origin.x + dx, y: args.origin.y, z: args.origin.z + dz }, max = { x: min.x + args.requiredSize.x - 1, y: min.y + args.requiredSize.y - 1, z: min.z + args.requiredSize.z - 1 };
-    const c = inspectBuildCollision({ dimension: args.dimension, region: { min, max } });
-    if (c.ok) {
-      const data = c.result;
-      const heights = [surfaceAt(d, min.x, min.z, -64, 319), surfaceAt(d, max.x, min.z, -64, 319), surfaceAt(d, min.x, max.z, -64, 319), surfaceAt(d, max.x, max.z, -64, 319)].map((s) => s?.y).filter((y) => typeof y === "number");
-      const slope = heights.length ? Math.max(...heights) - Math.min(...heights) : 999;
-      if (args.maxSlope !== void 0 && slope > args.maxSlope) continue;
-      const suitable = heights.length === 4;
-      candidates.push({ region: { min, max }, obstructions: data.nonAirBlocks, distance: Math.abs(dx) + Math.abs(dz), slope, surfaceSuitable: suitable, score: data.nonAirBlocks * 1e3 + slope * 20 + Math.abs(dx) + Math.abs(dz) + (suitable ? 0 : 500) });
-    }
-  }
-  candidates.sort((a, b) => Number(a.score) - Number(b.score));
-  return { ok: true, result: { dimension: args.dimension, requiredSize: args.requiredSize, maxSlope: args.maxSlope ?? null, candidates: candidates.slice(0, 8) }, completedWork: candidates.length, totalEstimatedWork: candidates.length, message: `Ranked ${candidates.length} terrain-suitable candidate areas` };
-}
-function inspectServerStatus(args) {
-  const players = world2.getPlayers();
-  const result = {
-    playerCount: players.length,
-    players: players.map((p) => p.name)
-  };
-  if (args.includeDimensions) {
-    result.dimensions = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"];
-  }
-  return {
-    ok: true,
-    result,
-    completedWork: 1,
-    totalEstimatedWork: 1,
-    message: "Server status collected"
-  };
-}
-function inspectPlayers(args) {
-  const filter = args.nameFilter?.toLowerCase();
-  const players = world2.getPlayers().filter((p) => {
-    if (!filter) return true;
-    return p.name.toLowerCase().includes(filter);
-  });
-  return {
-    ok: true,
-    result: {
-      count: players.length,
-      players: players.map((p) => {
-        const loc = p.location;
-        return {
-          name: p.name,
-          id: p.id,
-          dimension: p.dimension.id,
-          location: {
-            x: Math.floor(loc.x),
-            y: Math.floor(loc.y),
-            z: Math.floor(loc.z)
-          },
-          permissionLevel: p.playerPermissionLevel,
-          isOperator: p.playerPermissionLevel === PlayerPermissionLevel2.Operator
-        };
-      })
-    },
-    completedWork: players.length,
-    totalEstimatedWork: players.length,
-    message: `Found ${players.length} player(s)`
-  };
-}
-function inspectPlayer(args) {
-  const player = world2.getPlayers().find((candidate) => candidate.name === args.name);
-  if (!player) {
-    return {
-      ok: false,
-      code: "PLAYER_NOT_FOUND",
-      message: `No online player matched '${args.name}'`
-    };
-  }
-  const health = player.getComponent("minecraft:health");
-  const absorption = player.getComponent("minecraft:absorption");
-  const inventoryComponent = player.getComponent("minecraft:inventory");
-  const equippable = player.getComponent("minecraft:equippable");
-  const inventory = [];
-  const container = inventoryComponent?.container;
-  if (container?.isValid) {
-    for (let slot = 0; slot < container.size; slot++) {
-      const item = container.getItem(slot);
-      if (item) inventory.push({ slot, typeId: item.typeId, amount: item.amount });
-    }
-  }
-  const itemDetails = (slot) => {
-    const item = equippable?.getEquipment(slot);
-    return item ? { typeId: item.typeId, amount: item.amount } : null;
-  };
-  const location = player.location;
-  const effects = player.getEffects().map((effect) => ({
-    id: effect.typeId,
-    amplifier: effect.amplifier,
-    duration: effect.duration
-  }));
-  return {
-    ok: true,
-    result: {
-      name: player.name,
-      id: player.id,
-      alive: player.isValid,
-      dimension: player.dimension.id,
-      location: {
-        x: Math.floor(location.x),
-        y: Math.floor(location.y),
-        z: Math.floor(location.z)
-      },
-      gameMode: player.getGameMode(),
-      health: health ? { current: health.currentValue, max: health.effectiveMax } : null,
-      absorption: absorption?.currentValue ?? null,
-      xp: {
-        level: player.level,
-        total: player.getTotalXp(),
-        atCurrentLevel: player.xpEarnedAtCurrentLevel
-      },
-      effects,
-      inventory,
-      armor: {
-        head: itemDetails(EquipmentSlot.Head),
-        chest: itemDetails(EquipmentSlot.Chest),
-        legs: itemDetails(EquipmentSlot.Legs),
-        feet: itemDetails(EquipmentSlot.Feet)
-      },
-      isOperator: player.playerPermissionLevel === PlayerPermissionLevel2.Operator,
-      tags: player.getTags()
-    },
-    completedWork: 1,
-    totalEstimatedWork: 1,
-    message: `Detailed info collected for ${player.name}`
-  };
-}
-function inspectBlock(args) {
-  const dimension = getDimension(args.dimension);
-  const block = dimension.getBlock(args.position);
-  if (!block || !block.isValid) {
-    return {
-      ok: false,
-      code: "BLOCK_UNAVAILABLE",
-      message: "Block is unloaded or out of world",
-      details: { dimension: args.dimension, position: args.position }
-    };
-  }
-  return {
-    ok: true,
-    result: {
-      dimension: args.dimension,
-      position: { x: block.x, y: block.y, z: block.z },
-      typeId: block.typeId,
-      isAir: block.isAir,
-      isLiquid: block.isLiquid,
-      isWaterlogged: block.isWaterlogged
-    },
-    completedWork: 1,
-    totalEstimatedWork: 1,
-    message: `Block ${block.typeId}`
-  };
-}
-function inspectRegion(args) {
-  const volume = regionVolume(args.region);
-  if (volume > MAX_REGION_VOLUME) {
-    return {
-      ok: false,
-      code: "REGION_TOO_LARGE",
-      message: `Region volume ${volume} exceeds max ${MAX_REGION_VOLUME}`,
-      details: { volume, max: MAX_REGION_VOLUME, region: args.region }
-    };
-  }
-  const dimension = getDimension(args.dimension);
-  const counts = {};
-  let read = 0;
-  let unloaded = 0;
-  const { min, max } = args.region;
-  for (let x = min.x; x <= max.x; x++) {
-    for (let y = min.y; y <= max.y; y++) {
-      for (let z = min.z; z <= max.z; z++) {
-        const block = dimension.getBlock({ x, y, z });
-        if (!block || !block.isValid) {
-          unloaded += 1;
-          continue;
-        }
-        read += 1;
-        counts[block.typeId] = (counts[block.typeId] ?? 0) + 1;
-      }
-    }
-  }
-  return {
-    ok: true,
-    result: {
-      dimension: args.dimension,
-      region: args.region,
-      volume,
-      blocksRead: read,
-      unloaded,
-      typeCounts: counts
-    },
-    completedWork: read,
-    totalEstimatedWork: volume,
-    message: `Inspected ${read}/${volume} blocks`
-  };
-}
-function inspectWorldState(args) {
-  const dimensionId = args.dimension ?? "minecraft:overworld";
-  const dimension = getDimension(dimensionId);
-  const rules = world2.gameRules;
-  const ruleNames = args.rules && args.rules.length > 0 ? args.rules : [...DEFAULT_GAME_RULE_KEYS];
-  const ruleValues = {};
-  const ruleBag = rules;
-  for (const name of ruleNames) {
-    ruleValues[name] = ruleBag[name] ?? null;
-  }
-  return {
-    ok: true,
-    result: {
-      time: {
-        dimension: dimensionId,
-        timeOfDay: world2.getTimeOfDay(),
-        absoluteTime: world2.getAbsoluteTime(),
-        day: world2.getDay()
-      },
-      weather: {
-        dimension: dimensionId,
-        weather: dimension.getWeather()
-      },
-      rules: ruleValues
-    },
-    completedWork: ruleNames.length,
-    totalEstimatedWork: ruleNames.length,
-    message: `World state: time, weather, ${ruleNames.length} rule(s)`
-  };
-}
-function inspectEntities(args) {
-  const dimension = getDimension(args.dimension);
-  const filter = args.typeFilter?.toLowerCase();
-  const limit = args.limit ?? 64;
-  const entities = dimension.getEntities();
-  const matched = [];
-  for (const entity of entities) {
-    if (filter && !entity.typeId.toLowerCase().includes(filter)) continue;
-    const loc = entity.location;
-    matched.push({
-      id: entity.id,
-      typeId: entity.typeId,
-      nameTag: entity.nameTag || void 0,
-      location: {
-        x: Math.floor(loc.x),
-        y: Math.floor(loc.y),
-        z: Math.floor(loc.z)
-      }
-    });
-    if (matched.length >= limit) break;
-  }
-  return {
-    ok: true,
-    result: {
-      dimension: args.dimension,
-      count: matched.length,
-      truncated: entities.length > matched.length,
-      entities: matched
-    },
-    completedWork: matched.length,
-    totalEstimatedWork: matched.length,
-    message: `Found ${matched.length} entit${matched.length === 1 ? "y" : "ies"}`
-  };
-}
+// apps/bedrock-addon/src/tools/inspect/meta.ts
+import { world as world2 } from "@minecraft/server";
 function inspectScoreboard(args) {
   const scoreboard = world2.scoreboard;
   const objectives = scoreboard.getObjectives();
@@ -1082,8 +780,455 @@ function inspectTags(args) {
   };
 }
 
-// src/tools/mutate.ts
-import { system, world as world3 } from "@minecraft/server";
+// apps/bedrock-addon/src/tools/inspect/server.ts
+import { EquipmentSlot, PlayerPermissionLevel as PlayerPermissionLevel2, world as world3 } from "@minecraft/server";
+function inspectServerStatus(args) {
+  const players = world3.getPlayers();
+  const result = {
+    playerCount: players.length,
+    players: players.map((p) => p.name)
+  };
+  if (args.includeDimensions) {
+    result.dimensions = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"];
+  }
+  return {
+    ok: true,
+    result,
+    completedWork: 1,
+    totalEstimatedWork: 1,
+    message: "Server status collected"
+  };
+}
+function inspectPlayers(args) {
+  const filter = args.nameFilter?.toLowerCase();
+  const players = world3.getPlayers().filter((p) => {
+    if (!filter) return true;
+    return p.name.toLowerCase().includes(filter);
+  });
+  return {
+    ok: true,
+    result: {
+      count: players.length,
+      players: players.map((p) => {
+        const loc = p.location;
+        return {
+          name: p.name,
+          id: p.id,
+          dimension: p.dimension.id,
+          location: {
+            x: Math.floor(loc.x),
+            y: Math.floor(loc.y),
+            z: Math.floor(loc.z)
+          },
+          permissionLevel: p.playerPermissionLevel,
+          isOperator: p.playerPermissionLevel === PlayerPermissionLevel2.Operator
+        };
+      })
+    },
+    completedWork: players.length,
+    totalEstimatedWork: players.length,
+    message: `Found ${players.length} player(s)`
+  };
+}
+function inspectPlayer(args) {
+  const player = world3.getPlayers().find((candidate) => candidate.name === args.name);
+  if (!player) {
+    return {
+      ok: false,
+      code: "PLAYER_NOT_FOUND",
+      message: `No online player matched '${args.name}'`
+    };
+  }
+  const health = player.getComponent("minecraft:health");
+  const absorption = player.getComponent("minecraft:absorption");
+  const inventoryComponent = player.getComponent("minecraft:inventory");
+  const equippable = player.getComponent("minecraft:equippable");
+  const inventory = [];
+  const container = inventoryComponent?.container;
+  if (container?.isValid) {
+    for (let slot = 0; slot < container.size; slot++) {
+      const item = container.getItem(slot);
+      if (item) inventory.push({ slot, typeId: item.typeId, amount: item.amount });
+    }
+  }
+  const itemDetails = (slot) => {
+    const item = equippable?.getEquipment(slot);
+    return item ? { typeId: item.typeId, amount: item.amount } : null;
+  };
+  const location = player.location;
+  const effects = player.getEffects().map((effect) => ({
+    id: effect.typeId,
+    amplifier: effect.amplifier,
+    duration: effect.duration
+  }));
+  return {
+    ok: true,
+    result: {
+      name: player.name,
+      id: player.id,
+      alive: player.isValid,
+      dimension: player.dimension.id,
+      location: {
+        x: Math.floor(location.x),
+        y: Math.floor(location.y),
+        z: Math.floor(location.z)
+      },
+      gameMode: player.getGameMode(),
+      health: health ? { current: health.currentValue, max: health.effectiveMax } : null,
+      absorption: absorption?.currentValue ?? null,
+      xp: {
+        level: player.level,
+        total: player.getTotalXp(),
+        atCurrentLevel: player.xpEarnedAtCurrentLevel
+      },
+      effects,
+      inventory,
+      armor: {
+        head: itemDetails(EquipmentSlot.Head),
+        chest: itemDetails(EquipmentSlot.Chest),
+        legs: itemDetails(EquipmentSlot.Legs),
+        feet: itemDetails(EquipmentSlot.Feet)
+      },
+      isOperator: player.playerPermissionLevel === PlayerPermissionLevel2.Operator,
+      tags: player.getTags()
+    },
+    completedWork: 1,
+    totalEstimatedWork: 1,
+    message: `Detailed info collected for ${player.name}`
+  };
+}
+
+// apps/bedrock-addon/src/tools/inspect/helpers.ts
+import { world as world4 } from "@minecraft/server";
+function getDimension(id) {
+  return world4.getDimension(id);
+}
+function surfaceAt(dimension, x, z, fromY, toY) {
+  for (let y = toY; y >= fromY; y--) {
+    const block = dimension.getBlock({ x, y, z });
+    if (block?.isValid && !block.isAir && !block.isLiquid) {
+      return { y, typeId: block.typeId };
+    }
+  }
+  return null;
+}
+
+// apps/bedrock-addon/src/tools/inspect/terrain.ts
+function inspectHeightmap(args, includeSurface) {
+  const d = getDimension(args.dimension);
+  const samples = [];
+  const r = args.region;
+  const resolution = args.resolution ?? 1;
+  for (let x = r.min.x; x <= r.max.x; x += resolution) {
+    for (let z = r.min.z; z <= r.max.z; z += resolution) {
+      const top = surfaceAt(d, x, z, r.min.y, r.max.y);
+      samples.push({
+        x,
+        z,
+        height: top?.y ?? null,
+        ...includeSurface ? { surfaceType: top?.typeId ?? "minecraft:air" } : {}
+      });
+    }
+  }
+  const heights = samples.map((s) => s.height).filter((h) => typeof h === "number");
+  const min = heights.length ? Math.min(...heights) : null;
+  const max = heights.length ? Math.max(...heights) : null;
+  const average = heights.length ? heights.reduce((a, b) => a + b, 0) / heights.length : null;
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      region: r,
+      resolution,
+      min,
+      max,
+      average,
+      slope: min === null || max === null ? null : max - min,
+      columns: samples
+    },
+    completedWork: samples.length,
+    totalEstimatedWork: samples.length,
+    message: `Sampled ${samples.length} terrain columns`
+  };
+}
+function inspectBuildCollision(args) {
+  const d = getDimension(args.dimension);
+  const collisions = [];
+  let checked = 0;
+  for (let x = args.region.min.x; x <= args.region.max.x; x++) {
+    for (let y = args.region.min.y; y <= args.region.max.y; y++) {
+      for (let z = args.region.min.z; z <= args.region.max.z; z++) {
+        checked++;
+        const b = d.getBlock({ x, y, z });
+        if (b?.isValid && !b.isAir) {
+          collisions.push({ position: { x, y, z }, type: "block", blockType: b.typeId });
+        }
+      }
+    }
+  }
+  const entities = d.getEntities().filter((e) => {
+    const p = e.location;
+    return p.x >= args.region.min.x && p.x <= args.region.max.x + 1 && p.y >= args.region.min.y && p.y <= args.region.max.y + 1 && p.z >= args.region.min.z && p.z <= args.region.max.z + 1;
+  }).map((e) => ({ type: "entity", id: e.id, typeId: e.typeId }));
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      region: args.region,
+      nonAirBlocks: collisions.length,
+      collisions: [...collisions, ...entities],
+      worldHeightValid: args.region.min.y >= -64 && args.region.max.y <= 319
+    },
+    completedWork: checked,
+    totalEstimatedWork: checked,
+    message: `Found ${collisions.length + entities.length} collision(s)`
+  };
+}
+function inspectFindEmptyArea(args) {
+  const candidates = [];
+  const d = getDimension(args.dimension);
+  const step = Math.max(1, Math.ceil(args.requiredSize.x / 2));
+  for (let dx = -args.radius; dx <= args.radius; dx += step) {
+    for (let dz = -args.radius; dz <= args.radius; dz += step) {
+      const min = { x: args.origin.x + dx, y: args.origin.y, z: args.origin.z + dz };
+      const max = {
+        x: min.x + args.requiredSize.x - 1,
+        y: min.y + args.requiredSize.y - 1,
+        z: min.z + args.requiredSize.z - 1
+      };
+      const c = inspectBuildCollision({ dimension: args.dimension, region: { min, max } });
+      if (c.ok) {
+        const data = c.result;
+        const heights = [
+          surfaceAt(d, min.x, min.z, -64, 319),
+          surfaceAt(d, max.x, min.z, -64, 319),
+          surfaceAt(d, min.x, max.z, -64, 319),
+          surfaceAt(d, max.x, max.z, -64, 319)
+        ].map((s) => s?.y).filter((y) => typeof y === "number");
+        const slope = heights.length ? Math.max(...heights) - Math.min(...heights) : 999;
+        if (args.maxSlope !== void 0 && slope > args.maxSlope) continue;
+        const suitable = heights.length === 4;
+        candidates.push({
+          region: { min, max },
+          obstructions: data.nonAirBlocks,
+          distance: Math.abs(dx) + Math.abs(dz),
+          slope,
+          surfaceSuitable: suitable,
+          score: data.nonAirBlocks * 1e3 + slope * 20 + Math.abs(dx) + Math.abs(dz) + (suitable ? 0 : 500)
+        });
+      }
+    }
+  }
+  candidates.sort((a, b) => Number(a.score) - Number(b.score));
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      requiredSize: args.requiredSize,
+      maxSlope: args.maxSlope ?? null,
+      candidates: candidates.slice(0, 8)
+    },
+    completedWork: candidates.length,
+    totalEstimatedWork: candidates.length,
+    message: `Ranked ${candidates.length} terrain-suitable candidate areas`
+  };
+}
+function inspectSurface(args) {
+  return inspectHeightmap(args, true);
+}
+
+// apps/bedrock-addon/src/tools/inspect/world.ts
+import { world as world5 } from "@minecraft/server";
+var DEFAULT_GAME_RULE_KEYS = [
+  "doDayLightCycle",
+  "doMobSpawning",
+  "doWeatherCycle",
+  "keepInventory",
+  "mobGriefing",
+  "pvp",
+  "showCoordinates",
+  "tntExplodes"
+];
+function inspectBlock(args) {
+  const dimension = getDimension(args.dimension);
+  const block = dimension.getBlock(args.position);
+  if (!block || !block.isValid) {
+    return {
+      ok: false,
+      code: "BLOCK_UNAVAILABLE",
+      message: "Block is unloaded or out of world",
+      details: { dimension: args.dimension, position: args.position }
+    };
+  }
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      position: { x: block.x, y: block.y, z: block.z },
+      typeId: block.typeId,
+      isAir: block.isAir,
+      isLiquid: block.isLiquid,
+      isWaterlogged: block.isWaterlogged
+    },
+    completedWork: 1,
+    totalEstimatedWork: 1,
+    message: `Block ${block.typeId}`
+  };
+}
+function inspectRegion(args) {
+  const volume = regionVolume(args.region);
+  if (volume > MAX_REGION_VOLUME) {
+    return {
+      ok: false,
+      code: "REGION_TOO_LARGE",
+      message: `Region volume ${volume} exceeds max ${MAX_REGION_VOLUME}`,
+      details: { volume, max: MAX_REGION_VOLUME, region: args.region }
+    };
+  }
+  const dimension = getDimension(args.dimension);
+  const counts = {};
+  let read = 0;
+  let unloaded = 0;
+  const { min, max } = args.region;
+  for (let x = min.x; x <= max.x; x++) {
+    for (let y = min.y; y <= max.y; y++) {
+      for (let z = min.z; z <= max.z; z++) {
+        const block = dimension.getBlock({ x, y, z });
+        if (!block || !block.isValid) {
+          unloaded += 1;
+          continue;
+        }
+        read += 1;
+        counts[block.typeId] = (counts[block.typeId] ?? 0) + 1;
+      }
+    }
+  }
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      region: args.region,
+      volume,
+      blocksRead: read,
+      unloaded,
+      typeCounts: counts
+    },
+    completedWork: read,
+    totalEstimatedWork: volume,
+    message: `Inspected ${read}/${volume} blocks`
+  };
+}
+function inspectWorldState(args) {
+  const dimensionId = args.dimension ?? "minecraft:overworld";
+  const dimension = getDimension(dimensionId);
+  const rules = world5.gameRules;
+  const ruleNames = args.rules && args.rules.length > 0 ? args.rules : [...DEFAULT_GAME_RULE_KEYS];
+  const ruleValues = {};
+  const ruleBag = rules;
+  for (const name of ruleNames) {
+    ruleValues[name] = ruleBag[name] ?? null;
+  }
+  return {
+    ok: true,
+    result: {
+      time: {
+        dimension: dimensionId,
+        timeOfDay: world5.getTimeOfDay(),
+        absoluteTime: world5.getAbsoluteTime(),
+        day: world5.getDay()
+      },
+      weather: {
+        dimension: dimensionId,
+        weather: dimension.getWeather()
+      },
+      rules: ruleValues
+    },
+    completedWork: ruleNames.length,
+    totalEstimatedWork: ruleNames.length,
+    message: `World state: time, weather, ${ruleNames.length} rule(s)`
+  };
+}
+function inspectEntities(args) {
+  const dimension = getDimension(args.dimension);
+  const filter = args.typeFilter?.toLowerCase();
+  const limit = args.limit ?? 64;
+  const entities = dimension.getEntities();
+  const matched = [];
+  for (const entity of entities) {
+    if (filter && !entity.typeId.toLowerCase().includes(filter)) continue;
+    const loc = entity.location;
+    matched.push({
+      id: entity.id,
+      typeId: entity.typeId,
+      nameTag: entity.nameTag || void 0,
+      location: {
+        x: Math.floor(loc.x),
+        y: Math.floor(loc.y),
+        z: Math.floor(loc.z)
+      }
+    });
+    if (matched.length >= limit) break;
+  }
+  return {
+    ok: true,
+    result: {
+      dimension: args.dimension,
+      count: matched.length,
+      truncated: entities.length > matched.length,
+      entities: matched
+    },
+    completedWork: matched.length,
+    totalEstimatedWork: matched.length,
+    message: `Found ${matched.length} entit${matched.length === 1 ? "y" : "ies"}`
+  };
+}
+
+// apps/bedrock-addon/src/tools/inspect/index.ts
+function executeInspectTool(action) {
+  const toolName = action.toolName;
+  try {
+    switch (toolName) {
+      case "inspect.server_status":
+        return inspectServerStatus(action.arguments);
+      case "inspect.players":
+        return inspectPlayers(action.arguments);
+      case "inspect.player":
+        return inspectPlayer(action.arguments);
+      case "inspect.block":
+        return inspectBlock(action.arguments);
+      case "inspect.region":
+        return inspectRegion(action.arguments);
+      case "inspect.world_state":
+        return inspectWorldState(action.arguments);
+      case "inspect.entities":
+        return inspectEntities(action.arguments);
+      case "inspect.scoreboard":
+        return inspectScoreboard(action.arguments);
+      case "inspect.tags":
+        return inspectTags(action.arguments);
+      case "inspect.heightmap":
+        return inspectHeightmap(action.arguments, false);
+      case "inspect.surface":
+        return inspectSurface(action.arguments);
+      case "inspect.build_collision":
+        return inspectBuildCollision(action.arguments);
+      case "inspect.find_empty_area":
+        return inspectFindEmptyArea(action.arguments);
+      default:
+        return {
+          ok: false,
+          code: "UNKNOWN_TOOL",
+          message: `Unsupported tool '${action.toolName}'`
+        };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Tool execution failed";
+    return { ok: false, code: "TOOL_ERROR", message };
+  }
+}
+
+// apps/bedrock-addon/src/tools/mutate.ts
+import { system, world as world6 } from "@minecraft/server";
 var cancelled = /* @__PURE__ */ new Set();
 var emergencyDisabled = false;
 function isEmergencyDisabled() {
@@ -1141,7 +1286,7 @@ function executeAdminCommand(action, allowlist) {
     };
   }
   try {
-    const dimension = world3.getDimension("minecraft:overworld");
+    const dimension = world6.getDimension("minecraft:overworld");
     const result = dimension.runCommand(entry.command);
     return {
       state: "completed",
@@ -1205,7 +1350,7 @@ function startFill(action, emit, protectedRegions = []) {
     });
     return;
   }
-  const dimension = world3.getDimension(args.dimension);
+  const dimension = world6.getDimension(args.dimension);
   let completed = 0;
   const rollback = [];
   function* job() {
@@ -1289,7 +1434,7 @@ function startPlaceBlocks(action, emit, protectedRegions = []) {
     emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Protected region", error: { code: "PROTECTED_REGION", message: "Placement intersects an add-on protected region" } });
     return;
   }
-  const dimension = world3.getDimension(args.dimension);
+  const dimension = world6.getDimension(args.dimension);
   let placed = 0, skipped = 0, failed = 0;
   const rollback = [];
   function* job() {
@@ -1325,7 +1470,7 @@ function startPlaceBlocks(action, emit, protectedRegions = []) {
   system.runJob(job());
 }
 
-// src/net/client.ts
+// apps/bedrock-addon/src/net/client.ts
 import {
   HttpHeader,
   HttpRequest,
@@ -1373,7 +1518,7 @@ var ControllerClient = class {
   }
 };
 
-// src/net/session.ts
+// apps/bedrock-addon/src/net/session.ts
 var POLL_INTERVAL_TICKS = 10;
 var HEARTBEAT_INTERVAL_TICKS = 120;
 var RECONNECT_BACKOFF_TICKS = 100;
@@ -1442,7 +1587,7 @@ var ControllerSession = class {
   }
   async sendHeartbeat() {
     if (!this.sessionId) return;
-    const players = world4.getPlayers();
+    const players = world7.getPlayers();
     const body = createHeartbeat({
       sessionId: this.sessionId,
       requestId: newId("req"),
@@ -1591,7 +1736,7 @@ var ControllerSession = class {
   }
 };
 
-// src/main.ts
+// apps/bedrock-addon/src/main.ts
 console.warn("[IntelaCraft] Script loading (Phase 2 safe mutations)");
 system3.run(() => {
   const config = loadConfig();

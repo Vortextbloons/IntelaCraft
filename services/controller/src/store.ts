@@ -91,6 +91,19 @@ export class SessionStore {
     return { ok: true };
   }
 
+  /** Remove an action that has not been delivered to BDS yet. */
+  cancelQueuedAction(sessionId: string, actionId: string): boolean {
+    const queue = this.queues.get(sessionId);
+    if (!queue) return false;
+    const head = this.queueHeads.get(sessionId) ?? 0;
+    const index = queue.findIndex(
+      (action, offset) => offset >= head && action.actionId === actionId,
+    );
+    if (index < 0) return false;
+    queue.splice(index, 1);
+    return true;
+  }
+
   dequeue(sessionId: string): ActionRequestMessage | null {
     const queue = this.queues.get(sessionId);
     if (!queue || queue.length === 0) return null;

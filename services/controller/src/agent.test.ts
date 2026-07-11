@@ -43,6 +43,25 @@ function openSession(sessions: SessionStore, sessionId: string) {
 }
 
 describe("AgentRuntime read-only inspect auto-run", () => {
+  it("rejects a follow-up while the same Pi session still has active work", async () => {
+    const agent = new AgentRuntime(config());
+    const active = {
+      id: newId("task"),
+      piSessionId: "pi",
+      request: "inspect the world",
+      state: "running",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      mode: "ask",
+    };
+    (agent as any).tasks.set(active.id, active);
+
+    await assert.rejects(
+      () => agent.continueTask(active.id, { request: "send another message" }),
+      (error: any) => error?.code === "AI_BUSY" && error?.status === 409,
+    );
+  });
+
   it("creates controller sessions in Ask mode by default", () => {
     const session = createPiSession(join(dir, "pi-session-mode"), {
       id: "test",
@@ -112,7 +131,7 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     const agent = new AgentRuntime(config()); const sessions = new SessionStore(); const activity = new ActivityStore(join(dir, "audit-semantic.jsonl"), 30); const audit = new AuditLog(join(dir, "audit-semantic.jsonl"), activity); const sessionId = newId("session"); openSession(sessions, sessionId);
     const row: any = { id:newId("task"),piSessionId:"pi",request:"build wall",state:"planning",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),bdsSessionId:sessionId,actor:"pi-agent",permissionMode:"confirm_every_change" }; (agent as any).tasks.set(row.id,row);
     (agent as any).applyPlanToTask(row,{summary:"Build wall",inspection:[],actions:[{id:"wall",toolName:"build.wall",arguments:{dimension:"minecraft:overworld",from:{x:0,y:64,z:0},to:{x:2,y:64,z:0},height:2,blockType:"minecraft:stone"},summary:"Wall"}],verification:[],notes:[]},{bdsSessionId:sessionId});
-    assert.equal(row.state,"inspecting"); assert.equal(row.proposedActions.length,0); assert.equal(row.pendingReads.length,1); assert.equal(row.pendingReads[0].toolName,"inspect.build_collision"); assert.equal(row.preview.generatedBlocks,6);
+    assert.equal(row.state,"inspecting"); assert.equal(row.proposedActions.length,1); assert.equal(row.pendingReads.length,1); assert.equal(row.pendingReads[0].toolName,"inspect.build_collision"); assert.equal(row.preview.generatedBlocks,6);
     (agent as any).enqueuePendingReads(row,sessions,audit); assert.equal(sessions.dequeue(sessionId)?.toolName,"inspect.build_collision");
   });
   it("materializes inspect.players and enqueues without approval", () => {
@@ -165,7 +184,7 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     assert.equal(polled.approval, undefined);
   });
 
-  it("defers mutations until inspect completes (inspecting state)", () => {
+  it("defers mutations until inspect completes (inspecting state)", async () => {
     const agent = new AgentRuntime(config());
     const sessions = new SessionStore();
     const activity = new ActivityStore(join(dir, "audit-agent2.jsonl"), 30);
@@ -209,13 +228,19 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     );
 
     assert.equal(row.state, "inspecting");
-    assert.equal(row.proposedActions?.length, 0);
-    assert.equal(row.awaitingInspectReplan, true);
+    assert.equal(row.proposedActions?.length, 1);
+    assert.equal(row.awaitingInspectReplan, false);
     (agent as any).enqueuePendingReads(row, sessions, audit);
     assert.equal(row.state, "inspecting");
     assert.equal(row.enqueuedActionIds?.length, 1);
     const polled = sessions.dequeue(sessionId);
     assert.equal(polled?.toolName, "inspect.players");
+    await agent.onOperationEvent(polled!.actionId, "completed", audit, {
+      sessions,
+    });
+    assert.equal(row.state, "awaiting_approval");
+    (agent as any).approveTask(row.id, { approvedBy: "tester", sessions, audit });
+    assert.equal(sessions.dequeue(sessionId)?.toolName, "world.fill_blocks");
   });
 
   it("attributes results by action id and ignores duplicate terminal events", async () => {
@@ -426,11 +451,10 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     assert.equal(task.metrics.inspectionToolCalls, 1);
     assert.equal(task.metrics.inspectionCacheHits, 1);
 
-    for (let i = 0; i < 7; i++) await bounded("inspect.block", { position: { x: i, y: 64, z: 0 } });
-    await assert.rejects(
-      bounded("inspect.block", { position: { x: 99, y: 64, z: 0 } }),
-      /Inspection budget exhausted/,
-    );
-    assert.equal(executions, 8);
+    for (let i = 0; i < 15; i++) await bounded("inspect.block", { position: { x: i, y: 64, z: 0 } });
+    const exhausted = await bounded("inspect.block", { position: { x: 99, y: 64, z: 0 } });
+    assert.match(exhausted.message, /Inspection budget exhausted/);
+    assert.deepEqual(exhausted.result, { inspectionBudgetExhausted: true, maxUniqueCalls: 16 });
+    assert.equal(executions, 16);
   });
 });

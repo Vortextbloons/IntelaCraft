@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node ../../node_modules/vite/bin/vite.js build",
-    "dev": "node ../../node_modules/vite/bin/vite.js",
-    "preview": "node ../../node_modules/vite/bin/vite.js preview",
+    "build": "node ../../node_modules/vite/bin/vite.js build --configLoader runner",
+    "dev": "node ../../node_modules/vite/bin/vite.js --configLoader runner",
+    "preview": "node ../../node_modules/vite/bin/vite.js preview --configLoader runner",
     "typecheck": "node ../../node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json"
   },
   "dependencies": {

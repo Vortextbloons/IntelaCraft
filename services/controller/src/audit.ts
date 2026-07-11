@@ -1,4 +1,5 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { redactSecrets } from "@intelacraft/shared-protocol";
 import type { ActivityStore } from "./activity.js";
 
@@ -21,7 +22,10 @@ export class AuditLog {
     };
     const line = `${JSON.stringify(record)}\n`;
     this.writeQueue = this.writeQueue
-      .then(() => appendFile(this.path, line, "utf8"))
+      .then(async () => {
+        await mkdir(dirname(this.path), { recursive: true });
+        await appendFile(this.path, line, "utf8");
+      })
       .catch((err) => console.error("Failed to append audit record:", err));
   }
 }

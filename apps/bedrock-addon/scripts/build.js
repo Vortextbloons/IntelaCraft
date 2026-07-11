@@ -5,6 +5,7 @@ const ROOT = resolve(__dirname, "..");
 const REPO_ROOT = resolve(ROOT, "../..");
 
 esbuild.buildSync({
+  absWorkingDir: REPO_ROOT,
   entryPoints: [resolve(ROOT, "src/main.ts")],
   bundle: true,
   format: "esm",

@@ -43,7 +43,7 @@ const controller = spawn(
 
 const vite = spawn(
   process.execPath,
-  [join(REPO_ROOT, "node_modules", "vite", "bin", "vite.js")],
+  [join(REPO_ROOT, "node_modules", "vite", "bin", "vite.js"), "--configLoader", "runner"],
   {
     cwd: join(REPO_ROOT, "apps", "webview"),
     stdio: "inherit",

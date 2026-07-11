@@ -152,6 +152,11 @@ export interface ReasoningCapabilities {
   source: "provider" | "pi" | "override" | "unknown";
 }
 
+/** States in which the controller may still be planning or executing tools. */
+export function isTaskActive(task: Pick<Task, "state">): boolean {
+  return ["submitted", "planning", "inspecting", "running", "verifying"].includes(task.state);
+}
+
 export interface DiscoveredModel {
   id: string;
   name: string;
