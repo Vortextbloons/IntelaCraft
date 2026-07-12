@@ -6,6 +6,7 @@ import {
   type InspectEntitiesArgs,
   type InspectRegionArgs,
   type InspectWorldStateArgs,
+  type InspectVoxelSnapshotArgs,
 } from "@intelacraft/shared-protocol";
 import { getDimension, type ToolResult } from "./helpers.js";
 
@@ -89,6 +90,12 @@ export function inspectRegion(args: InspectRegionArgs): ToolResult {
     totalEstimatedWork: volume,
     message: `Inspected ${read}/${volume} blocks`,
   };
+}
+
+export function inspectVoxelSnapshot(args:InspectVoxelSnapshotArgs):ToolResult {
+ const volume=regionVolume(args.region);if(volume>MAX_REGION_VOLUME)return {ok:false,code:"REGION_TOO_LARGE",message:`Region volume ${volume} exceeds max ${MAX_REGION_VOLUME}`};const dimension=getDimension(args.dimension),palette:Array<{typeId:string;states?:Record<string,string|number|boolean>}>=[],indexes=new Map<string,number>(),blocks:number[]=[];const {min,max}=args.region;
+ for(let y=min.y;y<=max.y;y++)for(let z=min.z;z<=max.z;z++)for(let x=min.x;x<=max.x;x++){const block=dimension.getBlock({x,y,z});if(!block||!block.isValid)return {ok:false,code:"SNAPSHOT_INCOMPLETE",message:"Snapshot includes an unloaded or unavailable block",details:{position:{x,y,z}}};const states=block.permutation.getAllStates(),identity=JSON.stringify([block.typeId,Object.entries(states).sort(([a],[b])=>a.localeCompare(b))]);let index=indexes.get(identity);if(index===undefined){index=palette.length;indexes.set(identity,index);palette.push(Object.keys(states).length?{typeId:block.typeId,states}:{typeId:block.typeId});}blocks.push(index);}
+ return {ok:true,result:{version:1,dimension:args.dimension,bounds:args.region,palette,blocks,indexType:palette.length<=65536?"uint16":"uint32",capturedAt:new Date().toISOString()},completedWork:volume,totalEstimatedWork:volume,message:`Captured ${volume} voxels`};
 }
 
 export function inspectWorldState(args: InspectWorldStateArgs): ToolResult {

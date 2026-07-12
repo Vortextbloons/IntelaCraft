@@ -1,6 +1,6 @@
 # Inspection Tools
 
-All 13 read-only tools that query Minecraft world state. Each tool executes synchronously within a single server tick.
+All 14 read-only tools that query Minecraft world state. Each tool currently executes synchronously within a single server tick.
 
 ## Overview
 
@@ -12,7 +12,7 @@ Inspection tools are split across domain-cohesive sub-modules under `src/tools/i
 |--------|-------|
 | `src/tools/inspect/helpers.ts` | Shared types (`ToolResult`, `ToolSuccess`, `ToolFailure`) and utilities (`getDimension()`, `surfaceAt()`) |
 | `src/tools/inspect/server.ts` | `inspect_server_status`, `inspect_players`, `inspect_player` |
-| `src/tools/inspect/world.ts` | `inspect_block`, `inspect_region`, `inspect_world_state`, `inspect_entities` |
+| `src/tools/inspect/world.ts` | `inspect_block`, `inspect_region`, `inspect_voxel_snapshot`, `inspect_world_state`, `inspect_entities` |
 | `src/tools/inspect/terrain.ts` | `inspect_heightmap`, `inspect_surface`, `inspect_build_collision`, `inspect_find_empty_area` |
 | `src/tools/inspect/meta.ts` | `inspect_scoreboard`, `inspect_tags` |
 | `src/tools/inspect/index.ts` | Dispatcher — switches on `action.toolName`, delegates to the sub-modules above |

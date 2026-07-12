@@ -1,5 +1,9 @@
 # Controller Service
 
+The filesystem-backed Build Library stores each saved compiled build under the configured library root. Save requests reference controller task state rather than accepting client-provided expected block arrays. Metadata edits, trash, restore, and permanent deletion are storage-only operations and cannot modify Minecraft.
+
+At controller startup, trashed entries older than the configured retention period are removed. Storage responses expose the configured limit and whether it has been reached. Generated thumbnails above 150 KB are rejected and removed.
+
 Central HTTP server for IntelaCraft. Bridges the BDS (Bedrock Dedicated Server), the React webview, and the AI agent runtime.
 
 ## Tech Stack

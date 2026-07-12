@@ -1,0 +1,2 @@
+import { spawnSync } from "node:child_process";import { mkdirSync } from "node:fs";import { resolve } from "node:path";
+const mode=process.argv[2],root=resolve("services/voxel-renderer"),cache=resolve(".go-cache");mkdirSync(cache,{recursive:true});const args=mode==="build"?["build","-o","voxel-renderer.exe","."]:["test","./..."];const result=spawnSync("go",args,{cwd:root,stdio:"inherit",env:{...process.env,GOCACHE:cache}});process.exit(result.status??1);

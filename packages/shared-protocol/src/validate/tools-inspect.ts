@@ -13,7 +13,10 @@ import type {
   InspectSurfaceArgs,
   InspectTagsArgs,
   InspectWorldStateArgs,
+  InspectVoxelSnapshotArgs,
 } from "../types.js";
+import { MAX_REGION_VOLUME } from "../constants.js";
+import { regionVolume } from "../helpers.js";
 import { fail, isDimensionId, ok, type ValidateResult } from "./common.js";
 
 export function validateHeightmap(
@@ -110,6 +113,10 @@ export function validateInspectRegion(args: Record<string, unknown>): ValidateRe
     region,
     countsOnly: args.countsOnly === undefined ? true : Boolean(args.countsOnly),
   });
+}
+
+export function validateInspectVoxelSnapshot(args:Record<string,unknown>):ValidateResult<InspectVoxelSnapshotArgs>{
+ if(!isDimensionId(args.dimension))return fail("INVALID_ARGS","dimension is required");const region=parseRegion(args.region);if(!region)return fail("INVALID_ARGS","region must include min/max integer corners");const volume=regionVolume(region);if(volume>MAX_REGION_VOLUME)return fail("REGION_TOO_LARGE",`Region volume ${volume} exceeds max ${MAX_REGION_VOLUME}`);return ok({dimension:args.dimension,region});
 }
 
 export function validateInspectWorldState(

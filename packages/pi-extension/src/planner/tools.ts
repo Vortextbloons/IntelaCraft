@@ -1,6 +1,6 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { inspectionExecutors, catalogExecutors } from "../session/store.js";
+import { inspectionExecutors, catalogExecutors, buildExecutors,buildSaveExecutors } from "../session/store.js";
 import type { AgentPlan, InspectionToolName } from "../types.js";
 import { normalizePlan } from "./normalize.js";
 
@@ -18,6 +18,7 @@ const planStepSchema = Type.Object({
 });
 
 const mutationStepSchema = Type.Union([
+  Type.Object({id:Type.Optional(Type.String({minLength:1})),toolName:Type.Literal("build.compiled"),arguments:Type.Object({buildId:Type.String({minLength:1}),payloadHash:Type.String({pattern:"^[a-f0-9]{64}$"})},{additionalProperties:false}),summary:Type.String({minLength:1})},{additionalProperties:false}),
   ...[
     ["build.wall", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, height: Type.Integer({ minimum: 1 }), blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
     ["build.floor", Type.Object({ dimension: dimensionSchema, from: positionSchema, to: positionSchema, blockType: Type.String({ pattern: "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }), thickness: Type.Optional(Type.Integer({ minimum: 1 })) })],
@@ -85,6 +86,8 @@ const mutationStepSchema = Type.Union([
 ]);
 
 const regionSchema = Type.Object({ min: positionSchema, max: positionSchema });
+const buildSpecSchema=Type.Object({version:Type.Literal(1),name:Type.String({minLength:1}),type:Type.Union(["house","tower","bridge","wall","room","castle","custom"].map(v=>Type.Literal(v))),location:Type.Object({dimension:dimensionSchema,anchor:positionSchema,facing:Type.Union(["north","south","east","west"].map(v=>Type.Literal(v)))}),size:Type.Object({width:Type.Integer({minimum:1}),depth:Type.Integer({minimum:1}),height:Type.Integer({minimum:1}),floors:Type.Integer({minimum:1})}),style:Type.String({minLength:1}),palette:Type.Object({foundation:Type.String(),primary:Type.String(),secondary:Type.Optional(Type.String()),roof:Type.Optional(Type.String()),trim:Type.Optional(Type.String()),glass:Type.Optional(Type.String())}),features:Type.Array(Type.String()),terrainPolicy:Type.Union(["preserve","adapt","flatten","raise_foundation"].map(v=>Type.Literal(v))),interiorPolicy:Type.Union(["none","basic","furnished"].map(v=>Type.Literal(v))),symmetry:Type.Union(["none","partial","full"].map(v=>Type.Literal(v)))},{additionalProperties:false});
+export function createBuildTools(sessionId:string){const result=(response:{message:string;result?:unknown})=>({content:[{type:"text" as const,text:JSON.stringify(response).slice(0,12000)}],details:response}),run=async(operation:"compile"|"modify",params:Record<string,unknown>)=>{const executor=buildExecutors.get(sessionId);if(!executor)throw new Error("Build compilation is unavailable for this turn");return result(await executor(operation,params));};return [defineTool({name:"build_compile",label:"build.compile",description:"Validate and deterministically compile one whole-structure BuildSpec. This plans a pending build but never mutates Minecraft.",parameters:Type.Object({spec:buildSpecSchema}),execute:(_id,params)=>run("compile",params as Record<string,unknown>)}),defineTool({name:"build_modify",label:"build.modify",description:"Apply a bounded structured patch to the active compiled BuildSpec and recompile it without mutating Minecraft.",parameters:Type.Object({buildId:Type.String({minLength:1}),patch:Type.Object({set:Type.Optional(Type.Array(Type.Object({path:Type.String(),value:Type.Unknown()}))),addFeatures:Type.Optional(Type.Array(Type.String())),removeFeatures:Type.Optional(Type.Array(Type.String()))})}),execute:(_id,params)=>run("modify",params as Record<string,unknown>)}),defineTool({name:"build_save",label:"build.save",description:"Save the active compiled build or verified result to the controller Build Library without modifying Minecraft.",parameters:Type.Object({buildId:Type.String({minLength:1}),name:Type.Optional(Type.String()),tags:Type.Optional(Type.Array(Type.String()))}),async execute(_id,params){const executor=buildSaveExecutors.get(sessionId);if(!executor)throw new Error("Build Library saving is unavailable for this turn");return result(await executor(params as Record<string,unknown>));}})];}
 
 export function createSubmitPlanTool(onPlan: (plan: AgentPlan) => void) {
   return defineTool({
@@ -97,6 +100,8 @@ export function createSubmitPlanTool(onPlan: (plan: AgentPlan) => void) {
       "Always finish with submit_plan — never end with prose alone.",
       "Call live inspect_* tools directly for world facts. Final inspection should normally be empty.",
       "verification: inspect.* only. actions may also use build.wall, build.floor, build.roof, build.pillar, build.doorway, build.window, build.stairs, build.room, or build.path. Semantic build steps are converted deterministically and previewed.",
+      "For a whole structure in Agent mode, call build_compile with exactly one BuildSpec after gathering site context. Never generate large raw block arrays.",
+      "After build_compile succeeds, submit exactly one build.compiled action containing the returned buildId and payloadHash. Do not alter or reproduce its geometry.",
       "For greetings/capability questions use empty inspection/actions/verification arrays.",
       "Always include successCriteria and evidence arrays. Corrective/build plans need concrete observable success criteria.",
       "Set outcome explicitly: respond, propose, complete, or blocked.",
@@ -176,6 +181,7 @@ export function createInspectionTools(sessionId: string) {
     createInspectionTool(sessionId, "inspect.player", "Inspect detailed info about a specific online player.", Type.Object({ name: Type.String() })),
     createInspectionTool(sessionId, "inspect.block", "Single block at a known coordinate — returns typeId, isAir, isLiquid.", Type.Object({ dimension: dimensionSchema, position: positionSchema })),
     createInspectionTool(sessionId, "inspect.region", "Block type counts in a bounded region (max 32^3).", Type.Object({ dimension: dimensionSchema, region: regionSchema })),
+    createInspectionTool(sessionId, "inspect.voxel_snapshot", "Palette-compressed full voxel state for a bounded region (max 32^3).", Type.Object({ dimension: dimensionSchema, region: regionSchema })),
     createInspectionTool(sessionId, "inspect.world_state", "World time, weather, and game rules in one call.", Type.Object({
       dimension: Type.Optional(dimensionSchema),
       rules: Type.Optional(Type.Array(Type.String())),

@@ -1,5 +1,11 @@
 # @intelacraft/pi-extension
 
+Agent-mode Pi sessions expose `build_compile({ spec })` for whole structures. It delegates to the controller, which validates the shared specification, resolves palette identifiers when the live catalog is available, compiles deterministic state and phases, and stores an immutable payload hash. The tool never mutates Minecraft.
+
+`build_save({ buildId, name?, tags? })` saves the active controller-owned compiled build to the Build Library. It cannot accept geometry or modify the world. Successfully verified compiled builds are also automatically saved when the configured library limit permits.
+
+After compilation, Pi submits a single `build.compiled` plan action using the returned build ID and payload hash. Pi never receives authority to alter or reproduce the compiled coordinate payload.
+
 The AI planning agent runtime — the "brain" of IntelaCraft. Wraps the Pi Coding Agent SDK to create an isolated AI session that can inspect a live Minecraft world and produce structured plans.
 
 ## Overview

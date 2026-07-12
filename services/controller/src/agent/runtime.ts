@@ -54,6 +54,7 @@ import {
 } from "./task-store.js";
 import type { AiMode } from "@intelacraft/shared-protocol";
 import type { CatalogService } from "../catalog.js";
+import type { BuildLibraryStore } from "../build-library/store.js";
 import type {
   AgentContext,
   AgentTask,
@@ -76,6 +77,7 @@ export class AgentRuntime implements AgentContext {
   thinkingLevel: ThinkingLevel = "off";
   readonly mcp: AdvisoryMcpClient;
   catalog?: CatalogService;
+  builds?:BuildLibraryStore;
 
   constructor(readonly config: ControllerConfig) {
     this.mcp = new AdvisoryMcpClient(config.mcpUrl, config.mcpToken);

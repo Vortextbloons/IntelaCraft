@@ -307,9 +307,9 @@ Generic error notification.
 
 ## Tool Catalog
 
-The agent has access to 18 tools split into two categories: inspection (read-only) and mutation (world-modifying).
+The agent has access to 19 tools split into two categories: inspection (read-only) and mutation (world-modifying).
 
-### Inspection Tools (13)
+### Inspection Tools (14)
 
 These tools are always safe, read-only operations with risk class `read`.
 
@@ -393,6 +393,20 @@ Scans blocks in a rectangular region.
 | countsOnly | boolean | no | Return per-block type counts only (default: true) |
 
 **Returns:** `{ dimension, region, blockCounts: Record<string, number>, totalBlocks: number }`
+
+**Validation:** Region volume must not exceed `MAX_REGION_VOLUME` (32,768 blocks).
+
+---
+
+#### inspect.voxel_snapshot
+
+Captures a complete palette-indexed block snapshot, including permutation states, for a bounded region. Unloaded blocks fail the entire capture rather than returning a partial snapshot.
+
+```json
+{ "toolName": "inspect.voxel_snapshot", "arguments": { "dimension": "minecraft:overworld", "region": { "min": { "x": 0, "y": 64, "z": 0 }, "max": { "x": 10, "y": 70, "z": 10 } } } }
+```
+
+**Returns:** `{ version: 1, dimension, bounds, palette, blocks, indexType, capturedAt }`
 
 **Validation:** Region volume must not exceed `MAX_REGION_VOLUME` (32,768 blocks).
 
@@ -664,7 +678,7 @@ Executes an allowlisted BDS command by ID.
 ```typescript
 READ_TOOLS = [
   "inspect.server_status", "inspect.players", "inspect.player",
-  "inspect.block", "inspect.region", "inspect.world_state",
+  "inspect.block", "inspect.region", "inspect.voxel_snapshot", "inspect.world_state",
   "inspect.entities", "inspect.scoreboard", "inspect.tags",
   "inspect.heightmap", "inspect.surface", "inspect.build_collision",
   "inspect.find_empty_area"

@@ -62,5 +62,7 @@ export function publicTask(t: AgentTask) {
   delete clone.pendingReads;
   delete clone.pendingVerification;
   delete clone.actionToolNames;
+  delete clone.finalVoxelSnapshot;
+  if(clone.pendingCompiledBuild) clone.pendingCompiledBuild={...clone.pendingCompiledBuild,expected:{...clone.pendingCompiledBuild.expected,blocks:[],requiredAir:[]},phases:clone.pendingCompiledBuild.phases.map(p=>({...p,operations:[]}))};
   return clone;
 }

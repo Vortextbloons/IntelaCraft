@@ -5,6 +5,7 @@
 - Node.js v20+ (ES modules)
 - npm (workspaces)
 - Minecraft Bedrock Dedicated Server (for testing)
+- Go 1.26+ for the local voxel renderer
 
 ## Setup
 
@@ -27,6 +28,7 @@ Monorepo with npm workspaces:
 - `apps/bedrock-addon/` - Behavior + resource packs (BDS add-on)
 - `apps/webview/` - React control panel
 - `services/controller/` - HTTP controller, audit, activity API
+- `services/voxel-renderer/` - Persistent local Go renderer using newline-delimited JSON over stdio
 - `packages/shared-protocol/` - Wire protocol types, validation
 - `packages/pi-extension/` - AI planning agent runtime (planner/, session/)
 - `packages/construction/` - Semantic build tools

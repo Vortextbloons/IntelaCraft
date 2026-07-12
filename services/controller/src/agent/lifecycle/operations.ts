@@ -4,6 +4,10 @@ import type { SessionStore } from "../../store.js";
 import { appendHistory } from "../chat-history.js";
 import { resolveInspectionWaiter } from "../inspection/bridge.js";
 import { updateWorldSnapshotFromCollision } from "../inspection/materialize.js";
+import { materializeAction } from "../inspection/materialize.js";
+import { createRepairOperations,verifyBuild } from "@intelacraft/construction";
+import type { VoxelSnapshot } from "@intelacraft/shared-protocol";
+import { enqueueNextCompiledPhase } from "./approve.js";
 import { replanAfterInspection, scheduleAgentVerification } from "../planning/replan.js";
 import { persistTasks } from "../task-store.js";
 import type { AgentContext, AgentTask } from "../types.js";
@@ -92,10 +96,13 @@ async function processOperationEvent(
       if (tool === "inspect.build_collision" && detail.result) {
         updateWorldSnapshotFromCollision(ctx, task, detail.result);
       }
+      if(tool==="inspect.voxel_snapshot"&&detail.result)task.finalVoxelSnapshot=detail.result as VoxelSnapshot;
+      if(tool==="inspect.voxel_snapshot"&&detail.result&&task.pendingCompiledBuild){try{task.buildVerification=verifyBuild(task.pendingCompiledBuild.expected,detail.result as VoxelSnapshot);if(task.buildVerification.completionPercent<100&&(task.repairPasses??0)<1){const repair=createRepairOperations(task.pendingCompiledBuild.expected,task.buildVerification);if(repair.length){task.proposedActions=repair.map(operation=>materializeAction(ctx,{toolName:operation.toolName,arguments:operation.arguments as unknown as Record<string,unknown>},{bdsSessionId:task.bdsSessionId!,actor:task.actor,permissionMode:task.permissionMode},false));task.compiledActionPhases=undefined;task.compiledPhaseCursor=undefined;task.compiledApprovedBy=undefined;task.mutationActionIds=[];task.repairPasses=(task.repairPasses??0)+1;task.state="awaiting_approval";task.error=`Build verification ${task.buildVerification.completionPercent}% complete; one bounded repair pass is awaiting approval.`;task.actionToolNames={...(task.actionToolNames??{}),...Object.fromEntries(task.proposedActions.map(a=>[a.actionId,a.toolName]))};}}}catch(error){task.state="partial";task.error=error instanceof Error?error.message:"Build verification failed";}}
     }
 
     if (state === "failed") {
       task.state = "failed";
+      if(task.compiledActionPhases)task.error=`Required build phase '${task.compiledActionPhases[actionId]??"unknown"}' failed; dependent phases were not queued.`;
     } else if (state === "cancelled") {
       task.state = "cancelled";
     } else if (state === "partially_completed") {
@@ -107,6 +114,8 @@ async function processOperationEvent(
       const done = (ids: string[]) =>
         ids.length > 0 && ids.every((id) => completed.has(id));
 
+      if(task.compiledActionPhases?.[actionId]&&task.compiledPhaseCursor!==undefined&&detail?.sessions){const phase=task.pendingCompiledBuild?.phases[task.compiledPhaseCursor],phaseIds=phase?(task.proposedActions??[]).filter(a=>task.compiledActionPhases?.[a.actionId]===phase.id).map(a=>a.actionId):[];if(phaseIds.length&&phaseIds.every(id=>completed.has(id))){if(enqueueNextCompiledPhase(ctx,task,detail.sessions,audit)){task.state="running";}else if(task.pendingCompiledBuild){const action=materializeAction(ctx,{toolName:"inspect.voxel_snapshot",arguments:{dimension:task.pendingCompiledBuild.expected.dimension,region:task.pendingCompiledBuild.expected.bounds}},{bdsSessionId:task.bdsSessionId!,actor:task.actor,permissionMode:task.permissionMode},true),queued=detail.sessions.enqueue(action.sessionId,{...action,noApprovalReason:"verification_read"});if(!queued.ok){task.state="partial";task.error=queued.message;}else{task.enqueuedActionIds=[...(task.enqueuedActionIds??[]),action.actionId];task.verifyActionIds=[action.actionId];task.actionToolNames={...(task.actionToolNames??{}),[action.actionId]:action.toolName};task.state="verifying";audit.append({type:"action_enqueued",taskId:task.id,sessionId:action.sessionId,actionId:action.actionId,toolName:action.toolName,actor:action.actor,risk:action.risk,arguments:action.arguments,noApprovalReason:"verification_read"});}}}}
+
       if (task.awaitingInspectReplan && done(inspectIds) && detail?.sessions) {
         await replanAfterInspection(ctx, task.id, detail.sessions, audit);
       } else if (task.state === "inspecting" && done(inspectIds) && !task.awaitingInspectReplan) {
@@ -115,12 +124,14 @@ async function processOperationEvent(
       } else if (
         (task.state === "running" || mutationIds.length > 0) &&
         mutationIds.length > 0 &&
+        !task.compiledActionPhases &&
         done(mutationIds)
       ) {
         if (detail?.sessions) scheduleAgentVerification(ctx, task, detail.sessions, audit);
         else task.state = "partial";
       } else if (task.state === "verifying" && done(verifyIds)) {
-        task.state = "completed";
+        task.state = task.buildVerification?.completionPercent===100 ? "completed" : "partial";if(task.state==="partial"&&!task.error)task.error=`Build verification ${task.buildVerification?.completionPercent??0}% complete`;
+        if(task.state==="completed"&&ctx.builds&&task.pendingCompiledBuild&&!task.libraryBuildId){const storage=await ctx.builds.storage();if(storage.totalBytes<(ctx.config.buildLibraryLimitBytes??Infinity)){const entry=await ctx.builds.save({taskId:task.id,spec:task.pendingCompiledBuild.spec,expected:task.pendingCompiledBuild.expected,verification:task.buildVerification,final:task.finalVoxelSnapshot,tags:[task.pendingCompiledBuild.spec.type,task.pendingCompiledBuild.spec.style]});task.libraryBuildId=entry.id;audit.append({type:"task_lifecycle",taskId:task.id,state:task.state,phase:"build_library_auto_saved",buildId:entry.id});}}
       } else if (
         inspectIds.length > 0 &&
         done(inspectIds) &&

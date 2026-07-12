@@ -1,5 +1,13 @@
 # IntelaCraft API Reference
 
+## Build Library
+
+Authenticated Build Library endpoints are `GET/POST /v1/builds`, `GET/PATCH/DELETE /v1/builds/:id`, `POST /v1/builds/:id/restore`, and `DELETE /v1/builds/:id/permanent`. Saving accepts a completed or partially verified `taskId` plus optional metadata; canonical geometry always comes from controller-owned task state. Deletion is storage-only and never sends a Minecraft action.
+
+Visual endpoints are `GET /v1/builds/:id/scene`, `GET /v1/builds/:id/thumbnail`, `POST /v1/builds/:id/render`, and `POST /v1/builds/:id/regenerate-thumbnail`. Public callers cannot choose renderer filesystem paths.
+
+`GET /v1/builds/storage` reports aggregate bytes, active/trash counts, and the ten largest entries. `GET /v1/builds?trash=true` includes soft-deleted metadata for restore workflows.
+
 Base URL: `http://127.0.0.1:8787`
 
 ## Authentication

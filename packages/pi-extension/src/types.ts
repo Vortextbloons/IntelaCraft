@@ -74,6 +74,8 @@ export type InspectionExecutor = (
   arguments_: Record<string, unknown>,
 ) => Promise<{ message: string; result?: unknown }>;
 export type CatalogExecutor = (operation: "search" | "resolve", arguments_: Record<string, unknown>) => Promise<{ message: string; result?: unknown }>;
+export type BuildExecutor = (operation:"compile"|"modify",arguments_:Record<string,unknown>)=>Promise<{message:string;result?:unknown}>;
+export type BuildSaveExecutor=(arguments_:Record<string,unknown>)=>Promise<{message:string;result?:unknown}>;
 
 export interface PiSession {
   id: string;

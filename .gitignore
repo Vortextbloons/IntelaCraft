@@ -6,6 +6,8 @@ temp_release/
 dist/
 services/controller/data/
 *.tsbuildinfo
+services/voxel-renderer/*.exe
+.go-cache/
 .codex
 AGENTS.md
 spec/

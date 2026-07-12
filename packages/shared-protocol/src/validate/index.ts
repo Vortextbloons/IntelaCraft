@@ -22,3 +22,4 @@ export {
   validateProtocolMessage,
 } from "./messages.js";
 export { validateToolArguments } from "./tools.js";
+export { validateBuildSpec } from "./build-spec.js";

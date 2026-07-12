@@ -8,6 +8,8 @@ import { loadControllerEnv } from "./env.js";
 import { EventStore, SessionStore, SettingsStore } from "./store.js";
 import { AgentRuntime } from "./agent.js";
 import { CatalogService } from "./catalog.js";
+import { BuildLibraryStore } from "./build-library/store.js";
+import { cleanupTemporaryRenders,VoxelRendererClient } from "./voxel-renderer/client.js";
 
 function main(): void {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -20,11 +22,16 @@ function main(): void {
   const audit = new AuditLog(config.auditPath, activity);
   const settings = new SettingsStore(config.defaultPermissionMode);
   const catalog = new CatalogService();
+  const builds=new BuildLibraryStore(config.buildLibraryPath!);
+  void builds.purgeExpiredTrash(config.buildTrashRetentionDays);
+  const renderer=new VoxelRendererClient(config.voxelRendererPath!);
+  void cleanupTemporaryRenders(config.temporaryRenderPath!);
   const agent = new AgentRuntime(config);
   agent.catalog = catalog;
+  agent.builds=builds;
   agent.bindSettings(settings);
   agent.setThinkingLevel(settings.get().preferredThinkingLevel);
-  const server = createApp({ config, sessions, events, audit, activity, settings, agent, catalog });
+  const server = createApp({ config, sessions, events, audit, activity, settings, agent, catalog,builds,renderer });
 
   server.listen(config.port, "127.0.0.1", () => {
     const base = `http://127.0.0.1:${config.port}`;

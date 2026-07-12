@@ -4,12 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { newId } from "@intelacraft/shared-protocol";
+import { stableStringify } from "@intelacraft/shared-protocol";
+import { createHash } from "node:crypto";
+import { compileBuildSpec, createBuildPhases } from "@intelacraft/construction";
 import { createPiSession } from "@intelacraft/pi-extension";
 import { ActivityStore } from "./activity.js";
 import { AgentRuntime } from "./agent.js";
 import { AuditLog } from "./audit.js";
 import type { ControllerConfig } from "./config.js";
 import { SessionStore } from "./store.js";
+import { BuildLibraryStore } from "./build-library/store.js";
 
 const dir = mkdtempSync(join(tmpdir(), "intelacraft-agent-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -43,6 +47,7 @@ function openSession(sessions: SessionStore, sessionId: string) {
 }
 
 describe("AgentRuntime read-only inspect auto-run", () => {
+  it("persists, edits, trashes, restores, and permanently deletes library entries without BDS access",async()=>{const root=join(dir,"build-library"),store=new BuildLibraryStore(root),spec:any={version:1,name:"Library Hut",type:"house",location:{dimension:"minecraft:overworld",anchor:{x:0,y:64,z:0},facing:"north"},size:{width:5,depth:5,height:4,floors:1},style:"default",palette:{foundation:"minecraft:stone",primary:"minecraft:oak_planks"},features:["foundation"],terrainPolicy:"adapt",interiorPolicy:"none",symmetry:"partial"},expected=compileBuildSpec(spec),entry=await store.save({spec,expected,tags:["hut","hut"]});assert.equal((await store.list()).length,1);assert.deepEqual(entry.tags,["hut"]);assert.equal((await store.patch(entry.id,{favorite:true,name:"Favorite Hut"})).favorite,true);await store.trash(entry.id);assert.equal((await store.list()).length,0);await store.restore(entry.id);assert.equal((await store.list()).length,1);await store.permanent(entry.id);await assert.rejects(()=>store.get(entry.id),/not found/);});
   it("rejects a follow-up while the same Pi session still has active work", async () => {
     const agent = new AgentRuntime(config());
     const active = {
@@ -142,6 +147,8 @@ describe("AgentRuntime read-only inspect auto-run", () => {
     assert.equal(row.state,"inspecting"); assert.equal(row.proposedActions.length,1); assert.equal(row.pendingReads.length,1); assert.equal(row.pendingReads[0].toolName,"inspect.build_collision"); assert.equal(row.preview.generatedBlocks,6);
     (agent as any).enqueuePendingReads(row,sessions,audit); assert.equal(sessions.dequeue(sessionId)?.toolName,"inspect.build_collision");
   });
+  it("materializes only the exact controller-stored compiled payload",()=>{const agent=new AgentRuntime(config()),sessionId=newId("session"),spec:any={version:1,name:"hut",type:"house",location:{dimension:"minecraft:overworld",anchor:{x:0,y:64,z:0},facing:"north"},size:{width:5,depth:5,height:4,floors:1},style:"default",palette:{foundation:"minecraft:stone",primary:"minecraft:oak_planks"},features:["foundation","door"],terrainPolicy:"adapt",interiorPolicy:"none",symmetry:"partial"},expected=compileBuildSpec(spec),phases=createBuildPhases(expected),hash=createHash("sha256").update(stableStringify({expected,phases})).digest("hex"),task:any={id:newId("task"),piSessionId:"pi",request:"hut",mode:"agent",state:"planning",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),bdsSessionId:sessionId,pendingCompiledBuild:{id:"build-1",spec,expected,phases,payloadHash:hash,createdAt:new Date().toISOString(),warnings:[]}};(agent as any).tasks.set(task.id,task);const plan:any={summary:"Build hut",inspection:[],actions:[{toolName:"build.compiled",arguments:{buildId:"build-1",payloadHash:hash},summary:"Compiled hut"}],verification:[],notes:[]};(agent as any).applyPlanToTask(task,plan,{bdsSessionId:sessionId});assert.equal(task.state,"awaiting_approval");assert.ok(task.proposedActions.length>0);assert.ok(task.proposedActions.every((a:any)=>a.toolName==="world.fill_blocks"||a.toolName==="world.place_blocks"));assert.throws(()=>(agent as any).applyPlanToTask(task,{...plan,actions:[{...plan.actions[0],arguments:{buildId:"build-1",payloadHash:"0".repeat(64)}}]},{bdsSessionId:sessionId}),/hash mismatch/);});
+  it("queues compiled phases sequentially and stops dependents after failure",async()=>{const agent=new AgentRuntime(config()),sessions=new SessionStore(),sessionId=newId("session"),activity=new ActivityStore(join(dir,"audit-compiled-phase.jsonl"),30),audit=new AuditLog(join(dir,"audit-compiled-phase.jsonl"),activity);openSession(sessions,sessionId);const spec:any={version:1,name:"hut",type:"house",location:{dimension:"minecraft:overworld",anchor:{x:0,y:64,z:0},facing:"north"},size:{width:5,depth:5,height:4,floors:1},style:"default",palette:{foundation:"minecraft:stone",primary:"minecraft:oak_planks"},features:["foundation","door"],terrainPolicy:"adapt",interiorPolicy:"none",symmetry:"partial"},expected=compileBuildSpec(spec),phases=createBuildPhases(expected),hash=createHash("sha256").update(stableStringify({expected,phases})).digest("hex"),task:any={id:newId("task"),piSessionId:"pi",request:"hut",mode:"agent",state:"planning",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),bdsSessionId:sessionId,pendingCompiledBuild:{id:"build-phase",spec,expected,phases,payloadHash:hash,createdAt:new Date().toISOString(),warnings:[]}};(agent as any).tasks.set(task.id,task);(agent as any).applyPlanToTask(task,{summary:"hut",inspection:[],actions:[{toolName:"build.compiled",arguments:{buildId:"build-phase",payloadHash:hash},summary:"hut"}],verification:[],notes:[]},{bdsSessionId:sessionId});(agent as any).approveTask(task.id,{approvedBy:"tester",sessions,audit});const first=sessions.dequeue(sessionId)!;assert.ok(first);await agent.onOperationEvent(first.actionId,"failed",audit,{sessions,toolName:first.toolName,message:"phase failed"});assert.equal(task.state,"failed");assert.match(task.error,/dependent phases were not queued/);let queued;while((queued=sessions.dequeue(sessionId))!==null)assert.equal(task.compiledActionPhases[queued.actionId],task.compiledActionPhases[first.actionId]);});
   it("materializes inspect.players and enqueues without approval", () => {
     const agent = new AgentRuntime(config());
     const sessions = new SessionStore();

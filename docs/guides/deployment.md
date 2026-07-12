@@ -7,6 +7,15 @@ Start controller:
 npm run dev
 ```
 
+Build and test the Go renderer before starting the controller:
+
+```powershell
+npm run renderer:test
+npm run renderer:build
+```
+
+The controller launches the configured renderer executable as a local child process. It does not open a renderer network port.
+
 Controller serves webview at `/` and API at `/v1/*`.
 
 ## BDS Setup

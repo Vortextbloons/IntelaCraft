@@ -1,5 +1,15 @@
 # Agent Runtime
 
+Whole-structure planning binds `build_compile` to the active task. Successful compilation stores the validated specification, canonical expected state, optimized phases, warnings, and SHA-256 payload hash as `pendingCompiledBuild`. Public task responses omit full block arrays and executable operations. Compilation never bypasses approval or directly queues BDS mutations.
+
+The final plan references that state with one `build.compiled` action containing the controller-issued build ID and payload hash. Materialization rejects stale IDs and altered hashes, recomputes the hash from stored state, and expands only controller-owned phase operations. Each resulting protocol action is independently validated and approved through the existing controller policy path.
+
+Compiled actions execute one non-empty phase at a time. The next phase is approved and queued only after all actions in its dependency phase complete; a failed required phase marks the task failed and leaves dependent phases unqueued. After the final phase, the controller automatically queues `inspect.voxel_snapshot`, compares it with stored expected state, persists `BuildVerification`, and completes the task only at 100 percent. Mismatches produce a partial result and never trigger an unapproved mutation.
+
+When deterministic verification finds mismatches, the controller may materialize one bounded minimal repair set. It increments the repair-pass guard and returns to `awaiting_approval`; it never queues the repair automatically. `build_modify` accepts only allowlisted BuildSpec fields and feature changes, then validates and recompiles into a new controller ID and hash.
+
+At 100-percent deterministic verification, multi-phase compiled builds are automatically saved once when storage is below the configured limit. Explicit `build_save` supports user-selected pending builds and is idempotent per task.
+
 The AI agent runtime (`src/agent/`, ~1,800 lines total) is the most complex component. It manages the full task lifecycle from natural language input to world mutation. The code is organized into a modular directory structure with clear separation of concerns.
 
 ## Overview

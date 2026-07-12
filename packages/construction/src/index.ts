@@ -1,4 +1,11 @@
 import { normalizeRegion, type DimensionId, type RegionBounds, type Vec3i } from "@intelacraft/shared-protocol";
+export { compileBuildSpec } from "./compile-spec.js";
+export type { BuildTerrainContext,TerrainColumn } from "./compile-spec.js";
+export { optimizePlacements, type OptimizedOperation } from "./optimize-placements.js";
+export { createBuildPhases, type BuildPhase } from "./build-phases.js";
+export { verifyBuild, createRepairOperations } from "./verify-build.js";
+export { resolveBuildStyle,DEFAULT_STYLE,type BuildStyle } from "./styles/index.js";
+export { validateSpecCompatibility } from "./validate-spec.js";
 
 export interface BlockPlacement { position: Vec3i; blockType: string; }
 export interface BuildWallArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; height: number; blockType: string; thickness?: number; }

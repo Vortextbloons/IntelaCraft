@@ -184,6 +184,22 @@ materialTotals([
 
 ## Integration
 
+## BuildSpec compiler
+
+`compileBuildSpec(spec)` validates a version 1 `BuildSpec` and deterministically produces an `ExpectedWorldState`. The initial compiler supports oriented rectangular footprints, optional foundations, exterior walls, intermediate floors, gable roofs, facing-aware doors, canonical block ordering, required interior air, material totals, and impossible-dimension rejection. Existing semantic builders remain available during migration.
+
+The style registry currently includes `default`, `medieval`, `modern`, and `rustic`, controlling window spacing, floor proportions, roof overhang, porch depth, and balcony depth. Unknown styles deterministically fall back to `default`. Whole-structure compilation now materializes windows, internal stairs, balconies, chimneys, porches, interior lighting, and basic furniture when requested, while retaining the shared 8,192-block compile cap.
+
+`compileBuildSpec(spec, { terrain })` accepts bounded surface columns captured before compilation. `preserve` leaves terrain unchanged, `adapt` adds foundation supports from sampled surfaces to the anchor, `flatten` creates a level foundation plane, and `raise_foundation` moves the anchor above the highest sampled column. Identical specs and terrain columns produce identical expected state.
+
+Bridge and wall types use dedicated compilers rather than the generic enclosed-structure shell. Compatibility validation rejects unsupported feature/type combinations before geometry generation.
+
+`optimizePlacements()` deduplicates placements, skips blocks already matching a supplied snapshot, compacts adjacent X-axis runs into `world.fill_blocks`, batches remaining details into bounded `world.place_blocks` actions, and always enables rollback capture. `createBuildPhases()` emits the fixed nine-phase dependency chain and optimizes each phase independently so operations never cross phase boundaries.
+
+`verifyBuild()` decodes a complete palette-indexed `VoxelSnapshot`, verifies its dimension and bounds coverage, and compares it with `ExpectedWorldState`. It reports missing, incorrect, and unexpected blocks plus completion percentage. `createRepairOperations()` creates one minimal corrective operation set, rejects repairs above `MAX_ROLLBACK_BLOCKS`, and does not bypass controller approval or policy.
+
+The controller uses these results after phased execution. Verification is read-only; a non-100-percent result remains partial until a separately approved repair is proposed.
+
 The construction package is consumed by the Pi extension's planning system. When the AI agent generates a plan using semantic tool names (`build.wall`, `build.room`, etc.), the controller can:
 
 1. Call `generateSemantic()` to produce block placements

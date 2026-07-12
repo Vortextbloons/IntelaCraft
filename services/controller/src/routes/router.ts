@@ -37,6 +37,7 @@ import {
   handleTaskAction,
 } from "./tasks.js";
 import type { AppContext } from "./types.js";
+import { handleBuilds } from "./builds.js";
 
 export async function handleRequest(
   ctx: AppContext,
@@ -104,6 +105,10 @@ export async function handleRequest(
   if (ctx.agent && method === "GET" && path === "/v1/providers") {
     return handleListProviders(ctx, res);
   }
+  if(path==="/v1/builds"&&(method==="GET"||method==="POST"))return handleBuilds(ctx,req,res);
+  if(path==="/v1/builds/storage"&&method==="GET"){const storage=await ctx.builds?.storage();return sendJson(res,200,{storage:storage?{...storage,limitBytes:ctx.config.buildLibraryLimitBytes,limitReached:storage.totalBytes>=(ctx.config.buildLibraryLimitBytes??Infinity)}:null});}
+  const buildAction=/^\/v1\/builds\/([^/]+)\/(restore|permanent|scene|render|thumbnail|regenerate-thumbnail)$/.exec(path);if(buildAction)return handleBuilds(ctx,req,res,decodeURIComponent(buildAction[1]),buildAction[2] as any);
+  const buildMatch=/^\/v1\/builds\/([^/]+)$/.exec(path);if(buildMatch&&["GET","PATCH","DELETE"].includes(method))return handleBuilds(ctx,req,res,decodeURIComponent(buildMatch[1]));
   if (ctx.agent && method === "POST" && path === "/v1/providers") {
     return handleCreateProvider(ctx, req, res);
   }

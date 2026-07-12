@@ -1,10 +1,14 @@
-import { newId, type AiMode } from "@intelacraft/shared-protocol";
+import { createHash } from "node:crypto";
+import { newId, stableStringify, validateBuildSpec, type AiMode, type BuildSpec } from "@intelacraft/shared-protocol";
+import { compileBuildSpec, createBuildPhases } from "@intelacraft/construction";
 import {
   planWithPiSession,
   redactSecrets,
   refreshPiSessionProvider,
   setPiInspectionExecutor,
   setPiCatalogExecutor,
+  setPiBuildExecutor,
+  setPiBuildSaveExecutor,
   type AgentPlan,
   type ChatTurn,
   type PlanStreamEvent,
@@ -178,6 +182,8 @@ export async function planWithValidationRetry(
     if (operation === "search") return { message: "Catalog search complete", result: { catalogAvailable: true, ...catalog.search(input.bdsSessionId, kind, String(args.query ?? ""), typeof args.limit === "number" ? args.limit : 8) } };
     return { message: "Catalog resolution complete", result: { catalogAvailable: true, ...catalog.resolve(input.bdsSessionId, kind, String(args.id ?? "")) } };
   });
+  setPiBuildExecutor(sessionId,async(operation,args)=>{if((opts.mode??task.mode)!=="agent")throw new Error("Build tools are available only in Agent mode");let candidate:unknown=args.spec;if(operation==="modify"){const current=task.pendingCompiledBuild;if(!current||current.id!==String(args.buildId??""))throw new Error("Compiled build reference does not match the active task");const patch=args.patch as any,copy=structuredClone(current.spec) as any,allowed=new Set(["name","style","size.width","size.depth","size.height","size.floors","palette.foundation","palette.primary","palette.secondary","palette.roof","palette.trim","palette.glass","terrainPolicy","interiorPolicy","symmetry"]);for(const item of patch?.set??[]){if(!allowed.has(item.path))throw new Error(`BuildSpec patch path is not allowed: ${item.path}`);const [a,b]=item.path.split(".");if(b)copy[a][b]=item.value;else copy[a]=item.value;}const features=new Set(copy.features);for(const f of patch?.addFeatures??[])features.add(f);for(const f of patch?.removeFeatures??[])features.delete(f);copy.features=[...features];candidate=copy;}const checked=validateBuildSpec(candidate);if(!checked.valid||!checked.spec)throw new Error(`Invalid BuildSpec: ${checked.issues.map(i=>`${i.path??"spec"}: ${i.message}`).join("; ")}`);const catalog=ctx.catalog;if(catalog?.status(input.bdsSessionId).available){for(const [role,id] of Object.entries(checked.spec.palette)){if(id&&!catalog.resolve(input.bdsSessionId,"block",id).valid)throw new Error(`Palette ${role} is not present in the live block catalog: ${id}`);}}const expected=compileBuildSpec(checked.spec),phases=createBuildPhases(expected),payloadHash=createHash("sha256").update(stableStringify({expected,phases})).digest("hex"),id=newId("build");task.pendingCompiledBuild={id,spec:checked.spec,expected,phases,payloadHash,createdAt:new Date().toISOString(),warnings:catalog?.status(input.bdsSessionId).available?[]:["Live content catalog unavailable; palette ids were syntax-checked only.","Terrain snapshot not supplied; placement skipping and terrain adaptation are pending."]};return {message:operation==="modify"?"Build modified and recompiled without mutating Minecraft":"Build compiled without mutating Minecraft",result:{buildId:id,payloadHash,bounds:expected.bounds,materials:expected.materials,expectedBlocks:expected.blocks.length,requiredAir:expected.requiredAir.length,phases:phases.map(p=>({id:p.id,name:p.name,dependsOn:p.dependsOn,operations:p.operations.length,estimatedBlocks:p.estimatedBlocks})),warnings:task.pendingCompiledBuild.warnings}};});
+  setPiBuildSaveExecutor(sessionId,async args=>{if((opts.mode??task.mode)!=="agent")throw new Error("build_save is available only in Agent mode");const pending=task.pendingCompiledBuild;if(!pending||pending.id!==String(args.buildId??""))throw new Error("Compiled build reference does not match the active task");if(!ctx.builds)throw new Error("Build Library is unavailable");if(task.libraryBuildId)return {message:"Build is already saved",result:{buildId:task.libraryBuildId}};const entry=await ctx.builds.save({name:typeof args.name==="string"?args.name:undefined,taskId:task.id,spec:pending.spec,expected:pending.expected,verification:task.buildVerification,final:task.finalVoxelSnapshot,tags:Array.isArray(args.tags)?args.tags.filter((x):x is string=>typeof x==="string"):[]});task.libraryBuildId=entry.id;return {message:"Build saved without modifying Minecraft",result:{buildId:entry.id,name:entry.name,status:entry.status}};});
   let lastError: string | undefined = opts.validationError;
   // Pi may finish the prompt before its queued tool callback is dispatched.
   // Keep the bridge bound to this Pi session until a later planning turn
@@ -192,7 +198,7 @@ export async function planWithValidationRetry(
       validatePlanTools(ctx, plan, opts.mode ?? task.mode);
       // Dry-run materialize to catch arg errors before applying.
       for (const step of plan.inspection) materializeAction(ctx, step, input, true);
-      for (const step of plan.actions) materializeAction(ctx, step, input, false);
+      for (const step of plan.actions) if(step.toolName!=="build.compiled")materializeAction(ctx, step, input, false);
       for (const step of plan.verification) materializeAction(ctx, step, input, true);
       return plan;
     } catch (e) {

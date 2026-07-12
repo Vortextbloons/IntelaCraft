@@ -167,6 +167,10 @@ export interface InspectRegionArgs {
   /** When true, include per-block type counts only (default). */
   countsOnly?: boolean;
 }
+export interface InspectVoxelSnapshotArgs { dimension:DimensionId; region:RegionBounds }
+export interface VoxelSnapshotPaletteEntry { typeId:string; states?:Record<string,string|number|boolean> }
+/** JSON wire representation; consumers may hydrate blocks into Uint16Array/Uint32Array. */
+export interface VoxelSnapshot { version:1; dimension:DimensionId; bounds:RegionBounds; palette:VoxelSnapshotPaletteEntry[]; blocks:number[]; indexType:"uint16"|"uint32"; capturedAt:string }
 
 export interface InspectPlayersArgs {
   /** Optional name substring filter (case-insensitive). */

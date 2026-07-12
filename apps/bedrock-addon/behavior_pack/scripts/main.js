@@ -98,6 +98,7 @@ var READ_TOOLS = [
   "inspect.player",
   "inspect.block",
   "inspect.region",
+  "inspect.voxel_snapshot",
   "inspect.world_state",
   "inspect.entities",
   "inspect.scoreboard",
@@ -366,6 +367,14 @@ function validateInspectRegion(args) {
     countsOnly: args.countsOnly === void 0 ? true : Boolean(args.countsOnly)
   });
 }
+function validateInspectVoxelSnapshot(args) {
+  if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
+  const region = parseRegion(args.region);
+  if (!region) return fail("INVALID_ARGS", "region must include min/max integer corners");
+  const volume = regionVolume(region);
+  if (volume > MAX_REGION_VOLUME) return fail("REGION_TOO_LARGE", `Region volume ${volume} exceeds max ${MAX_REGION_VOLUME}`);
+  return ok({ dimension: args.dimension, region });
+}
 function validateInspectWorldState(args) {
   if (args.dimension !== void 0 && !isDimensionId(args.dimension)) {
     return fail("INVALID_ARGS", "dimension is invalid");
@@ -498,6 +507,8 @@ function validateToolArguments(toolName, args) {
       return asArgs(validateInspectBlock(args));
     case "inspect.region":
       return asArgs(validateInspectRegion(args));
+    case "inspect.voxel_snapshot":
+      return asArgs(validateInspectVoxelSnapshot(args));
     case "inspect.world_state":
       return asArgs(validateInspectWorldState(args));
     case "inspect.entities":
@@ -1122,6 +1133,25 @@ function inspectRegion(args) {
     message: `Inspected ${read}/${volume} blocks`
   };
 }
+function inspectVoxelSnapshot(args) {
+  const volume = regionVolume(args.region);
+  if (volume > MAX_REGION_VOLUME) return { ok: false, code: "REGION_TOO_LARGE", message: `Region volume ${volume} exceeds max ${MAX_REGION_VOLUME}` };
+  const dimension = getDimension(args.dimension), palette = [], indexes = /* @__PURE__ */ new Map(), blocks = [];
+  const { min, max } = args.region;
+  for (let y = min.y; y <= max.y; y++) for (let z = min.z; z <= max.z; z++) for (let x = min.x; x <= max.x; x++) {
+    const block = dimension.getBlock({ x, y, z });
+    if (!block || !block.isValid) return { ok: false, code: "SNAPSHOT_INCOMPLETE", message: "Snapshot includes an unloaded or unavailable block", details: { position: { x, y, z } } };
+    const states = block.permutation.getAllStates(), identity = JSON.stringify([block.typeId, Object.entries(states).sort(([a], [b]) => a.localeCompare(b))]);
+    let index = indexes.get(identity);
+    if (index === void 0) {
+      index = palette.length;
+      indexes.set(identity, index);
+      palette.push(Object.keys(states).length ? { typeId: block.typeId, states } : { typeId: block.typeId });
+    }
+    blocks.push(index);
+  }
+  return { ok: true, result: { version: 1, dimension: args.dimension, bounds: args.region, palette, blocks, indexType: palette.length <= 65536 ? "uint16" : "uint32", capturedAt: (/* @__PURE__ */ new Date()).toISOString() }, completedWork: volume, totalEstimatedWork: volume, message: `Captured ${volume} voxels` };
+}
 function inspectWorldState(args) {
   const dimensionId = args.dimension ?? "minecraft:overworld";
   const dimension = getDimension(dimensionId);
@@ -1202,6 +1232,8 @@ function executeInspectTool(action) {
         return inspectBlock(action.arguments);
       case "inspect.region":
         return inspectRegion(action.arguments);
+      case "inspect.voxel_snapshot":
+        return inspectVoxelSnapshot(action.arguments);
       case "inspect.world_state":
         return inspectWorldState(action.arguments);
       case "inspect.entities":

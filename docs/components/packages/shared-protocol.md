@@ -60,6 +60,12 @@ type AiMode = "ask" | "agent";
 
 ## Message Types
 
+## Build specifications
+
+`BuildSpec` is the versioned, shared contract for whole-structure design intent. `validateBuildSpec()` fails closed on malformed coordinates, unsupported enum values, invalid block identifiers, impossible floor counts, duplicate features, and bounding volumes above `MAX_BUILD_VOLUME`. `ExpectedWorldState` is the canonical compiled block and required-air representation shared by preview, execution, and verification.
+
+`BuildVerification` is the shared comparison result for expected and captured world state, including missing, incorrect, and unexpected placements and a deterministic completion percentage.
+
 All messages extend `MessageEnvelope`:
 
 ```typescript

@@ -41,6 +41,9 @@ All IntelaCraft-specific variables are prefixed with `INTELACRAFT_`. Set these i
 |----------|-------------|---------|------|---------|
 | `INTELACRAFT_PI_STORAGE_PATH` | Directory for Pi session data | `./data/pi` | file path | `/var/lib/intelacraft/pi` |
 | `INTELACRAFT_TASKS_PATH` | Path to persisted tasks JSON file | `./data/tasks.json` | file path | `/var/lib/intelacraft/tasks.json` |
+| `INTELACRAFT_BUILD_LIBRARY_PATH` | Root directory for isolated Build Library entries | `./data/builds` | directory path | `/var/lib/intelacraft/builds` |
+| `INTELACRAFT_BUILD_LIBRARY_LIMIT_BYTES` | Automatic-save storage ceiling | `5368709120` | positive bytes | `10737418240` |
+| `INTELACRAFT_BUILD_TRASH_RETENTION_DAYS` | Age before trashed builds are permanently removed at startup | `30` | non-negative days | `14` |
 
 ### MCP (Optional)
 

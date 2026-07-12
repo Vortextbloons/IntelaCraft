@@ -21,6 +21,8 @@
     "load-smoke": "node scripts/load-smoke.mjs",
     "combine-docs": "node scripts/combine-docs.mjs",
     "agent-eval": "npm run build -w @intelacraft/shared-protocol && npm run build -w @intelacraft/pi-extension && node scripts/agent-eval.mjs"
+    ,"renderer:build":"node scripts/renderer.mjs build"
+    ,"renderer:test":"node scripts/renderer.mjs test"
   },
   "devDependencies": {
     "typescript": "^7.0.2"

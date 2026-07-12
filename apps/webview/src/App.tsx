@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import type { Task } from "./types";
 import { Transcript } from "./components/Transcript";
 import { ActivityDrawer } from "./features/Drawers/ActivityDrawer";
@@ -16,6 +16,7 @@ import { useScroll } from "./hooks/useScroll";
 import { useSettings } from "./hooks/useSettings";
 import { useTasks } from "./hooks/useTasks";
 import { getAiMode } from "./lib/chat-helpers";
+const BuildLibrary=lazy(()=>import("./components/BuildLibrary").then(module=>({default:module.BuildLibrary})));
 import { isTaskActive, type Health, type Provider, type ThinkingLevel, type ToolRun } from "./types";
 
 export function App() {
@@ -30,6 +31,7 @@ export function App() {
   const [stickToBottom, setStickToBottom] = useState(true);
   const [progressByTask, setProgressByTask] = useState<Record<string, ToolRun>>({});
   const [busy, setBusy] = useState(false);
+  const [libraryOpen,setLibraryOpen]=useState(false);
 
   const streamAbortRef = useRef<AbortController | null>(null);
   const tasksRef = useRef<Task[]>([]);
@@ -159,6 +161,7 @@ export function App() {
 
   return (
     <div className="chat-app">
+      {libraryOpen&&<Suspense fallback={<div className="library-overlay library-empty">Loading Build Library…</div>}><BuildLibrary onClose={()=>setLibraryOpen(false)}/></Suspense>}
       <TaskList
         tasks={tasks.tasks}
         selectedTaskId={conversations.selectedTaskId}
@@ -178,6 +181,7 @@ export function App() {
 
       <div className="workspace">
         <div className="workspace-main">
+          <button className="library-open-button" onClick={()=>setLibraryOpen(true)}>Build Library</button>
           {auth.error && <div className="banner-error">{auth.error}</div>}
           {health && !health.bdsConnected && (
             <div className="banner-warn">

@@ -1,4 +1,4 @@
-import type { ActionRequestMessage, AiMode, PermissionMode } from "@intelacraft/shared-protocol";
+import type { ActionRequestMessage, AiMode, BuildSpec, BuildVerification, ExpectedWorldState, PermissionMode, VoxelSnapshot } from "@intelacraft/shared-protocol";
 import type {
   AgentPlan,
   ChatTurn,
@@ -10,11 +10,12 @@ import type {
   ThinkingLevel,
 } from "@intelacraft/pi-extension";
 import type { AdvisoryMcpClient } from "@intelacraft/mcp-connection";
-import type { BuildPreview, WorldSnapshot } from "@intelacraft/construction";
+import type { BuildPhase, BuildPreview, WorldSnapshot } from "@intelacraft/construction";
 import type { ControllerConfig } from "../config.js";
 import type { SessionStore, SettingsStore } from "../store.js";
 import type { AuditLog } from "../audit.js";
 import type { CatalogService } from "../catalog.js";
+import type { BuildLibraryStore } from "../build-library/store.js";
 
 export type AgentTaskState =
   | "submitted"
@@ -40,6 +41,14 @@ export interface AgentTask {
   plan?: AgentPlan;
   preview?: BuildPreview;
   worldSnapshot?: WorldSnapshot;
+  pendingCompiledBuild?:{id:string;spec:BuildSpec;expected:ExpectedWorldState;phases:BuildPhase[];payloadHash:string;createdAt:string;warnings:string[]};
+  compiledActionPhases?:Record<string,string>;
+  compiledPhaseCursor?:number;
+  compiledApprovedBy?:string;
+  buildVerification?:BuildVerification;
+  finalVoxelSnapshot?:VoxelSnapshot;
+  repairPasses?:number;
+  libraryBuildId?:string;
   /** Mutations awaiting approval, or inspect-only actions once materialized. */
   proposedActions?: ActionRequestMessage[];
   /** Read-only inspection actions auto-enqueued without approval. */
@@ -98,6 +107,7 @@ export interface AgentContext {
   thinkingLevel: ThinkingLevel;
   mcp: AdvisoryMcpClient;
   catalog?: CatalogService;
+  builds?:BuildLibraryStore;
   verifyAfterMutations(taskId: string, sessions: SessionStore, audit: AuditLog): Promise<void>;
 }
 

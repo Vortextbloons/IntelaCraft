@@ -17,7 +17,16 @@ import {
   validateCatalogSnapshot,
   validateProtocolMessage,
   validateToolArguments,
+  validateBuildSpec,
 } from "./index.js";
+
+describe("BuildSpec", () => {
+  const valid = { version:1, name:"Cottage", type:"house", location:{dimension:"minecraft:overworld",anchor:{x:0,y:64,z:0},facing:"north"}, size:{width:9,depth:7,height:6,floors:2}, style:"default", palette:{foundation:"minecraft:stone",primary:"minecraft:oak_planks"}, features:["foundation","door"], terrainPolicy:"adapt", interiorPolicy:"basic", symmetry:"partial" };
+  it("accepts a valid version 1 specification", () => { const result=validateBuildSpec(valid); assert.equal(result.valid,true); assert.deepEqual(result.spec,valid); });
+  it("rejects malformed and unsafe bounds", () => { const result=validateBuildSpec({...valid,size:{width:33,depth:33,height:33,floors:34},palette:{foundation:"stone",primary:"minecraft:stone"}}); assert.equal(result.valid,false); assert.ok(result.issues.some(i=>i.code==="VOLUME_LIMIT")); assert.ok(result.issues.some(i=>i.code==="INVALID_BLOCK_ID")); assert.ok(result.issues.some(i=>i.code==="FLOORS_EXCEED_HEIGHT")); });
+});
+
+describe("voxel snapshots",()=>{it("normalizes bounded arguments and rejects oversized regions",()=>{const ok=validateToolArguments("inspect.voxel_snapshot",{dimension:"minecraft:overworld",region:{min:{x:2,y:2,z:2},max:{x:0,y:0,z:0}}});assert.equal(ok.ok,true);const tooLarge=validateToolArguments("inspect.voxel_snapshot",{dimension:"minecraft:overworld",region:{min:{x:0,y:0,z:0},max:{x:32,y:32,z:32}}});assert.equal(tooLarge.ok,false);if(!tooLarge.ok)assert.equal(tooLarge.error.code,"REGION_TOO_LARGE");});});
 
 describe("protocol version", () => {
   it("parses semver", () => {

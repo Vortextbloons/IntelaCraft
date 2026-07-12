@@ -1,5 +1,7 @@
 # IntelaCraft Webview
 
+The Build Library is loaded on demand and supports searching saved builds, favorites, trash, thumbnail regeneration, and interactive controller-generated scenes. Its Three.js viewer provides rotate, pan, zoom, height-layer filtering, deterministic material colors, and click-to-inspect block coordinates without increasing the initial chat bundle.
+
 The IntelaCraft webview is a single-page React application that serves as the user-facing control panel for interacting with the AI agent and managing a Minecraft Bedrock Dedicated Server (BDS).
 
 ## Tech Stack

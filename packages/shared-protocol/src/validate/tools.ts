@@ -10,6 +10,7 @@ import {
   validateInspectPlayer,
   validateInspectPlayers,
   validateInspectRegion,
+  validateInspectVoxelSnapshot,
   validateInspectScoreboard,
   validateInspectServerStatus,
   validateInspectTags,
@@ -36,6 +37,8 @@ export function validateToolArguments(
       return asArgs(validateInspectBlock(args));
     case "inspect.region":
       return asArgs(validateInspectRegion(args));
+    case "inspect.voxel_snapshot":
+      return asArgs(validateInspectVoxelSnapshot(args));
     case "inspect.world_state":
       return asArgs(validateInspectWorldState(args));
     case "inspect.entities":

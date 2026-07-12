@@ -1,5 +1,11 @@
 # Webview Components
 
+## BuildLibrary and BuildViewer
+
+`BuildLibrary` owns authenticated library API state, search, selection, metadata actions, trash, and thumbnail regeneration. `BuildViewer` consumes only processed scene blocks from the controller and uses Three.js `OrbitControls` for interactive inspection. Both are lazy-loaded from the App composition root.
+
+Viewer controls include perspective/orthographic projection, front-right/front-left/back/top presets, height slicing, roof and material visibility, bounds, and block picking. Library management includes active/trash views, restore, and aggregate storage display.
+
 All React components that make up the IntelaCraft webview control panel.
 
 ## Component Hierarchy

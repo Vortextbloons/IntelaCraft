@@ -6,6 +6,7 @@ import {
   type AiMode,
   type RiskClass,
   type ToolName,
+  stableStringify,
 } from "@intelacraft/shared-protocol";
 import {
   generateSemantic,
@@ -19,6 +20,7 @@ import { redactSecrets } from "@intelacraft/pi-extension";
 import { classify } from "../../policy.js";
 import type { SessionStore } from "../../store.js";
 import type { AgentContext, AgentTask, PlanInput } from "../types.js";
+import { createHash } from "node:crypto";
 
 export function buildWorldContext(ctx: AgentContext, sessions?: SessionStore, clientWorld?: unknown): unknown {
   const live = sessions?.listSessions()?.[0];
@@ -52,6 +54,7 @@ export function materializeAction(
   let tool = step.toolName as ToolName;
   let args = step.arguments;
   if (step.toolName.startsWith("build.")) {
+    if(step.toolName==="build.compiled")throw new Error("Compiled build references must be materialized from controller state");
     const build = generateSemantic(step.toolName as SemanticToolName, args);
     tool = "world.place_blocks";
     args = { dimension: build.dimension, blocks: build.blocks, captureRollback: true };
@@ -104,7 +107,8 @@ export function validatePlanTools(ctx: AgentContext, plan: AgentPlan, mode: AiMo
       throw new Error("Inspection and verification steps must be read-only");
     }
   }
-  const semantic = plan.actions.filter((step) => step.toolName.startsWith("build."));
+  const compiled=plan.actions.filter(step=>step.toolName==="build.compiled");if(compiled.length>1)throw new Error("A plan may reference only one compiled build");if(compiled.length&&plan.actions.length!==1)throw new Error("A compiled build cannot be combined with other mutations");
+  const semantic = plan.actions.filter((step) => step.toolName.startsWith("build.")&&step.toolName!=="build.compiled");
   if (semantic.length) {
     const validation = validateBuildPlan({
       summary: plan.summary,
@@ -137,8 +141,8 @@ export function applyPlanToTask(
     if (!v.ok) throw new Error(`Invalid ${step.toolName}: ${v.error.message}`);
   }
   const reads = plan.inspection.map((step) => materializeAction(ctx, step, input, true));
-  const proposed = plan.actions.map((a) => materializeAction(ctx, a, input, false));
-  const generatedBuilds = plan.actions.filter((a) => a.toolName.startsWith("build.")).map((a) => generateSemantic(a.toolName as SemanticToolName, a.arguments));
+  const proposed=plan.actions.flatMap(a=>{if(a.toolName!=="build.compiled")return [materializeAction(ctx,a,input,false)];const pending=task.pendingCompiledBuild,buildId=String(a.arguments.buildId??""),hash=String(a.arguments.payloadHash??"");if(!pending||pending.id!==buildId)throw new Error("Compiled build reference does not match the active task");const currentHash=createHash("sha256").update(stableStringify({expected:pending.expected,phases:pending.phases})).digest("hex");if(hash!==pending.payloadHash||hash!==currentHash)throw new Error("Compiled build payload hash mismatch");return pending.phases.flatMap(phase=>phase.operations.map(operation=>materializeAction(ctx,{toolName:operation.toolName,arguments:operation.arguments as unknown as Record<string,unknown>},input,false)));});
+  const generatedBuilds = plan.actions.filter((a) => a.toolName.startsWith("build.")&&a.toolName!=="build.compiled").map((a) => generateSemantic(a.toolName as SemanticToolName, a.arguments));
   const detailed = generatedBuilds.flatMap((build) => build.blocks);
   // Semantic geometry must be checked against the live server immediately before approval.
   // The normal inspect/replan gate returns these observations to Pi for one correction pass.
@@ -146,6 +150,7 @@ export function applyPlanToTask(
     reads.push(materializeAction(ctx, { toolName: "inspect.build_collision", arguments: { dimension: build.dimension, region: build.bounds } }, input, true));
   }
   task.preview = detailed.length ? previewPlacements({ dimension: generatedBuilds[0].dimension, blocks: detailed, bounds: { min: { x: Math.min(...detailed.map(b=>b.position.x)), y: Math.min(...detailed.map(b=>b.position.y)), z: Math.min(...detailed.map(b=>b.position.z)) }, max: { x: Math.max(...detailed.map(b=>b.position.x)), y: Math.max(...detailed.map(b=>b.position.y)), z: Math.max(...detailed.map(b=>b.position.z)) } } }, { protectedRegions: ctx.config.protectedRegions as any, snapshot: task.worldSnapshot }) : undefined;
+  if(plan.actions.some(a=>a.toolName==="build.compiled")&&task.pendingCompiledBuild){const expected=task.pendingCompiledBuild.expected;task.preview=previewPlacements({dimension:expected.dimension,blocks:expected.blocks,bounds:expected.bounds},{protectedRegions:ctx.config.protectedRegions as any,snapshot:task.worldSnapshot});}
   if (plan.build && task.preview) {
     plan.build.estimates = { blocksChanged: task.preview.generatedBlocks, operations: proposed.length };
     plan.build.warnings = task.preview.warnings;
@@ -155,6 +160,8 @@ export function applyPlanToTask(
   task.pendingReads = reads;
   task.pendingVerification = verification;
   task.proposedActions = proposed;
+  task.compiledActionPhases=undefined;task.compiledPhaseCursor=undefined;task.compiledApprovedBy=undefined;
+  if(plan.actions.some(a=>a.toolName==="build.compiled")&&task.pendingCompiledBuild){const phaseMap:Record<string,string>={};let offset=0;for(const phase of task.pendingCompiledBuild.phases)for(let i=0;i<phase.operations.length;i++)phaseMap[proposed[offset++]!.actionId]=phase.id;task.compiledActionPhases=phaseMap;task.compiledPhaseCursor=-1;}
   task.awaitingInspectReplan = false;
   task.inspectActionIds = [];
   task.mutationActionIds = [];

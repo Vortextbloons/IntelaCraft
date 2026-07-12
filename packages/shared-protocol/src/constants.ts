@@ -61,6 +61,7 @@ export const READ_TOOLS = [
   "inspect.player",
   "inspect.block",
   "inspect.region",
+  "inspect.voxel_snapshot",
   "inspect.world_state",
   "inspect.entities",
   "inspect.scoreboard",

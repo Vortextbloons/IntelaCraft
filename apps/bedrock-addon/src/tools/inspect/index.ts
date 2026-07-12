@@ -13,6 +13,7 @@ import type {
   InspectSurfaceArgs,
   InspectTagsArgs,
   InspectWorldStateArgs,
+  InspectVoxelSnapshotArgs,
   ReadToolName,
 } from "@intelacraft/shared-protocol";
 import { inspectScoreboard, inspectTags } from "./meta.js";
@@ -24,7 +25,7 @@ import {
   inspectSurface,
 } from "./terrain.js";
 import type { ToolResult } from "./helpers.js";
-import { inspectBlock, inspectEntities, inspectRegion, inspectWorldState } from "./world.js";
+import { inspectBlock, inspectEntities, inspectRegion, inspectVoxelSnapshot, inspectWorldState } from "./world.js";
 
 export type { ToolResult, ToolSuccess, ToolFailure } from "./helpers.js";
 
@@ -42,6 +43,8 @@ export function executeInspectTool(action: ActionRequestMessage): ToolResult {
         return inspectBlock(action.arguments as unknown as InspectBlockArgs);
       case "inspect.region":
         return inspectRegion(action.arguments as unknown as InspectRegionArgs);
+      case "inspect.voxel_snapshot":
+        return inspectVoxelSnapshot(action.arguments as unknown as InspectVoxelSnapshotArgs);
       case "inspect.world_state":
         return inspectWorldState(action.arguments as unknown as InspectWorldStateArgs);
       case "inspect.entities":
