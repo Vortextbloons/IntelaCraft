@@ -1,4 +1,5 @@
-const { execSync } = require("child_process");
+const { execFileSync, execSync } = require("child_process");
+const { createHash } = require("crypto");
 const { existsSync, cpSync, mkdirSync, rmSync, readFileSync, renameSync } = require("fs");
 const { resolve, join } = require("path");
 
@@ -26,11 +27,25 @@ function readEnv(key) {
 }
 
 function build() {
-  // TypeScript: build handled by esbuild via package.json
+  execFileSync(process.execPath, [join(ROOT, "scripts", "build.js")], {
+    cwd: ROOT,
+    stdio: "inherit",
+  });
+}
+
+function fileHash(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function verifyCopy(source, destination) {
+  if (!existsSync(destination) || fileHash(source) !== fileHash(destination)) {
+    throw new Error(`Deployment verification failed for ${destination}`);
+  }
 }
 
 function dev() {
-  if (!process.env.SKIP_BUILD) build();
+  const skipBuild = process.env.SKIP_BUILD || process.argv.includes("--skip-build");
+  if (!skipBuild) build();
   const mcDev = readEnv("DEPLOY_PATH");
   if (!mcDev) {
     console.error("DEPLOY_PATH not set in .env");
@@ -46,6 +61,10 @@ function dev() {
   mkdirSync(rDest, { recursive: true });
   cpSync(RP_SRC, rDest, { recursive: true, force: true });
   console.log("Deployed RP: " + rDest);
+  verifyCopy(join(BP_SRC, "scripts", "main.js"), join(bDest, "scripts", "main.js"));
+  verifyCopy(join(BP_SRC, "manifest.json"), join(bDest, "manifest.json"));
+  verifyCopy(join(RP_SRC, "manifest.json"), join(rDest, "manifest.json"));
+  console.log("Verified deployed pack files match the generated pack");
 }
 
 function prod() {

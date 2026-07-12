@@ -1,4 +1,4 @@
-# Phase 4 Security Review
+# Security Review
 
 ## Trust boundaries
 

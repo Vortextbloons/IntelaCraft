@@ -65,6 +65,8 @@ All IntelaCraft-specific variables are prefixed with `INTELACRAFT_`. Set these i
 |----------|-------------|---------|------|---------|
 | `BDS_PATH` | Path to the BDS installation directory | *none* (required for deploy) | file path | `/opt/bedrock-server` |
 | `INTELACRAFT_WEBVIEW_DIST` | Path to the built webview dist directory | `apps/webview/dist` | file path | `/var/lib/intelacraft/webview` |
+| `INTELACRAFT_VOXEL_RENDERER_PATH` | Path to the Go voxel renderer executable | `./services/voxel-renderer/voxel-renderer.exe` | file path | `/usr/local/bin/voxel-renderer` |
+| `INTELACRAFT_TEMP_RENDER_PATH` | Directory for temporary render output files | `./data/tmp/renders` | directory path | `/tmp/intelacraft-renders` |
 
 ---
 

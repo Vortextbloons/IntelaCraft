@@ -69,7 +69,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControllerConf
     providersPath: resolve(env.INTELACRAFT_PROVIDERS_PATH ?? "./data/providers.json"),
     tasksPath: resolve(env.INTELACRAFT_TASKS_PATH ?? "./data/tasks.json"),
     buildLibraryPath:resolve(env.INTELACRAFT_BUILD_LIBRARY_PATH??"./data/builds"),
-    voxelRendererPath:resolve(env.INTELACRAFT_VOXEL_RENDERER_PATH??"./services/voxel-renderer/voxel-renderer.exe"),
+    voxelRendererPath:env.INTELACRAFT_VOXEL_RENDERER_PATH
+      ? resolve(env.INTELACRAFT_VOXEL_RENDERER_PATH)
+      : resolve(dirname(fileURLToPath(import.meta.url)), "../../../services/voxel-renderer/voxel-renderer.exe"),
     temporaryRenderPath:resolve(env.INTELACRAFT_TEMP_RENDER_PATH??"./data/tmp/renders"),
     buildLibraryLimitBytes:Number(env.INTELACRAFT_BUILD_LIBRARY_LIMIT_BYTES??5*1024*1024*1024),
     buildTrashRetentionDays:Number(env.INTELACRAFT_BUILD_TRASH_RETENTION_DAYS??30),

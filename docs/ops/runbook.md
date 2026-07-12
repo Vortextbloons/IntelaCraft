@@ -115,7 +115,7 @@ The audit file (`INTELACRAFT_AUDIT_PATH`, default `./data/audit.jsonl`) records 
 | Item | Default path | Notes |
 |------|-------------|-------|
 | Audit log | `./data/audit.jsonl` | JSONL, append-only; copy before `DELETE /v1/activity` |
-| Activity store | `./data/activity.jsonl` | JSONL, current session activity |
+| Activity store | `./data/audit.jsonl` | JSONL, append-only activity records (same file as audit log) |
 | Provider profiles | `./data/providers.json` | API key references (keys are environment variables) |
 | Pi session data | `./data/pi/` | Planning agent working state |
 | BDS configuration | `apps/bedrock-addon/.env` | Environment variables and deploy settings |

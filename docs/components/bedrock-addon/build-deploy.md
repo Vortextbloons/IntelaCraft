@@ -53,6 +53,7 @@ scripts/deploy.js dev
 4. Copies `behavior_pack/` contents to destination
 5. Removes and recreates `development_resource_packs/IntelaCraft_rp/`
 6. Copies `resource_pack/` contents to destination
+7. Verifies SHA-256 hashes for the deployed script and manifests
 
 **Required `.env` variable**:
 

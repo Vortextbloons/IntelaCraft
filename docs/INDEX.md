@@ -97,4 +97,4 @@ Runbook, security analysis, and troubleshooting.
 
 ## File Count
 
-**31 documentation files** across 7 directories, totaling ~240 KB.
+**32 documentation files** (31 included in combined output, 2 meta-files excluded).

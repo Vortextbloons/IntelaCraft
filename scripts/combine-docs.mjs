@@ -34,6 +34,9 @@ const outputPath = process.argv[2]
  * Matches patterns like [path/to/file.md](path/to/file.md) or (file.md)
  * Returns an ordered list of relative paths within docs/.
  */
+// Files excluded from the combined output (meta/instructions, not project docs)
+const EXCLUDED = new Set(["Clean.md", "Update.md"]);
+
 function extractDocPaths(indexContent) {
   const paths = [];
   // Match links to .md files (relative paths)
@@ -41,6 +44,8 @@ function extractDocPaths(indexContent) {
   let match;
   while ((match = linkRegex.exec(indexContent)) !== null) {
     const relativePath = match[2];
+    const fileName = relativePath.split("/").pop();
+    if (EXCLUDED.has(fileName)) continue;
     // Skip if it's a link to itself or already added
     if (!paths.includes(relativePath)) {
       paths.push(relativePath);

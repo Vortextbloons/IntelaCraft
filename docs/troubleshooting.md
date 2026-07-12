@@ -316,7 +316,7 @@ curl http://127.0.0.1:8787/v1/tasks
 
 # List pending tasks
 curl "http://127.0.0.1:8787/v1/tasks?status=planning"
-curl "http://127.0.0.1:8787/v1/tasks?status=waiting_approval"
+curl "http://127.0.0.1:8787/v1/tasks?status=awaiting_approval"
 ```
 
 ### Cancelling stuck tasks

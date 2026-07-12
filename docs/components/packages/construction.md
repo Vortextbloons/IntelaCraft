@@ -182,8 +182,6 @@ materialTotals([
 // → { "minecraft:stone": 2, "minecraft:oak_planks": 1 }
 ```
 
-## Integration
-
 ## BuildSpec compiler
 
 `compileBuildSpec(spec)` validates a version 1 `BuildSpec` and deterministically produces an `ExpectedWorldState`. The initial compiler supports oriented rectangular footprints, optional foundations, exterior walls, intermediate floors, gable roofs, facing-aware doors, canonical block ordering, required interior air, material totals, and impossible-dimension rejection. Existing semantic builders remain available during migration.

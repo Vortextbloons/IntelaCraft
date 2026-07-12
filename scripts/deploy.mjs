@@ -13,9 +13,13 @@ const bdsPath =
   process.env.INTELACRAFT_BDS_PATH?.trim() ||
   "";
 
+// Always compile source before deployment so an existing generated bundle can
+// never cause source changes to be silently skipped.
+runNpm(["run", "build", "-w", "@intelacraft/bedrock-addon"]);
+
 if (bdsPath) {
   // Full BDS setup: config merge + pack deploy + world enable
-  runNpm(["run", "configure-bds"]);
+  runNpm(["run", "configure-bds", "--", "--skip-build"]);
   process.exit(0);
 }
 
@@ -30,8 +34,7 @@ if (!existsSync(envPath) || !process.env.DEPLOY_PATH) {
   process.exit(1);
 }
 
-runNpm(["run", "build", "-w", "@intelacraft/bedrock-addon"]);
-runNpm(["run", "deploy:dev", "-w", "@intelacraft/bedrock-addon"]);
+runNpm(["run", "deploy:dev", "-w", "@intelacraft/bedrock-addon", "--", "--skip-build"]);
 
 console.log("");
 console.log("  Deployed. Reload the world / restart BDS if needed.");

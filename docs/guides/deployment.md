@@ -34,9 +34,19 @@ Controller serves webview at `/` and API at `/v1/*`.
 ## Pack Deployment
 
 `scripts/deploy.mjs` handles deployment:
+- Always rebuilds the behavior-pack JavaScript from `apps/bedrock-addon/src/` before copying anything.
 - If `BDS_PATH` is set in `.env`, runs `configure-bds` to write BDS config files (`variables.json`, `secrets.json`, `permissions.json`) and deploy packs.
-- If `DEPLOY_PATH` is set in `apps/bedrock-addon/.env`, builds the addon and copies packs to the dev path.
+- If `DEPLOY_PATH` is set in `apps/bedrock-addon/.env`, copies the freshly built addon to the dev path.
 - Dev mode: Copies to `development_behavior_packs/` and `development_resource_packs/`
+- Deployment fails unless the generated and deployed script/manifest hashes match.
+
+After any behavior-pack source change, use this single workflow:
+
+```powershell
+npm run deploy
+```
+
+Then restart BDS. Bedrock does not reload an already-running Script API module merely because `main.js` changed on disk.
 
 ## Environment Variables
 

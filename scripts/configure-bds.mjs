@@ -26,6 +26,7 @@ import {
   rmSync,
   readdirSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { ensureEnv, printBanner, REPO_ROOT, runNpm } from "./lib.mjs";
 
@@ -140,10 +141,20 @@ function enablePacksOnAllWorlds(bdsPath) {
   return enabled;
 }
 
-function deployPacks(bdsPath) {
+function fileHash(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function verifyDeployedFile(source, destination) {
+  if (!existsSync(destination) || fileHash(source) !== fileHash(destination)) {
+    throw new Error(`Deployment verification failed for ${destination}`);
+  }
+}
+
+function deployPacks(bdsPath, { skipBuild = false } = {}) {
   const bpSrc = join(REPO_ROOT, "apps", "bedrock-addon", "behavior_pack");
   const rpSrc = join(REPO_ROOT, "apps", "bedrock-addon", "resource_pack");
-  if (!existsSync(join(bpSrc, "scripts", "main.js"))) {
+  if (!skipBuild) {
     console.log("  Building bedrock add-on…");
     runNpm(["run", "build", "-w", "@intelacraft/bedrock-addon"]);
   }
@@ -155,6 +166,9 @@ function deployPacks(bdsPath) {
   mkdirSync(rDest, { recursive: true });
   cpSync(bpSrc, bDest, { recursive: true, force: true });
   cpSync(rpSrc, rDest, { recursive: true, force: true });
+  verifyDeployedFile(join(bpSrc, "scripts", "main.js"), join(bDest, "scripts", "main.js"));
+  verifyDeployedFile(join(bpSrc, "manifest.json"), join(bDest, "manifest.json"));
+  verifyDeployedFile(join(rpSrc, "manifest.json"), join(rDest, "manifest.json"));
   return { bDest, rDest };
 }
 
@@ -183,6 +197,7 @@ function main() {
   const fileEnv = ensureEnv();
   const args = new Set(process.argv.slice(2));
   const skipDeploy = args.has("--config-only");
+  const skipBuild = args.has("--skip-build");
   const bdsPath = resolveBdsPath(fileEnv);
 
   if (!bdsPath) {
@@ -248,9 +263,10 @@ function main() {
   console.log("  synced     apps/bedrock-addon/.env DEPLOY_PATH");
 
   if (!skipDeploy) {
-    const { bDest, rDest } = deployPacks(bdsPath);
+    const { bDest, rDest } = deployPacks(bdsPath, { skipBuild });
     console.log(`  deployed   ${bDest}`);
     console.log(`  deployed   ${rDest}`);
+    console.log("  verified   generated and deployed pack files match");
     const worlds = enablePacksOnAllWorlds(bdsPath);
     if (worlds.length) {
       console.log(`  enabled on world(s): ${worlds.join(", ")}`);

@@ -137,7 +137,9 @@ export function App() {
 
   const selectedTask = useSelectedTask(tasks.tasks, conversations.selectedTaskId);
   // The SSE planning turn can finish while BDS inspection/verification work is
-  // still queued. Keep the UI locked until the controller reports a terminal task.
+  // still queued. Keep task controls locked until the controller reports a
+  // terminal task, but let the composer rely on its own request state; the
+  // controller independently rejects unsafe concurrent follow-ups.
   const aiBusy = busy || tasks.tasks.some(isTaskActive);
 
   const scroll = useScroll({
@@ -215,7 +217,7 @@ export function App() {
             <Composer
               prompt={chatStream.prompt}
               setPrompt={chatStream.setPrompt}
-              busy={aiBusy}
+              busy={busy}
               bdsConnected={Boolean(health?.bdsConnected)}
               activeProvider={providersHook.activeProvider}
               providerLabel={providersHook.providerLabel}

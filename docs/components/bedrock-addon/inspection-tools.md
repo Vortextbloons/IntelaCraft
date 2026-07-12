@@ -551,5 +551,6 @@ Candidates are sorted by score (lower = better). Up to 8 candidates are returned
 | `inspect.tags` | Tags on target | All (fallback) | Player-first search |
 | `inspect.heightmap` | Terrain height samples | One | resolution 1/2/4 |
 | `inspect.surface` | Surface block types | One | resolution 1/2/4 |
+| `inspect.voxel_snapshot` | Palette-indexed block snapshot | One | MAX_REGION_VOLUME = 32768 |
 | `inspect.build_collision` | Blocks + entities in volume | One | Scans entire region |
 | `inspect.find_empty_area` | Ranked empty build areas | One | radius 0–128, max 8 candidates |

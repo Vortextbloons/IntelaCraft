@@ -19,6 +19,8 @@ import { AuditLog } from "./audit.js";
 import { createApp } from "./app.js";
 import { EventStore, SessionStore, SettingsStore } from "./store.js";
 import { CatalogService } from "./catalog.js";
+import { loadConfig } from "./config.js";
+import { VoxelRendererClient } from "./voxel-renderer/client.js";
 
 const token = "test-token";
 const dir = mkdtempSync(join(tmpdir(), "intelacraft-audit-"));
@@ -56,6 +58,20 @@ await new Promise<void>((resolve) => server.listen(0, resolve));
 const address = server.address();
 assert.ok(address && typeof address === "object");
 const base = `http://127.0.0.1:${address.port}`;
+
+describe("voxel renderer configuration", () => {
+  it("resolves the default executable from the repository root", () => {
+    const config = loadConfig({ INTELACRAFT_BDS_TOKEN: token });
+    assert.match(config.voxelRendererPath ?? "", /services[\\/]voxel-renderer[\\/]voxel-renderer\.exe$/);
+    assert.doesNotMatch(config.voxelRendererPath ?? "", /services[\\/]controller[\\/]services[\\/]voxel-renderer/);
+  });
+
+  it("rejects a missing renderer executable without crashing the process", async () => {
+    const renderer = new VoxelRendererClient(join(dir, "missing-renderer.exe"), 1000);
+    await assert.rejects(renderer.request("health"), /Voxel renderer failed to start/);
+    renderer.close();
+  });
+});
 
 after(() => {
   server.close();
