@@ -55,7 +55,7 @@ apps/bedrock-addon/
 
 ## Safety Overview
 
-13 defense layers protect the server from harmful mutations:
+14 inspection tools and 13 defense layers protect the server from harmful mutations:
 
 | # | Layer | Description |
 |---|-------|-------------|

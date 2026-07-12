@@ -226,7 +226,7 @@ Isolated AI planning agent runtime built on `@earendil-works/pi-coding-agent`.
 - Provider profile management (save, load, test, discover models)
 - System prompt construction with IntelaCraft-specific tool catalog
 - Mode-aware prompt injection — Ask mode restricts to read-only responses; Agent mode enables full planning
-- Inspection tool registration (13 `inspect.*` tools)
+- Inspection tool registration (14 `inspect.*` tools)
 - `submit_plan` tool that produces structured `AgentPlan` objects
 - Plan normalization from messy model output (`normalizePlan`)
 - Live inspection executor bridge (controller injects this per session)
@@ -260,6 +260,7 @@ Each Pi session stores an `AiMode` (`"ask"` or `"agent"`) that controls the syst
 | `inspect.player` | read | Detailed info for a single player |
 | `inspect.block` | read | Block at one position |
 | `inspect.region` | read | Sample blocks in a bounded region (max 32^3) |
+| `inspect.voxel_snapshot` | read | Palette-indexed block snapshot for a region |
 | `inspect.world_state` | read | Time, weather, game rules |
 | `inspect.entities` | read | Entities in a dimension |
 | `inspect.scoreboard` | read | Scoreboard objectives |
@@ -270,6 +271,8 @@ Each Pi session stores an `AiMode` (`"ask"` or `"agent"`) that controls the syst
 | `inspect.find_empty_area` | read | Find empty build areas near origin |
 | `world.fill_blocks` | write | Fill a bounded region with a block type |
 | `world.place_blocks` | write | Place individual blocks at positions |
+| `control.cancel` | write | Cancel a running action |
+| `control.emergency_disable` | write | Global kill switch for all mutations |
 | `admin.run_command` | write | Run an allowlisted admin command by ID |
 
 ### 6. `@intelacraft/mcp-connection` — packages/mcp-connection/
@@ -388,33 +391,35 @@ intelacraft/                          # Root (npm workspace)
 │   ├── bedrock-addon/                # @intelacraft/bedrock-addon
 │   └── webview/                      # @intelacraft/webview
 ├── services/
-│   └── controller/                   # @intelacraft/controller
-│       └── src/
-│           ├── agent.ts              # Barrel re-export
-│           ├── agent/                # Agent module (modular directory)
-│           │   ├── types.ts          # AgentTask, AgentTaskState, AgentContext
-│           │   ├── runtime.ts        # AgentRuntime facade class
-│           │   ├── task-store.ts     # File-based task persistence
-│           │   ├── provider-store.ts # Provider persistence, CRUD
-│           │   ├── chat-history.ts   # 32-turn chat history
-│           │   ├── sanitize.ts       # API key validation
-│           │   ├── lifecycle/        # Task lifecycle operations
-│           │   ├── planning/         # Task creation, replan
-│           │   └── inspection/       # Pi-to-BDS tool bridge
-│           ├── app.ts                # HTTP server creation
-│           ├── routes/               # Route handlers (modular directory)
-│           │   ├── router.ts         # Central URL dispatcher
-│           │   ├── tasks.ts          # Task CRUD + SSE
-│           │   ├── bds.ts            # BDS protocol endpoints
-│           │   ├── settings.ts       # Settings CRUD
-│           │   ├── providers.ts      # Provider CRUD
-│           │   ├── health.ts         # Health check
-│           │   ├── events.ts         # Event list + SSE
-│           │   ├── activity-api.ts   # Activity query + purge
-│           │   ├── pi-sessions.ts    # Pi session management
-│           │   ├── mcp.ts            # MCP status
-│           │   └── types.ts          # AppContext interface
-│           └── ...                   # Other source files
+│   ├── controller/                   # @intelacraft/controller
+│   │   └── src/
+│   │       ├── agent.ts              # Barrel re-export
+│   │       ├── agent/                # Agent module (modular directory)
+│   │       │   ├── types.ts          # AgentTask, AgentTaskState, AgentContext
+│   │       │   ├── runtime.ts        # AgentRuntime facade class
+│   │       │   ├── task-store.ts     # File-based task persistence
+│   │       │   ├── provider-store.ts # Provider persistence, CRUD
+│   │       │   ├── chat-history.ts   # 32-turn chat history
+│   │       │   ├── sanitize.ts       # API key validation
+│   │       │   ├── lifecycle/        # Task lifecycle operations
+│   │       │   ├── planning/         # Task creation, replan
+│   │       │   └── inspection/       # Pi-to-BDS tool bridge
+│   │       ├── app.ts                # HTTP server creation
+│   │       ├── routes/               # Route handlers (modular directory)
+│   │       │   ├── router.ts         # Central URL dispatcher
+│   │       │   ├── tasks.ts          # Task CRUD + SSE
+│   │       │   ├── bds.ts            # BDS protocol endpoints
+│   │       │   ├── settings.ts       # Settings CRUD
+│   │       │   ├── providers.ts      # Provider CRUD
+│   │       │   ├── health.ts         # Health check
+│   │       │   ├── events.ts         # Event list + SSE
+│   │       │   ├── activity-api.ts   # Activity query + purge
+│   │       │   ├── pi-sessions.ts    # Pi session management
+│   │       │   ├── mcp.ts            # MCP status
+│   │       │   ├── builds.ts         # Build library CRUD, scene, render
+│   │       │   └── types.ts          # AppContext interface
+│   │       └── ...                   # Other source files
+│   └── voxel-renderer/               # Go-based 3D voxel renderer (child process IPC)
 ├── packages/
 │   ├── shared-protocol/              # @intelacraft/shared-protocol
 │   ├── pi-extension/                 # @intelacraft/pi-extension

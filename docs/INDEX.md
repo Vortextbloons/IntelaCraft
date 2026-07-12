@@ -19,7 +19,7 @@ The in-game execution agent that runs inside Minecraft Bedrock Dedicated Server.
 |------|-------------|
 | [components/bedrock-addon/README.md](components/bedrock-addon/README.md) | Addon overview, file structure, safety layers, BDS configuration |
 | [components/bedrock-addon/session.md](components/bedrock-addon/session.md) | Session lifecycle: handshake, poll loop (0.5s), heartbeat (6s), reconnection |
-| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | 13 read-only world query tools across 6 modules (server, world, terrain, meta) |
+| [components/bedrock-addon/inspection-tools.md](components/bedrock-addon/inspection-tools.md) | 14 read-only world query tools across 4 domain modules (server, world, terrain, meta) |
 | [components/bedrock-addon/mutation-tools.md](components/bedrock-addon/mutation-tools.md) | All 5 mutation tools: fill_blocks, place_blocks, control.cancel, emergency_disable, admin.run_command |
 | [components/bedrock-addon/build-deploy.md](components/bedrock-addon/build-deploy.md) | esbuild bundling, dev/prod deployment, BDS config writing, pack manifests |
 
@@ -43,6 +43,7 @@ Central HTTP server bridging BDS, webview, and AI agent.
 | [components/controller/stores.md](components/controller/stores.md) | SessionStore, EventStore, SettingsStore, ActivityStore, AuditLog |
 | [components/controller/policy.md](components/controller/policy.md) | Risk classification, approval binding, permission modes, protected regions |
 | [components/controller/agent-runtime.md](components/controller/agent-runtime.md) | Modular agent architecture: runtime facade, lifecycle, planning, inspection bridge |
+| [components/voxel-renderer.md](components/voxel-renderer.md) | Go-based 3D voxel renderer: child process IPC, scene processing, PNG rendering |
 
 ## Components — Packages
 
@@ -63,9 +64,9 @@ API documentation, configuration, and protocol specification.
 
 | File | Description |
 |------|-------------|
-| [reference/api.md](reference/api.md) | Complete HTTP API reference (21 endpoints) with request/response formats |
+| [reference/api.md](reference/api.md) | Complete HTTP API reference with request/response formats |
 | [reference/configuration.md](reference/configuration.md) | Environment variables, BDS config, permission modes, risk classes |
-| [reference/protocol.md](reference/protocol.md) | Protocol versioning, 8 message types, 18 tools, constants, validation |
+| [reference/protocol.md](reference/protocol.md) | Protocol versioning, 8 message types, 19 tools, constants, validation |
 
 ## Guides
 

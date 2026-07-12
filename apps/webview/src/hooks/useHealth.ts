@@ -46,53 +46,62 @@ export function useHealth(deps: {
   } = deps;
 
   const operationRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const operationalRefreshInFlightRef = useRef<Promise<void> | null>(null);
   const [hasActiveTasks, setHasActiveTasks] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      const [h, t, p, a, s] = await Promise.all([
-        api<Health>("/v1/health"),
-        api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
-        api<{ providers: Provider[]; activeProviderId?: string }>("/v1/providers").catch(() => ({
-          providers: [] as Provider[],
-          activeProviderId: "",
-        })),
-        api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
-        api<{ permissionMode: string; thinkingLevel?: ThinkingLevel; preferredThinkingLevel?: ThinkingLevel }>(
-          "/v1/settings",
-        ),
-      ]);
-      setHealth(h);
-      setTasks(t.tasks);
-      setHasActiveTasks(t.tasks.some(isTaskActive));
-      setProviders(p.providers);
-      setActivity([...a.records].reverse());
-      setPermissionMode(s.permissionMode);
-      // `thinkingLevel` is the last session's effective (possibly clamped)
-      // value. The selector represents the user's requested preference.
-      if (s.preferredThinkingLevel) setThinkingLevel(s.preferredThinkingLevel);
-      else if (s.thinkingLevel) setThinkingLevel(s.thinkingLevel);
-      if (h.settings?.permissionMode) setPermissionMode(h.settings.permissionMode);
-      if (h.settings?.preferredThinkingLevel) {
-        setThinkingLevel(h.settings.preferredThinkingLevel as ThinkingLevel);
-      } else if (h.settings?.thinkingLevel) {
-        setThinkingLevel(h.settings.thinkingLevel as ThinkingLevel);
-      }
-      setActiveProviderId((prev) => {
-        if (p.activeProviderId && p.providers.some((x) => x.id === p.activeProviderId)) {
-          return p.activeProviderId;
+  const refresh = useCallback(() => {
+    if (refreshInFlightRef.current) return refreshInFlightRef.current;
+    const pending = (async () => {
+      try {
+        const [h, t, p, a, s] = await Promise.all([
+          api<Health>("/v1/health"),
+          api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
+          api<{ providers: Provider[]; activeProviderId?: string }>("/v1/providers").catch(() => ({
+            providers: [] as Provider[],
+            activeProviderId: "",
+          })),
+          api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
+          api<{ permissionMode: string; thinkingLevel?: ThinkingLevel; preferredThinkingLevel?: ThinkingLevel }>(
+            "/v1/settings",
+          ),
+        ]);
+        setHealth(h);
+        setTasks(t.tasks);
+        setHasActiveTasks(t.tasks.some(isTaskActive));
+        setProviders(p.providers);
+        setActivity([...a.records].reverse());
+        setPermissionMode(s.permissionMode);
+        // `thinkingLevel` is the last session's effective (possibly clamped)
+        // value. The selector represents the user's requested preference.
+        if (s.preferredThinkingLevel) setThinkingLevel(s.preferredThinkingLevel);
+        else if (s.thinkingLevel) setThinkingLevel(s.thinkingLevel);
+        if (h.settings?.permissionMode) setPermissionMode(h.settings.permissionMode);
+        if (h.settings?.preferredThinkingLevel) {
+          setThinkingLevel(h.settings.preferredThinkingLevel as ThinkingLevel);
+        } else if (h.settings?.thinkingLevel) {
+          setThinkingLevel(h.settings.thinkingLevel as ThinkingLevel);
         }
-        if (prev && p.providers.some((x) => x.id === prev)) return prev;
-        return p.providers[0]?.id ?? "";
-      });
-      setError(null);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        clearToken();
-        setAuthed(false);
+        setActiveProviderId((prev) => {
+          if (p.activeProviderId && p.providers.some((x) => x.id === p.activeProviderId)) {
+            return p.activeProviderId;
+          }
+          if (prev && p.providers.some((x) => x.id === prev)) return prev;
+          return p.providers[0]?.id ?? "";
+        });
+        setError(null);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          clearToken();
+          setAuthed(false);
+        }
+        setError(e instanceof Error ? e.message : "Refresh failed");
       }
-      setError(e instanceof Error ? e.message : "Refresh failed");
-    }
+    })().finally(() => {
+      if (refreshInFlightRef.current === pending) refreshInFlightRef.current = null;
+    });
+    refreshInFlightRef.current = pending;
+    return pending;
   }, [
     setActiveProviderId,
     setActivity,
@@ -105,22 +114,31 @@ export function useHealth(deps: {
     setThinkingLevel,
   ]);
 
-  const refreshOperationalData = useCallback(async () => {
-    try {
-      const [t, a] = await Promise.all([
-        api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
-        api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
-      ]);
-      setTasks(t.tasks);
-      setHasActiveTasks(t.tasks.some(isTaskActive));
-      setActivity([...a.records].reverse());
-    } catch (e) {
-      // Do not keep a one-second active-task poll running while the controller
-      // is offline. The regular health refresh will reconnect and reactivate
-      // it once the controller is back.
-      setHasActiveTasks(false);
-      setError(e instanceof Error ? e.message : "Controller refresh failed");
-    }
+  const refreshOperationalData = useCallback(() => {
+    if (operationalRefreshInFlightRef.current) return operationalRefreshInFlightRef.current;
+    const pending = (async () => {
+      try {
+        const [t, a] = await Promise.all([
+          api<{ tasks: Task[] }>("/v1/tasks").catch(() => ({ tasks: [] as Task[] })),
+          api<{ records: ActivityRecord[] }>("/v1/activity?limit=80"),
+        ]);
+        setTasks(t.tasks);
+        setHasActiveTasks(t.tasks.some(isTaskActive));
+        setActivity([...a.records].reverse());
+      } catch (e) {
+        // Do not keep a one-second active-task poll running while the controller
+        // is offline. The regular health refresh will reconnect and reactivate
+        // it once the controller is back.
+        setHasActiveTasks(false);
+        setError(e instanceof Error ? e.message : "Controller refresh failed");
+      }
+    })().finally(() => {
+      if (operationalRefreshInFlightRef.current === pending) {
+        operationalRefreshInFlightRef.current = null;
+      }
+    });
+    operationalRefreshInFlightRef.current = pending;
+    return pending;
   }, [setActivity, setError, setTasks]);
 
   useEffect(() => {

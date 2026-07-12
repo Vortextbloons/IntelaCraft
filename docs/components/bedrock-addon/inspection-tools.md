@@ -11,10 +11,10 @@ Inspection tools are split across domain-cohesive sub-modules under `src/tools/i
 | Module | Tools |
 |--------|-------|
 | `src/tools/inspect/helpers.ts` | Shared types (`ToolResult`, `ToolSuccess`, `ToolFailure`) and utilities (`getDimension()`, `surfaceAt()`) |
-| `src/tools/inspect/server.ts` | `inspect_server_status`, `inspect_players`, `inspect_player` |
-| `src/tools/inspect/world.ts` | `inspect_block`, `inspect_region`, `inspect_voxel_snapshot`, `inspect_world_state`, `inspect_entities` |
-| `src/tools/inspect/terrain.ts` | `inspect_heightmap`, `inspect_surface`, `inspect_build_collision`, `inspect_find_empty_area` |
-| `src/tools/inspect/meta.ts` | `inspect_scoreboard`, `inspect_tags` |
+| `src/tools/inspect/server.ts` | `inspect.server_status`, `inspect.players`, `inspect.player` |
+| `src/tools/inspect/world.ts` | `inspect.block`, `inspect.region`, `inspect.voxel_snapshot`, `inspect.world_state`, `inspect.entities` |
+| `src/tools/inspect/terrain.ts` | `inspect.heightmap`, `inspect.surface`, `inspect.build_collision`, `inspect.find_empty_area` |
+| `src/tools/inspect/meta.ts` | `inspect.scoreboard`, `inspect.tags` |
 | `src/tools/inspect/index.ts` | Dispatcher — switches on `action.toolName`, delegates to the sub-modules above |
 
 ### ToolResult Type

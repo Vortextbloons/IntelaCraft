@@ -20,6 +20,7 @@
     "typecheck": "npm run typecheck -w @intelacraft/shared-protocol && npm run typecheck -w @intelacraft/construction && npm run typecheck -w @intelacraft/prompts && npm run typecheck -w @intelacraft/pi-extension && npm run typecheck -w @intelacraft/mcp-connection && npm run typecheck -w @intelacraft/controller && npm run typecheck -w @intelacraft/bedrock-addon && npm run typecheck -w @intelacraft/webview",
     "load-smoke": "node scripts/load-smoke.mjs",
     "combine-docs": "node scripts/combine-docs.mjs",
+    "skills:sync": "node scripts/sync-skills.mjs",
     "agent-eval": "npm run build -w @intelacraft/shared-protocol && npm run build -w @intelacraft/pi-extension && node scripts/agent-eval.mjs"
     ,"renderer:build":"node scripts/renderer.mjs build"
     ,"renderer:test":"node scripts/renderer.mjs test"

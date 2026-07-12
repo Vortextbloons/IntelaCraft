@@ -26,6 +26,8 @@ Central HTTP server for IntelaCraft. Bridges the BDS (Bedrock Dedicated Server),
 | `src/audit.ts` | ~31 | Audit log (integrates with ActivityStore) |
 | `src/activity.ts` | ~112 | Activity store with query/prune, async write queue |
 | `src/static.ts` | ~41 | Serves the React webview from `apps/webview/dist/` |
+| `src/build-library/store.ts` | — | BuildLibraryStore: save, patch, trash, restore, permanent delete, storage stats |
+| `src/voxel-renderer/client.ts` | — | VoxelRendererClient: child process IPC for 3D rendering |
 | `src/agent/` | — | AI agent runtime (modular, see below) |
 | `src/routes/` | — | HTTP route handlers (modular, see below) |
 | `src/*.test.ts` | — | Unit tests |
@@ -45,6 +47,7 @@ Central HTTP server for IntelaCraft. Bridges the BDS (Bedrock Dedicated Server),
 | `routes/activity-api.ts` | ~21 | Activity query and purge |
 | `routes/pi-sessions.ts` | ~18 | Pi session list/create |
 | `routes/mcp.ts` | ~8 | MCP connection status |
+| `routes/builds.ts` | ~19 | Build library CRUD, scene, thumbnail, render, storage |
 
 ### `src/agent/` Directory
 
@@ -110,6 +113,15 @@ Authorization: Bearer <INTELACRAFT_BDS_TOKEN>
 | POST | `/v1/tasks/:id/cancel` | Cancel a running task |
 | POST | `/v1/tasks/:id/replan` | Edit-and-replan with user notes |
 | POST | `/v1/tasks/:id/stream` | Continue task with SSE streaming |
+| GET/POST | `/v1/builds` | Build library list or save from task |
+| GET | `/v1/builds/storage` | Build library storage stats |
+| GET/PATCH/DELETE | `/v1/builds/:id` | Build metadata CRUD |
+| POST | `/v1/builds/:id/restore` | Restore trashed build |
+| DELETE | `/v1/builds/:id/permanent` | Permanent delete |
+| GET | `/v1/builds/:id/scene` | 3D scene data |
+| GET | `/v1/builds/:id/thumbnail` | Thumbnail image |
+| POST | `/v1/builds/:id/render` | Render image via voxel renderer |
+| POST | `/v1/builds/:id/regenerate-thumbnail` | Regenerate thumbnail |
 
 ## Sub-Documents
 

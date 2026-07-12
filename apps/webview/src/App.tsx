@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useRef, useState } from "react";
 import type { Task } from "./types";
 import { Transcript } from "./components/Transcript";
 import { ActivityDrawer } from "./features/Drawers/ActivityDrawer";
@@ -40,6 +40,8 @@ export function App() {
   const updatePiSessionIdRef = useRef<(id: string | null) => void>(() => {});
   const setPermissionModeRef = useRef<(mode: string) => void>(() => {});
   const setThinkingLevelRef = useRef<(level: ThinkingLevel) => void>(() => {});
+  const setPermissionMode = useCallback((mode: string) => setPermissionModeRef.current(mode), []);
+  const setThinkingLevel = useCallback((level: ThinkingLevel) => setThinkingLevelRef.current(level), []);
 
   const conversations = useConversations({
     authed: auth.authed,
@@ -73,8 +75,8 @@ export function App() {
     setTasks: tasks.setTasks,
     setProviders,
     setActivity: activity.setActivity,
-    setPermissionMode: (mode) => setPermissionModeRef.current(mode),
-    setThinkingLevel: (level) => setThinkingLevelRef.current(level),
+    setPermissionMode,
+    setThinkingLevel,
     setActiveProviderId,
     tasksRef: tasks.tasksRef,
     chatRef: conversations.chatRef,
@@ -89,7 +91,7 @@ export function App() {
     setBusy,
     refresh,
     setChat: conversations.setChat,
-    setThinkingLevel: (level) => setThinkingLevelRef.current(level),
+    setThinkingLevel,
     providers,
     setProviders,
     activeProviderId,

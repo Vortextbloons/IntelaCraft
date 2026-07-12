@@ -13,3 +13,7 @@ AGENTS.md
 spec/
 docs/All.md
 .env
+.opencode/
+sync-skills.mjs
+.agents/
+.cursor/
