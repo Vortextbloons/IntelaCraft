@@ -2,7 +2,7 @@
 
 ## BuildLibrary and BuildViewer
 
-`BuildLibrary` owns authenticated library API state, search, selection, metadata actions, trash, and thumbnail regeneration. `BuildViewer` consumes only processed scene blocks from the controller and uses Three.js `OrbitControls` for interactive inspection. Both are lazy-loaded from the App composition root.
+`BuildLibrary` owns authenticated library API state, search, selection, metadata actions, trash, and thumbnail regeneration. `BuildViewer` consumes only processed scene blocks from the controller and uses Three.js `OrbitControls` for interactive inspection. Blocks are grouped by type into instanced meshes and use representative procedural face textures, transparent/emissive material behavior, fitted camera presets, sRGB output, and filmic tone mapping. Both components are lazy-loaded from the App composition root.
 
 Viewer controls include perspective/orthographic projection, front-right/front-left/back/top presets, height slicing, roof and material visibility, bounds, and block picking. Library management includes active/trash views, restore, and aggregate storage display.
 

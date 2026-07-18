@@ -108,7 +108,7 @@ Places individually addressed blocks at specific positions using a generator-bas
 | Argument | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
 | `dimension` | `DimensionId` | Yes | — | Target dimension |
-| `blocks` | `Array<{position: Vec3i, blockType: string}>` | Yes | — | 1–8192 position/block pairs |
+| `blocks` | `Array<{position: Vec3i, blockType: string, states?: Record<string,string\|number\|boolean>}>` | Yes | — | 1–8192 position/block pairs with optional permutation states |
 | `batchSize` | `number` | No | `512` | Blocks per yield interval |
 | `captureRollback` | `boolean` | No | `false` | Store original blocks before modification |
 
@@ -131,13 +131,13 @@ startPlaceBlocks()
   │
   └── system.runJob(job())
         │
-        ├── For each { position, blockType } in blocks:
+        ├── For each { position, blockType, states } in blocks:
         │   ├── Check cancelled Set → emit "cancelled", return
         │   ├── Check emergencyDisabled → emit "cancelled", return
         │   ├── dimension.getBlock() → block unavailable? failed++
-        │   ├── block.typeId === blockType? → skipped++ (already correct)
-        │   ├── captureRollback? → store {position, typeId} (max 8192)
-        │   ├── block.setType(blockType) → placed++
+        │   ├── block type and requested states match? → skipped++
+        │   ├── captureRollback? → store {position, typeId, states} (max 8192)
+        │   ├── states? setPermutation(resolve(blockType, states)) : setType(blockType)
         │   └── (placed+skipped+failed) % batchSize === 0? → emit "running", yield
         │
         └── Loop complete → emit "completed" or "partially_completed"

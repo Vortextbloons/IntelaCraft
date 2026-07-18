@@ -40,6 +40,28 @@ test("roof generates continuous gable planes with a stable ridge", () => {
     assert.equal(row.length, 9);
     assert.equal(new Set(row.map((block) => block.position.x)).size, 9);
   }
+  assert.deepEqual(roof.blocks.find(block=>block.position.z===0)?.states,{weirdo_direction:2,upside_down_bit:false});
+  assert.deepEqual(roof.blocks.find(block=>block.position.z===4)?.states,{weirdo_direction:3,upside_down_bit:false});
+});
+test("whole-structure roofs follow facing, preserve stair states, and close both gables",()=>{
+  for(const facing of ["north","south","east","west"] as const){
+    const spec={...cottage,location:{...cottage.location,facing},size:{width:9,depth:7,height:7,floors:1},palette:{...cottage.palette,roof:"minecraft:dark_oak_stairs"}};
+    const state=compileBuildSpec(spec),all=new Map(state.blocks.map(block=>[`${block.position.x},${block.position.y},${block.position.z}`,block])),roof=state.blocks.filter(block=>block.blockType===spec.palette.roof);
+    assert.ok(roof.length>0);assert.ok(roof.every(block=>block.states?.upside_down_bit===false));
+    const northSouth=facing==="north"||facing==="south",ridgeCoordinateCount=new Set(roof.filter(block=>block.position.y===Math.max(...roof.map(item=>item.position.y))).map(block=>northSouth?block.position.z:block.position.x)).size;
+    assert.ok(ridgeCoordinateCount>1,`${facing} ridge must align with the building facing`);
+    const baseY=Math.min(...roof.map(block=>block.position.y)),ends=northSouth?[spec.location.anchor.z,spec.location.anchor.z+spec.size.depth-1]:[spec.location.anchor.x,spec.location.anchor.x+spec.size.depth-1];
+    for(const roofBlock of roof.filter(block=>ends.includes(northSouth?block.position.z:block.position.x)))for(let y=baseY;y<roofBlock.position.y;y++)assert.ok(all.has(`${roofBlock.position.x},${y},${roofBlock.position.z}`),`${facing} gable gap at ${roofBlock.position.x},${y},${roofBlock.position.z}`);
+  }
+});
+test("stateful placements remain detailed and verification detects wrong orientation",()=>{
+  const placement={position:{x:0,y:64,z:0},blockType:"minecraft:oak_stairs",states:{weirdo_direction:2,upside_down_bit:false}};
+  const operations=optimizePlacements("minecraft:overworld",[placement,{...placement,position:{x:1,y:64,z:0}}]);
+  assert.equal(operations.length,1);assert.equal(operations[0].toolName,"world.place_blocks");
+  const expected={version:1 as const,dimension:"minecraft:overworld" as const,bounds:{min:{x:0,y:64,z:0},max:{x:0,y:64,z:0}},blocks:[placement],requiredAir:[],materials:{"minecraft:oak_stairs":1}};
+  const result=verifyBuild(expected,{version:1,dimension:expected.dimension,bounds:expected.bounds,palette:[{typeId:"minecraft:oak_stairs",states:{weirdo_direction:3,upside_down_bit:false}}],blocks:[0],indexType:"uint16",capturedAt:new Date(0).toISOString()});
+  assert.equal(result.correctBlocks,0);assert.equal(result.incorrect[0]?.expectedStates?.weirdo_direction,2);
+  const repair=createRepairOperations(expected,result);assert.equal(repair[0].toolName,"world.place_blocks");if(repair[0].toolName==="world.place_blocks")assert.equal(repair[0].arguments.blocks[0].states?.weirdo_direction,2);
 });
 test("build plan detects cyclic dependencies", () => {
   const result=validateBuildPlan({summary:"x",palette:[],steps:[{id:"a",summary:"a",toolName:"build.pillar",arguments:{dimension:"minecraft:overworld",position:{x:0,y:64,z:0},height:1,blockType:"minecraft:stone"},dependsOn:["b"]},{id:"b",summary:"b",toolName:"build.pillar",arguments:{dimension:"minecraft:overworld",position:{x:1,y:64,z:0},height:1,blockType:"minecraft:stone"},dependsOn:["a"]}],verification:[],estimates:{blocksChanged:2,operations:2},warnings:[]});

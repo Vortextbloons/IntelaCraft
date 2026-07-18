@@ -428,6 +428,20 @@ function validateInspectTags(args) {
 }
 
 // ../../packages/shared-protocol/src/validate/tools-mutate.ts
+function parseBlockStates(value) {
+  if (value === void 0) return void 0;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > 16) return null;
+  const states = {};
+  for (const [name, state] of entries) {
+    if (!/^[a-z0-9_.:-]{1,64}$/.test(name) || ["__proto__", "constructor", "prototype"].includes(name) || !["string", "number", "boolean"].includes(typeof state)) return null;
+    if (typeof state === "number" && !Number.isFinite(state)) return null;
+    if (typeof state === "string" && state.length > 128) return null;
+    states[name] = state;
+  }
+  return states;
+}
 function validatePlaceBlocks(args) {
   if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
   if (!Array.isArray(args.blocks) || args.blocks.length < 1 || args.blocks.length > MAX_PLACE_BLOCKS) {
@@ -439,13 +453,15 @@ function validatePlaceBlocks(args) {
     if (!entry || typeof entry !== "object") return fail("INVALID_ARGS", "each block must be an object");
     const position = parseVec3i(entry.position);
     const blockType = entry.blockType;
+    const states = parseBlockStates(entry.states);
     if (!position || !isNonEmptyString(blockType) || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(blockType)) {
       return fail("INVALID_ARGS", "each block needs integer position and namespaced block id");
     }
+    if (states === null) return fail("INVALID_ARGS", "block states must be a bounded object of primitive state values");
     const key = `${position.x},${position.y},${position.z}`;
     if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
     seen.add(key);
-    blocks.push({ position, blockType });
+    blocks.push({ position, blockType, ...states && Object.keys(states).length ? { states } : {} });
   }
   const batchSize = args.batchSize === void 0 ? DEFAULT_BATCH_SIZE : args.batchSize;
   if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > DEFAULT_BATCH_SIZE) {
@@ -1264,7 +1280,7 @@ function executeInspectTool(action) {
 }
 
 // src/tools/mutate.ts
-import { BlockTypes, system, world as world6 } from "@minecraft/server";
+import { BlockPermutation, BlockTypes, system, world as world6 } from "@minecraft/server";
 var cancelled = /* @__PURE__ */ new Set();
 var emergencyDisabled = false;
 var availableBlockTypes;
@@ -1481,6 +1497,11 @@ function startPlaceBlocks(action, emit, protectedRegions = []) {
     emit({ state: "failed", completedWork: 0, totalEstimatedWork: args.blocks.length, message: "Unknown block type", error: { code: "UNKNOWN_BLOCK", message: `Block type '${invalid.blockType}' is not available` } });
     return;
   }
+  const invalidStates = args.blocks.find(({ states }) => states !== void 0 && (!states || Array.isArray(states) || Object.keys(states).length > 16 || Object.entries(states).some(([name, value]) => !/^[a-z0-9_.:-]{1,64}$/.test(name) || ["__proto__", "constructor", "prototype"].includes(name) || !["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value) || typeof value === "string" && value.length > 128)));
+  if (invalidStates) {
+    emit({ state: "failed", completedWork: 0, totalEstimatedWork: args.blocks.length, message: "Invalid block states", error: { code: "INVALID_ARGS", message: "Block states must be a bounded object of primitive state values" } });
+    return;
+  }
   const total = args.blocks.length;
   if (emergencyDisabled) {
     emit({ state: "failed", completedWork: 0, totalEstimatedWork: total, message: "Emergency disabled", error: { code: "EMERGENCY_DISABLED", message: "Mutations disabled" } });
@@ -1496,7 +1517,7 @@ function startPlaceBlocks(action, emit, protectedRegions = []) {
   const rollback = [];
   function* job() {
     try {
-      for (const { position, blockType } of args.blocks) {
+      for (const { position, blockType, states } of args.blocks) {
         if (cancelled.has(action.actionId) || emergencyDisabled) {
           cancelled.delete(action.actionId);
           emit({ state: "cancelled", completedWork: placed, totalEstimatedWork: total, message: `Cancelled after ${placed}/${total} blocks`, result: { placed, skipped, failed, rollback: { capturedBlocks: rollback.length, coverage: rollback.length / total } } });
@@ -1507,12 +1528,14 @@ function startPlaceBlocks(action, emit, protectedRegions = []) {
           failed++;
           continue;
         }
-        if (block.typeId === blockType) {
+        const currentStates = block.permutation.getAllStates(), matches = block.typeId === blockType && (!states || Object.entries(states).every(([name, value]) => currentStates[name] === value));
+        if (matches) {
           skipped++;
           continue;
         }
-        if (args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({ position, typeId: block.typeId });
-        block.setType(blockType);
+        if (args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({ position, typeId: block.typeId, ...Object.keys(currentStates).length ? { states: currentStates } : {} });
+        if (states) block.setPermutation(BlockPermutation.resolve(blockType, states));
+        else block.setType(blockType);
         placed++;
         if ((placed + skipped + failed) % (args.batchSize ?? 512) === 0) {
           emit({ state: "running", completedWork: placed, totalEstimatedWork: total, message: `Placed ${placed}/${total} blocks`, result: { placed, skipped, failed } });

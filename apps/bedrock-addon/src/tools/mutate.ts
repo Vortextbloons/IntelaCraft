@@ -1,4 +1,4 @@
-import { BlockTypes, system, world } from "@minecraft/server";
+import { BlockPermutation, BlockTypes, system, world } from "@minecraft/server";
 import {
   MAX_BUILD_VOLUME,
   MAX_ROLLBACK_BLOCKS,
@@ -261,18 +261,21 @@ export function startPlaceBlocks(action: ActionRequestMessage, emit: (e: Mutatio
   const args = action.arguments as unknown as PlaceBlocksArgs;
   const invalid = args.blocks.find((block) => !validBlockType(block.blockType));
   if (invalid) { emit({ state: "failed", completedWork: 0, totalEstimatedWork: args.blocks.length, message: "Unknown block type", error: { code: "UNKNOWN_BLOCK", message: `Block type '${invalid.blockType}' is not available` } }); return; }
+  const invalidStates=args.blocks.find(({states})=>states!==undefined&&(!states||Array.isArray(states)||Object.keys(states).length>16||Object.entries(states).some(([name,value])=>!/^[a-z0-9_.:-]{1,64}$/.test(name)||["__proto__","constructor","prototype"].includes(name)||!["string","number","boolean"].includes(typeof value)||(typeof value==="number"&&!Number.isFinite(value))||(typeof value==="string"&&value.length>128))));
+  if(invalidStates){emit({state:"failed",completedWork:0,totalEstimatedWork:args.blocks.length,message:"Invalid block states",error:{code:"INVALID_ARGS",message:"Block states must be a bounded object of primitive state values"}});return;}
   const total = args.blocks.length;
   if (emergencyDisabled) { emit({ state:"failed", completedWork:0,totalEstimatedWork:total,message:"Emergency disabled",error:{code:"EMERGENCY_DISABLED",message:"Mutations disabled"} }); return; }
   const protectedHit = args.blocks.some(({ position }) => protectedRegions.some((p) => p.dimension === args.dimension && position.x >= p.region.min.x && position.x <= p.region.max.x && position.y >= p.region.min.y && position.y <= p.region.max.y && position.z >= p.region.min.z && position.z <= p.region.max.z));
   if (protectedHit) { emit({state:"failed",completedWork:0,totalEstimatedWork:total,message:"Protected region",error:{code:"PROTECTED_REGION",message:"Placement intersects an add-on protected region"}}); return; }
   const dimension = world.getDimension(args.dimension); let placed=0, skipped=0, failed=0;
-  const rollback: Array<{ position: {x:number;y:number;z:number}; typeId:string }> = [];
-  function* job() { try { for (const { position, blockType } of args.blocks) {
+  const rollback: Array<{ position: {x:number;y:number;z:number}; typeId:string;states?:Record<string,string|number|boolean> }> = [];
+  function* job() { try { for (const { position, blockType, states } of args.blocks) {
     if (cancelled.has(action.actionId) || emergencyDisabled) { cancelled.delete(action.actionId); emit({state:"cancelled",completedWork:placed,totalEstimatedWork:total,message:`Cancelled after ${placed}/${total} blocks`,result:{placed,skipped,failed,rollback:{capturedBlocks:rollback.length,coverage:rollback.length/total}}}); return; }
     const block=dimension.getBlock(position); if (!block?.isValid) { failed++; continue; }
-    if (block.typeId === blockType) { skipped++; continue; }
-    if(args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({position,typeId:block.typeId});
-    block.setType(blockType); placed++;
+    const currentStates=block.permutation.getAllStates(),matches=block.typeId===blockType&&(!states||Object.entries(states).every(([name,value])=>currentStates[name]===value));
+    if (matches) { skipped++; continue; }
+    if(args.captureRollback && rollback.length < MAX_ROLLBACK_BLOCKS) rollback.push({position,typeId:block.typeId,...(Object.keys(currentStates).length?{states:currentStates}:{})});
+    if(states)block.setPermutation(BlockPermutation.resolve(blockType,states as never));else block.setType(blockType);placed++;
     if ((placed+skipped+failed) % (args.batchSize ?? 512) === 0) { emit({state:"running",completedWork:placed,totalEstimatedWork:total,message:`Placed ${placed}/${total} blocks`,result:{placed,skipped,failed}}); yield; }
   } emit({state:failed ? "partially_completed":"completed",completedWork:placed,totalEstimatedWork:total,message:`Placed ${placed}, skipped ${skipped}, failed ${failed}`,result:{dimension:args.dimension,placed,skipped,failed,rollback:{available:rollback.length===placed,capturedBlocks:rollback.length,coverage:placed ? rollback.length/placed : 1}}}); } catch(e) { emit({state:placed?"partially_completed":"failed",completedWork:placed,totalEstimatedWork:total,message:e instanceof Error?e.message:"Placement failed",result:{placed,skipped,failed}}); } }
   system.runJob(job());

@@ -7,6 +7,21 @@ import { isNonEmptyString, parseRegion, parseVec3i } from "../helpers.js";
 import type { AdminRunCommandArgs, FillBlocksArgs, PlaceBlocksArgs } from "../types.js";
 import { fail, isDimensionId, ok, type ValidateResult } from "./common.js";
 
+function parseBlockStates(value: unknown): PlaceBlocksArgs["blocks"][number]["states"] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 16) return null;
+  const states: NonNullable<PlaceBlocksArgs["blocks"][number]["states"]> = {};
+  for (const [name, state] of entries) {
+    if (!/^[a-z0-9_.:-]{1,64}$/.test(name) || ["__proto__","constructor","prototype"].includes(name) || !["string", "number", "boolean"].includes(typeof state)) return null;
+    if (typeof state === "number" && !Number.isFinite(state)) return null;
+    if (typeof state === "string" && state.length > 128) return null;
+    states[name] = state as string | number | boolean;
+  }
+  return states;
+}
+
 export function validatePlaceBlocks(args: Record<string, unknown>): ValidateResult<PlaceBlocksArgs> {
   if (!isDimensionId(args.dimension)) return fail("INVALID_ARGS", "dimension is required");
   if (!Array.isArray(args.blocks) || args.blocks.length < 1 || args.blocks.length > MAX_PLACE_BLOCKS) {
@@ -18,13 +33,15 @@ export function validatePlaceBlocks(args: Record<string, unknown>): ValidateResu
     if (!entry || typeof entry !== "object") return fail("INVALID_ARGS", "each block must be an object");
     const position = parseVec3i((entry as Record<string, unknown>).position);
     const blockType = (entry as Record<string, unknown>).blockType;
+    const states = parseBlockStates((entry as Record<string, unknown>).states);
     if (!position || !isNonEmptyString(blockType) || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(blockType)) {
       return fail("INVALID_ARGS", "each block needs integer position and namespaced block id");
     }
+    if (states === null) return fail("INVALID_ARGS", "block states must be a bounded object of primitive state values");
     const key = `${position.x},${position.y},${position.z}`;
     if (seen.has(key)) return fail("DUPLICATE_POSITION", `duplicate block position ${key}`);
     seen.add(key);
-    blocks.push({ position, blockType });
+    blocks.push({ position, blockType, ...(states && Object.keys(states).length ? { states } : {}) });
   }
   const batchSize = args.batchSize === undefined ? DEFAULT_BATCH_SIZE : args.batchSize;
   if (!Number.isInteger(batchSize) || (batchSize as number) < 1 || (batchSize as number) > DEFAULT_BATCH_SIZE) {

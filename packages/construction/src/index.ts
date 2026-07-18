@@ -7,11 +7,11 @@ export { verifyBuild, createRepairOperations } from "./verify-build.js";
 export { resolveBuildStyle,DEFAULT_STYLE,type BuildStyle } from "./styles/index.js";
 export { validateSpecCompatibility } from "./validate-spec.js";
 
-export interface BlockPlacement { position: Vec3i; blockType: string; }
+export interface BlockPlacement { position: Vec3i; blockType: string; states?:Record<string,string|number|boolean>; }
 export interface BuildWallArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; height: number; blockType: string; thickness?: number; }
 export interface BuildFloorArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; blockType: string; thickness?: number; }
 export interface BuildPillarArgs { dimension: DimensionId; position: Vec3i; height: number; blockType: string; }
-export interface BuildRoofArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; blockType: string; }
+export interface BuildRoofArgs { dimension: DimensionId; from: Vec3i; to: Vec3i; blockType: string; ridgeAxis?:"x"|"z"; }
 export interface GeneratedBuild { dimension: DimensionId; blocks: BlockPlacement[]; bounds: RegionBounds; }
 
 function generated(dimension: DimensionId, blocks: BlockPlacement[]): GeneratedBuild {
@@ -29,18 +29,21 @@ export function buildRoof(args: BuildRoofArgs): GeneratedBuild {
   const spanX = r.max.x - r.min.x;
   const spanZ = r.max.z - r.min.z;
   const blocks: BlockPlacement[] = [];
-  if (spanZ <= spanX) {
+  const ridgeAxis=args.ridgeAxis??(spanZ<=spanX?"x":"z"),stairs=/_stairs$/.test(args.blockType);
+  if (ridgeAxis==="x") {
     for (let z = r.min.z; z <= r.max.z; z++) {
       const rise = Math.min(z - r.min.z, r.max.z - z);
+      const states=stairs?{weirdo_direction:z-r.min.z<=r.max.z-z?2:3,upside_down_bit:false}:undefined;
       for (let x = r.min.x; x <= r.max.x; x++) {
-        blocks.push({ position: { x, y: r.min.y + rise, z }, blockType: args.blockType });
+        blocks.push({ position: { x, y: r.min.y + rise, z }, blockType: args.blockType, ...(states?{states}:{}) });
       }
     }
   } else {
     for (let x = r.min.x; x <= r.max.x; x++) {
       const rise = Math.min(x - r.min.x, r.max.x - x);
+      const states=stairs?{weirdo_direction:x-r.min.x<=r.max.x-x?0:1,upside_down_bit:false}:undefined;
       for (let z = r.min.z; z <= r.max.z; z++) {
-        blocks.push({ position: { x, y: r.min.y + rise, z }, blockType: args.blockType });
+        blocks.push({ position: { x, y: r.min.y + rise, z }, blockType: args.blockType, ...(states?{states}:{}) });
       }
     }
   }

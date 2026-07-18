@@ -64,7 +64,7 @@ const mutationStepSchema = Type.Union([
     toolName: Type.Literal("world.place_blocks"),
     arguments: Type.Object({
       dimension: dimensionSchema,
-      blocks: Type.Array(Type.Object({ position: positionSchema, blockType: Type.String({ minLength: 1 }) }), { minItems: 1, maxItems: 8192 }),
+      blocks: Type.Array(Type.Object({ position: positionSchema, blockType: Type.String({ minLength: 1 }),states:Type.Optional(Type.Record(Type.String({pattern:"^[a-z0-9_.:-]{1,64}$"}),Type.Union([Type.String({maxLength:128}),Type.Number(),Type.Boolean()]))) }), { minItems: 1, maxItems: 8192 }),
       captureRollback: Type.Literal(true),
     }, { additionalProperties: false }),
     summary: Type.String({ minLength: 1 }),

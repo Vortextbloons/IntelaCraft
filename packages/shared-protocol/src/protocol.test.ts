@@ -19,6 +19,7 @@ import {
   validateToolArguments,
   validateBuildSpec,
 } from "./index.js";
+import type { PlaceBlocksArgs } from "./index.js";
 
 describe("BuildSpec", () => {
   const valid = { version:1, name:"Cottage", type:"house", location:{dimension:"minecraft:overworld",anchor:{x:0,y:64,z:0},facing:"north"}, size:{width:9,depth:7,height:6,floors:2}, style:"default", palette:{foundation:"minecraft:stone",primary:"minecraft:oak_planks"}, features:["foundation","door"], terrainPolicy:"adapt", interiorPolicy:"basic", symmetry:"partial" };
@@ -206,8 +207,11 @@ describe("action request", () => {
   });
 
   it("validates detailed placements and rejects duplicate positions", () => {
-    const valid = validateToolArguments("world.place_blocks", { dimension:"minecraft:overworld", blocks:[{position:{x:1,y:64,z:1},blockType:"minecraft:stone"}], captureRollback:true });
+    const valid = validateToolArguments("world.place_blocks", { dimension:"minecraft:overworld", blocks:[{position:{x:1,y:64,z:1},blockType:"minecraft:oak_stairs",states:{weirdo_direction:2,upside_down_bit:false}}], captureRollback:true });
     assert.equal(valid.ok, true);
+    if(valid.ok)assert.deepEqual((valid.value as unknown as PlaceBlocksArgs).blocks[0].states,{weirdo_direction:2,upside_down_bit:false});
+    const invalidStates=validateToolArguments("world.place_blocks",{dimension:"minecraft:overworld",blocks:[{position:{x:2,y:64,z:1},blockType:"minecraft:oak_stairs",states:{bad:{nested:true}}}]});
+    assert.equal(invalidStates.ok,false);
     const duplicate = validateToolArguments("world.place_blocks", { dimension:"minecraft:overworld", blocks:[{position:{x:1,y:64,z:1},blockType:"minecraft:stone"},{position:{x:1,y:64,z:1},blockType:"minecraft:oak_planks"}] });
     assert.equal(duplicate.ok, false);
     if (!duplicate.ok) assert.equal(duplicate.error.code, "DUPLICATE_POSITION");

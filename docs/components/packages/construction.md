@@ -11,7 +11,11 @@ Semantic geometric build tools that translate high-level construction intents (w
 ## Core Types
 
 ```typescript
-interface BlockPlacement { position: Vec3i; blockType: string; }
+interface BlockPlacement {
+  position: Vec3i;
+  blockType: string;
+  states?: Record<string, string | number | boolean>;
+}
 
 interface GeneratedBuild {
   dimension: DimensionId;
@@ -95,7 +99,7 @@ Supported tools and their behavior:
 | `build.pillar` | Delegates to `buildPillar` |
 | `build.room` | Combines `buildFloor` + 4 `buildWall` calls for the perimeter, deduplicates overlapping blocks |
 | `build.stairs` | Diagonal ascending blocks from `from` to `from + height` |
-| `build.roof` | Continuous gable roof with a ridge along the longer footprint axis |
+| `build.roof` | Continuous gable roof with an optional explicit ridge axis and opposing stair states |
 | `build.doorway` | Wall with a rectangular opening (full-height opening) |
 | `build.window` | Wall with a rectangular opening offset 1 block up from the floor |
 
@@ -184,7 +188,7 @@ materialTotals([
 
 ## BuildSpec compiler
 
-`compileBuildSpec(spec)` validates a version 1 `BuildSpec` and deterministically produces an `ExpectedWorldState`. The initial compiler supports oriented rectangular footprints, optional foundations, exterior walls, intermediate floors, gable roofs, facing-aware doors, canonical block ordering, required interior air, material totals, and impossible-dimension rejection. Existing semantic builders remain available during migration.
+`compileBuildSpec(spec)` validates a version 1 `BuildSpec` and deterministically produces an `ExpectedWorldState`. Enclosed structures align the roof ridge with `location.facing`, fill both triangular gable walls, and assign opposing `weirdo_direction` plus `upside_down_bit` states when the roof material is a stair block. The compiler also supports oriented rectangular footprints, optional foundations, exterior walls, intermediate floors, facing-aware doors, canonical block ordering, required interior air, material totals, and impossible-dimension rejection. Existing semantic builders remain available during migration.
 
 The style registry currently includes `default`, `medieval`, `modern`, and `rustic`, controlling window spacing, floor proportions, roof overhang, porch depth, and balcony depth. Unknown styles deterministically fall back to `default`. Whole-structure compilation now materializes windows, internal stairs, balconies, chimneys, porches, interior lighting, and basic furniture when requested, while retaining the shared 8,192-block compile cap.
 
@@ -192,9 +196,9 @@ The style registry currently includes `default`, `medieval`, `modern`, and `rust
 
 Bridge and wall types use dedicated compilers rather than the generic enclosed-structure shell. Compatibility validation rejects unsupported feature/type combinations before geometry generation.
 
-`optimizePlacements()` deduplicates placements, skips blocks already matching a supplied snapshot, compacts adjacent X-axis runs into `world.fill_blocks`, batches remaining details into bounded `world.place_blocks` actions, and always enables rollback capture. `createBuildPhases()` emits the fixed nine-phase dependency chain and optimizes each phase independently so operations never cross phase boundaries.
+`optimizePlacements()` deduplicates placements, skips stateless blocks already matching a supplied snapshot, compacts adjacent stateless X-axis runs into `world.fill_blocks`, and keeps every stateful block in bounded `world.place_blocks` actions. It always enables rollback capture. `createBuildPhases()` emits the fixed nine-phase dependency chain and optimizes each phase independently so operations never cross phase boundaries.
 
-`verifyBuild()` decodes a complete palette-indexed `VoxelSnapshot`, verifies its dimension and bounds coverage, and compares it with `ExpectedWorldState`. It reports missing, incorrect, and unexpected blocks plus completion percentage. `createRepairOperations()` creates one minimal corrective operation set, rejects repairs above `MAX_ROLLBACK_BLOCKS`, and does not bypass controller approval or policy.
+`verifyBuild()` decodes a complete palette-indexed `VoxelSnapshot`, verifies its dimension and bounds coverage, and compares it with `ExpectedWorldState`. Requested permutation states are compared as a required subset, so an incorrectly oriented stair is reported as incorrect even when its block ID matches. `createRepairOperations()` preserves expected states, creates one minimal corrective operation set, rejects repairs above `MAX_ROLLBACK_BLOCKS`, and does not bypass controller approval or policy.
 
 The controller uses these results after phased execution. Verification is read-only; a non-100-percent result remains partial until a separately approved repair is proposed.
 

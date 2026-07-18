@@ -586,7 +586,7 @@ Places individual blocks at specific positions.
   "arguments": {
     "dimension": "minecraft:overworld",
     "blocks": [
-      { "position": { "x": 0, "y": 64, "z": 0 }, "blockType": "minecraft:oak_door" },
+      { "position": { "x": 0, "y": 64, "z": 0 }, "blockType": "minecraft:oak_stairs", "states": { "weirdo_direction": 2, "upside_down_bit": false } },
       { "position": { "x": 0, "y": 65, "z": 0 }, "blockType": "minecraft:oak_door" }
     ],
     "batchSize": 512,
@@ -598,11 +598,13 @@ Places individual blocks at specific positions.
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | dimension | DimensionId | yes | Target dimension |
-| blocks | BlockPlacement[] | yes | Array of position/blockType pairs |
+| blocks | BlockPlacement[] | yes | Array of position/blockType pairs with optional bounded permutation `states` |
 | batchSize | number | no | Blocks per batch (default: 512) |
 | captureRollback | boolean | no | Capture blocks before overwriting |
 
 **Limit:** Maximum 8,192 individually addressed blocks (`MAX_PLACE_BLOCKS`).
+
+`states` is an optional object with at most 16 primitive state values. Stateful placements are validated independently by the controller and add-on, executed with `BlockPermutation.resolve()`, and never compacted into `world.fill_blocks`. Approval remains bound to the complete immutable payload, including states.
 
 ---
 

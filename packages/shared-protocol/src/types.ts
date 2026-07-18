@@ -91,9 +91,12 @@ export interface FillBlocksArgs {
   captureRollback?: boolean;
 }
 
+export type BlockStateValue = string | number | boolean;
+export type BlockStates = Record<string, BlockStateValue>;
+
 export interface PlaceBlocksArgs {
   dimension: DimensionId;
-  blocks: Array<{ position: Vec3i; blockType: string }>;
+  blocks: Array<{ position: Vec3i; blockType: string; states?: BlockStates }>;
   batchSize?: number;
   captureRollback?: boolean;
 }
